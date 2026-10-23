@@ -5779,6 +5779,24 @@ class WP_MySQL_On_SQLite extends PDO {
 			)
 		);
 
+		// Preserve the AUTO_INCREMENT counter from the original table.
+		$schema             = $table_is_temporary ? 'temp' : 'main';
+		$has_sequence_table = (bool) $this->execute_sqlite_query(
+			sprintf( "SELECT 1 FROM %s.sqlite_master WHERE type = 'table' AND name = 'sqlite_sequence'", $schema )
+		)->fetchColumn();
+		if ( $has_sequence_table ) {
+			$this->execute_sqlite_query(
+				sprintf(
+					'UPDATE %s.sqlite_sequence
+					SET seq = MAX(seq, COALESCE((SELECT seq FROM %s.sqlite_sequence WHERE name = ? COLLATE NOCASE), 0))
+					WHERE name = ?',
+					$schema,
+					$schema
+				),
+				array( $table_name, $tmp_table_name )
+			);
+		}
+
 		// 4. Drop the original table.
 		$this->execute_sqlite_query( sprintf( 'DROP TABLE %s', $quoted_table_name ) );
 

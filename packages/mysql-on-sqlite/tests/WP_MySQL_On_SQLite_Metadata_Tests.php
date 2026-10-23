@@ -929,6 +929,149 @@ class WP_MySQL_On_SQLite_Metadata_Tests extends TestCase {
 		$this->assertSame( null, $result[0]->Auto_increment );
 	}
 
+	/**
+	 * @dataProvider tableRebuildsWithAutoIncrement
+	 */
+	public function testTableRebuildPreservesAutoIncrement( string $temporary, string $rebuild, array $setup, string $expected_id ): void {
+		$this->assertQuery( "CREATE $temporary TABLE t (id BIGINT AUTO_INCREMENT PRIMARY KEY, name TEXT)" );
+		foreach ( $setup as $query ) {
+			$this->assertQuery( $query );
+		}
+		$rows = $this->assertQuery( 'SELECT * FROM t ORDER BY id' );
+
+		$result = $this->assertQuery( $rebuild );
+		if ( is_array( $result ) ) {
+			$this->assertSame( 'OK', $result[0]->Msg_text );
+		}
+		$this->assertEquals( $rows, $this->assertQuery( 'SELECT id, name FROM t ORDER BY id' ) );
+		if ( '' === $temporary ) {
+			$this->assertSame( $expected_id, $this->assertQuery( "SHOW TABLE STATUS LIKE 't'" )[0]->Auto_increment );
+			$this->assertSame(
+				$expected_id,
+				$this->assertQuery( "SELECT `AUTO_INCREMENT` FROM information_schema.tables WHERE table_name = 't'" )[0]->AUTO_INCREMENT
+			);
+		}
+
+		$this->assertQuery( "INSERT INTO t (name) VALUES ('next')" );
+		$this->assertSame( $expected_id, $this->assertQuery( "SELECT id FROM t WHERE name = 'next'" )[0]->id );
+	}
+
+	public static function tableRebuildsWithAutoIncrement(): array {
+		$states = array(
+			'deleted highest ID' => array(
+				array( "INSERT INTO t (name) VALUES ('a'), ('b'), ('c')", 'DELETE FROM t WHERE id = 3' ),
+				'4',
+			),
+			'deleted all rows'   => array(
+				array( "INSERT INTO t (name) VALUES ('a'), ('b'), ('c')", 'DELETE FROM t' ),
+				'4',
+			),
+			'empty with seed'    => array( array( 'ALTER TABLE t AUTO_INCREMENT = 1000' ), '1000' ),
+			'empty without seed' => array( array(), '1' ),
+			'large sequence'     => array(
+				array( "INSERT INTO t (id, name) VALUES (9007199254740993, 'a')", 'DELETE FROM t' ),
+				'9007199254740994',
+			),
+			'updated highest ID' => array(
+				array( "INSERT INTO t (name) VALUES ('a')", 'UPDATE t SET id = 100' ),
+				'101',
+			),
+		);
+		$cases  = array();
+		foreach ( array( '', 'TEMPORARY' ) as $temporary ) {
+			foreach ( array( 'ALTER TABLE t ADD COLUMN note TEXT', 'ALTER TABLE t MODIFY COLUMN name VARCHAR(100)', 'OPTIMIZE TABLE t', 'REPAIR TABLE t' ) as $rebuild ) {
+				foreach ( $states as $state => list( $setup, $expected_id ) ) {
+					$cases[ "$temporary $rebuild: $state" ] = array( $temporary, $rebuild, $setup, $expected_id );
+				}
+			}
+		}
+		return $cases;
+	}
+
+	public function testTableRebuildPreservesCreateTableAutoIncrementOption(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT AUTO_INCREMENT PRIMARY KEY, name TEXT) AUTO_INCREMENT = 1000' );
+		$this->assertQuery( 'ALTER TABLE t ADD COLUMN note TEXT' );
+		$this->assertQuery( 'OPTIMIZE TABLE t' );
+		$this->assertQuery( "INSERT INTO t (name) VALUES ('next')" );
+		$this->assertSame( '1000', $this->assertQuery( 'SELECT id FROM t' )[0]->id );
+	}
+
+	public function testTableRebuildAppliesExplicitAutoIncrementOption(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT AUTO_INCREMENT PRIMARY KEY, name TEXT) AUTO_INCREMENT = 1000' );
+		$this->assertQuery( 'ALTER TABLE t ADD COLUMN a INT, AUTO_INCREMENT = 500' );
+		$this->assertQuery( "INSERT INTO t (name) VALUES ('a')" );
+		$this->assertSame( '500', $this->assertQuery( "SELECT id FROM t WHERE name = 'a'" )[0]->id );
+
+		$this->assertQuery( 'ALTER TABLE t ADD COLUMN b INT, AUTO_INCREMENT = 1' );
+		$this->assertQuery( "INSERT INTO t (name) VALUES ('b')" );
+		$this->assertSame( '501', $this->assertQuery( "SELECT id FROM t WHERE name = 'b'" )[0]->id );
+
+		$this->assertQuery( 'ALTER TABLE t ADD COLUMN c INT, AUTO_INCREMENT = 2000' );
+		$this->assertQuery( "INSERT INTO t (name) VALUES ('c')" );
+		$this->assertSame( '2000', $this->assertQuery( "SELECT id FROM t WHERE name = 'c'" )[0]->id );
+	}
+
+	public function testTableRebuildPreservesAutoIncrementWithQuotedNames(): void {
+		$this->assertQuery( "CREATE TABLE `a``b'c` (`i``d` INT AUTO_INCREMENT PRIMARY KEY, name TEXT) AUTO_INCREMENT = 1000" );
+		$this->assertQuery( "ALTER TABLE `a``b'c` CHANGE COLUMN `i``d` `new``id` BIGINT AUTO_INCREMENT" );
+		$this->assertQuery( "INSERT INTO `a``b'c` (name) VALUES ('next')" );
+		$this->assertSame( '1000', $this->assertQuery( "SELECT `new``id` AS id FROM `a``b'c`" )[0]->id );
+	}
+
+	public function testTableRebuildPreservesAutoIncrementWithDifferentTableNameCase(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT AUTO_INCREMENT PRIMARY KEY, name TEXT) AUTO_INCREMENT = 1000' );
+		$this->assertQuery( 'ALTER TABLE T ADD COLUMN note TEXT' );
+		$this->assertQuery( "INSERT INTO t (name) VALUES ('next')" );
+		$this->assertSame( '1000', $this->assertQuery( 'SELECT id FROM t' )[0]->id );
+	}
+
+	public function testTableRebuildKeepsTemporaryAndPersistentSequencesSeparate(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT AUTO_INCREMENT PRIMARY KEY, name TEXT) AUTO_INCREMENT = 1000' );
+		$this->assertQuery( 'CREATE TEMPORARY TABLE t (id INT AUTO_INCREMENT PRIMARY KEY, name TEXT) AUTO_INCREMENT = 500' );
+		$this->assertQuery( 'ALTER TABLE t ADD COLUMN note TEXT' );
+		$this->assertQuery( 'OPTIMIZE TABLE t' );
+		$this->assertQuery( "INSERT INTO t (name) VALUES ('temporary')" );
+		$this->assertSame( '500', $this->assertQuery( 'SELECT id FROM t' )[0]->id );
+
+		$this->assertQuery( 'DROP TEMPORARY TABLE t' );
+		$this->assertQuery( 'ALTER TABLE t ADD COLUMN note TEXT' );
+		$this->assertQuery( "INSERT INTO t (name) VALUES ('persistent')" );
+		$this->assertSame( '1000', $this->assertQuery( 'SELECT id FROM t' )[0]->id );
+	}
+
+	public function testTableRebuildWithoutAutoIncrement(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT PRIMARY KEY, name TEXT)' );
+		$this->assertQuery( "INSERT INTO t VALUES (1, 'a')" );
+		$this->assertQuery( 'ALTER TABLE t ADD COLUMN note TEXT' );
+		$this->assertQuery( 'OPTIMIZE TABLE t' );
+		$this->assertSame( 'a', $this->assertQuery( 'SELECT name FROM t' )[0]->name );
+		$this->assertFalse( $this->sqlite->query( "SELECT 1 FROM sqlite_master WHERE name = 'sqlite_sequence'" )->fetchColumn() );
+
+		$this->assertQuery( 'ALTER TABLE t MODIFY COLUMN id INT AUTO_INCREMENT' );
+		$this->assertQuery( "INSERT INTO t (name) VALUES ('b')" );
+		$this->assertSame( '2', $this->assertQuery( "SELECT id FROM t WHERE name = 'b'" )[0]->id );
+
+		$this->assertQuery( 'ALTER TABLE t AUTO_INCREMENT = 1000' );
+		$this->assertQuery( 'ALTER TABLE t MODIFY COLUMN id INT NOT NULL' );
+		$this->assertFalse( $this->sqlite->query( "SELECT seq FROM sqlite_sequence WHERE name = 't'" )->fetchColumn() );
+		$this->assertSame( null, $this->assertQuery( "SHOW TABLE STATUS LIKE 't'" )[0]->Auto_increment );
+	}
+
+	public function testFailedTableRebuildPreservesAutoIncrement(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT AUTO_INCREMENT PRIMARY KEY, name TEXT)' );
+		$this->assertQuery( "INSERT INTO t (name) VALUES ('a'), ('a'), ('b')" );
+		$this->assertQuery( 'DELETE FROM t WHERE id = 3' );
+		try {
+			$this->assertQuery( 'ALTER TABLE t ADD UNIQUE KEY unique_name (name)' );
+			$this->fail( 'Adding a unique key on duplicate values must fail.' );
+		} catch ( WP_MySQL_On_SQLite_Exception $e ) {
+			$this->assertSame( '23000', $e->getCode() );
+		}
+		$this->assertQuery( "INSERT INTO t (name) VALUES ('next')" );
+		$this->assertSame( '4', $this->assertQuery( "SELECT id FROM t WHERE name = 'next'" )[0]->id );
+		$this->assertSame( array( 't' ), $this->sqlite->query( 'SELECT name FROM sqlite_sequence' )->fetchAll( PDO::FETCH_COLUMN ) );
+	}
+
 	public function testTemporaryTableAutoIncrement(): void {
 		// Persistent and temporary tables must keep independent sequences.
 
