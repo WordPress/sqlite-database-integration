@@ -97,6 +97,28 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		return $column_meta;
 	}
 
+	/**
+	 * Reconnect as if the database was configured by an older driver version,
+	 * so that the new connection configures the database again.
+	 */
+	private function reconnectAfterDriverUpgrade(): void {
+		$this->sqlite->exec(
+			sprintf(
+				"UPDATE %s SET value = '0.0.0' WHERE name = '%s'",
+				WP_MySQL_On_SQLite::GLOBAL_VARIABLES_TABLE_NAME,
+				WP_MySQL_On_SQLite::DRIVER_VERSION_VARIABLE_NAME
+			)
+		);
+
+		$this->engine = new WP_MySQL_On_SQLite(
+			'mysql-on-sqlite:dbname=wp',
+			null,
+			null,
+			array( 'sqlite_pdo' => $this->sqlite )
+		);
+		$this->engine->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
+	}
+
 	public function testRegexp() {
 		$this->assertQuery(
 			"INSERT INTO _options (option_name, option_value) VALUES ('rss_0123456789abcdef0123456789abcdef', '1');"
@@ -6331,6 +6353,759 @@ QUERY
 			),
 			$this->last_result
 		);
+	}
+
+	public function testInformationSchemaColumnsDatetimePrecision(): void {
+		$this->assertQuery(
+			'CREATE TABLE _tmp_table (
+				col_date DATE,
+				col_time TIME,
+				col_time_fsp TIME(2),
+				col_datetime DATETIME,
+				col_datetime_fsp DATETIME(3),
+				col_timestamp TIMESTAMP NULL,
+				col_timestamp_fsp TIMESTAMP(6) NULL,
+				col_generated DATETIME AS (CAST(\'2020-01-01\' AS DATETIME(6))),
+				col_expression_default DATETIME DEFAULT (CAST(\'2020-01-01\' AS DATETIME(6))),
+				col_year YEAR,
+				col_int INT
+			)'
+		);
+
+		$this->assertQuery(
+			"SELECT column_name, datetime_precision FROM information_schema.columns WHERE table_name = '_tmp_table' ORDER BY ordinal_position"
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'COLUMN_NAME'        => 'col_date',
+					'DATETIME_PRECISION' => null,
+				),
+				(object) array(
+					'COLUMN_NAME'        => 'col_time',
+					'DATETIME_PRECISION' => '0',
+				),
+				(object) array(
+					'COLUMN_NAME'        => 'col_time_fsp',
+					'DATETIME_PRECISION' => '2',
+				),
+				(object) array(
+					'COLUMN_NAME'        => 'col_datetime',
+					'DATETIME_PRECISION' => '0',
+				),
+				(object) array(
+					'COLUMN_NAME'        => 'col_datetime_fsp',
+					'DATETIME_PRECISION' => '3',
+				),
+				(object) array(
+					'COLUMN_NAME'        => 'col_timestamp',
+					'DATETIME_PRECISION' => '0',
+				),
+				(object) array(
+					'COLUMN_NAME'        => 'col_timestamp_fsp',
+					'DATETIME_PRECISION' => '6',
+				),
+				(object) array(
+					'COLUMN_NAME'        => 'col_generated',
+					'DATETIME_PRECISION' => '0',
+				),
+				(object) array(
+					'COLUMN_NAME'        => 'col_expression_default',
+					'DATETIME_PRECISION' => '0',
+				),
+				(object) array(
+					'COLUMN_NAME'        => 'col_year',
+					'DATETIME_PRECISION' => null,
+				),
+				(object) array(
+					'COLUMN_NAME'        => 'col_int',
+					'DATETIME_PRECISION' => null,
+				),
+			),
+			$this->last_result
+		);
+	}
+
+	public function testConfigurationRepairsStoredDatetimePrecision(): void {
+		$this->assertQuery( 'CREATE TABLE _tmp_table (col_date DATE, col_time TIME(2), col_datetime DATETIME, col_timestamp TIMESTAMP(6) NULL)' );
+
+		// Older driver versions stored a zero precision for all temporal columns.
+		$this->sqlite->exec( "UPDATE _wp_sqlite_mysql_information_schema_columns SET datetime_precision = 0 WHERE data_type IN ('time', 'datetime', 'timestamp')" );
+		$this->reconnectAfterDriverUpgrade();
+
+		$this->assertQuery(
+			"SELECT column_name, datetime_precision FROM information_schema.columns WHERE table_name = '_tmp_table' ORDER BY ordinal_position"
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'COLUMN_NAME'        => 'col_date',
+					'DATETIME_PRECISION' => null,
+				),
+				(object) array(
+					'COLUMN_NAME'        => 'col_time',
+					'DATETIME_PRECISION' => '2',
+				),
+				(object) array(
+					'COLUMN_NAME'        => 'col_datetime',
+					'DATETIME_PRECISION' => '0',
+				),
+				(object) array(
+					'COLUMN_NAME'        => 'col_timestamp',
+					'DATETIME_PRECISION' => '6',
+				),
+			),
+			$this->last_result
+		);
+	}
+
+	public function testShowCreateTableWithTemporalZeroDefaults(): void {
+		$this->assertQuery(
+			'CREATE TABLE _tmp_table (
+				col_timestamp TIMESTAMP NOT NULL DEFAULT 0,
+				col_datetime DATETIME NOT NULL DEFAULT 0,
+				col_date DATE NOT NULL DEFAULT 0,
+				col_time TIME NOT NULL DEFAULT 0,
+				col_year YEAR NOT NULL DEFAULT 0,
+				col_datetime_fsp DATETIME(3) NOT NULL DEFAULT 0,
+				col_timestamp_fsp TIMESTAMP(6) NOT NULL DEFAULT 0,
+				col_time_fsp TIME(2) NOT NULL DEFAULT 0,
+				col_decimal_zero DATETIME NOT NULL DEFAULT 0.0,
+				col_fraction_zero DATETIME NOT NULL DEFAULT .0,
+				col_exponent_zero DATETIME NOT NULL DEFAULT 0e0,
+				col_negative_zero DATETIME NOT NULL DEFAULT -0,
+				col_positive_zero DATETIME NOT NULL DEFAULT +0,
+				col_padded_zero DATETIME NOT NULL DEFAULT 00,
+				col_false DATETIME NOT NULL DEFAULT FALSE,
+				col_check DATETIME NOT NULL DEFAULT 0 CHECK (col_check < CAST(\'9999-12-31\' AS DATETIME(3))),
+				col_string_zero DATETIME NOT NULL DEFAULT \'0\',
+				col_time_string_zero TIME NOT NULL DEFAULT \'00\',
+				col_year_false YEAR NOT NULL DEFAULT FALSE,
+				col_year_string_zero YEAR NOT NULL DEFAULT \'0\',
+				col_year_string_double_zero YEAR NOT NULL DEFAULT \'00\',
+				col_expression DATETIME NOT NULL DEFAULT (0),
+				col_int INT NOT NULL DEFAULT 0,
+				col_varchar VARCHAR(10) NOT NULL DEFAULT \'0\'
+			)'
+		);
+
+		$this->assertQuery( 'SHOW CREATE TABLE _tmp_table' );
+		$this->assertSame(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `_tmp_table` (',
+					"  `col_timestamp` timestamp NOT NULL DEFAULT '0000-00-00 00:00:00',",
+					"  `col_datetime` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',",
+					"  `col_date` date NOT NULL DEFAULT '0000-00-00',",
+					"  `col_time` time NOT NULL DEFAULT '00:00:00',",
+					"  `col_year` year NOT NULL DEFAULT '0000',",
+					"  `col_datetime_fsp` datetime(3) NOT NULL DEFAULT '0000-00-00 00:00:00.000',",
+					"  `col_timestamp_fsp` timestamp(6) NOT NULL DEFAULT '0000-00-00 00:00:00.000000',",
+					"  `col_time_fsp` time(2) NOT NULL DEFAULT '00:00:00.00',",
+					"  `col_decimal_zero` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',",
+					"  `col_fraction_zero` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',",
+					"  `col_exponent_zero` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',",
+					"  `col_negative_zero` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',",
+					"  `col_positive_zero` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',",
+					"  `col_padded_zero` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',",
+					"  `col_false` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',",
+					"  `col_check` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',",
+					"  `col_string_zero` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',",
+					"  `col_time_string_zero` time NOT NULL DEFAULT '00:00:00',",
+					"  `col_year_false` year NOT NULL DEFAULT '0000',",
+					"  `col_year_string_zero` year NOT NULL DEFAULT '0',",
+					"  `col_year_string_double_zero` year NOT NULL DEFAULT '00',",
+					'  `col_expression` datetime NOT NULL DEFAULT (0),',
+					"  `col_int` int NOT NULL DEFAULT '0',",
+					"  `col_varchar` varchar(10) NOT NULL DEFAULT '0',",
+					"  CONSTRAINT `_tmp_table_chk_1` CHECK (col_check < CAST('9999-12-31' AS DATETIME(3)))",
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$this->last_result[0]->{'Create Table'}
+		);
+
+		$this->assertQuery(
+			"SELECT column_name, column_default FROM information_schema.columns WHERE table_name = '_tmp_table' AND column_name IN ('col_timestamp', 'col_date', 'col_time_fsp') ORDER BY ordinal_position"
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'COLUMN_NAME'    => 'col_timestamp',
+					'COLUMN_DEFAULT' => '0000-00-00 00:00:00',
+				),
+				(object) array(
+					'COLUMN_NAME'    => 'col_date',
+					'COLUMN_DEFAULT' => '0000-00-00',
+				),
+				(object) array(
+					'COLUMN_NAME'    => 'col_time_fsp',
+					'COLUMN_DEFAULT' => '00:00:00.00',
+				),
+			),
+			$this->last_result
+		);
+	}
+
+	public function testInsertUsesTemporalZeroDefaults(): void {
+		$this->assertQuery(
+			'CREATE TABLE _tmp_table (
+				id INT NOT NULL,
+				created_at TIMESTAMP NOT NULL DEFAULT 0,
+				created_at_fsp DATETIME(3) NOT NULL DEFAULT 0,
+				updated_on DATE NOT NULL DEFAULT FALSE
+			)'
+		);
+
+		// Strict SQL mode.
+		$this->assertQuery( 'INSERT INTO _tmp_table (id) VALUES (1)' );
+
+		// Non-strict SQL mode.
+		$this->assertQuery( "SET sql_mode = ''" );
+		$this->assertQuery( 'INSERT INTO _tmp_table (id) VALUES (2)' );
+
+		$this->assertQuery( 'SELECT * FROM _tmp_table ORDER BY id' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'             => '1',
+					'created_at'     => '0000-00-00 00:00:00',
+					'created_at_fsp' => '0000-00-00 00:00:00.000',
+					'updated_on'     => '0000-00-00',
+				),
+				(object) array(
+					'id'             => '2',
+					'created_at'     => '0000-00-00 00:00:00',
+					'created_at_fsp' => '0000-00-00 00:00:00.000',
+					'updated_on'     => '0000-00-00',
+				),
+			),
+			$this->last_result
+		);
+	}
+
+	public function testAlterTableWithTemporalZeroDefaults(): void {
+		$this->assertQuery(
+			'CREATE TABLE _tmp_table (
+				id INT NOT NULL,
+				modified_at DATETIME NOT NULL,
+				published_at DATETIME(3) NOT NULL,
+				updated_on DATE NOT NULL,
+				duration TIME(2) NOT NULL,
+				year_number YEAR NOT NULL,
+				year_string YEAR NOT NULL,
+				parenthesized_zero DATETIME NOT NULL,
+				false_value DATETIME NOT NULL,
+				string_zero TIME NOT NULL
+			)'
+		);
+		$this->assertQuery( 'ALTER TABLE _tmp_table ADD COLUMN created_at TIMESTAMP NOT NULL DEFAULT 0' );
+		$this->assertQuery( 'ALTER TABLE _tmp_table MODIFY COLUMN modified_at DATETIME NOT NULL DEFAULT 0' );
+		$this->assertQuery(
+			"ALTER TABLE _tmp_table
+				ALTER COLUMN published_at SET DEFAULT 0,
+				ALTER COLUMN updated_on SET DEFAULT 0,
+				ALTER COLUMN duration SET DEFAULT 0,
+				ALTER COLUMN year_number SET DEFAULT 0,
+				ALTER COLUMN year_string SET DEFAULT '0',
+				ALTER COLUMN parenthesized_zero SET DEFAULT (0),
+				ALTER COLUMN false_value SET DEFAULT FALSE,
+				ALTER COLUMN string_zero SET DEFAULT '0'"
+		);
+
+		$this->assertQuery( 'SHOW CREATE TABLE _tmp_table' );
+		$this->assertSame(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `_tmp_table` (',
+					'  `id` int NOT NULL,',
+					"  `modified_at` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',",
+					"  `published_at` datetime(3) NOT NULL DEFAULT '0000-00-00 00:00:00.000',",
+					"  `updated_on` date NOT NULL DEFAULT '0000-00-00',",
+					"  `duration` time(2) NOT NULL DEFAULT '00:00:00.00',",
+					"  `year_number` year NOT NULL DEFAULT '0000',",
+					"  `year_string` year NOT NULL DEFAULT '0',",
+					"  `parenthesized_zero` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',",
+					"  `false_value` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',",
+					"  `string_zero` time NOT NULL DEFAULT '00:00:00',",
+					"  `created_at` timestamp NOT NULL DEFAULT '0000-00-00 00:00:00'",
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$this->last_result[0]->{'Create Table'}
+		);
+	}
+
+	public function testConfigurationNormalizesStoredTemporalZeroDefaults(): void {
+		$this->assertQuery(
+			"CREATE TABLE _tmp_table (
+				id INT NOT NULL DEFAULT 0,
+				created_at TIMESTAMP NOT NULL DEFAULT 0,
+				created_at_fsp DATETIME(3) NOT NULL DEFAULT 0,
+				updated_on DATE NOT NULL DEFAULT 0,
+				duration TIME(2) NOT NULL DEFAULT 0,
+				year_number YEAR NOT NULL DEFAULT 0,
+				year_string YEAR NOT NULL DEFAULT '0',
+				expression DATETIME NOT NULL DEFAULT (0),
+				label VARCHAR(20) NOT NULL DEFAULT 0
+			)"
+		);
+
+		// Store the defaults verbatim and a zero precision, as older driver versions
+		// did, and apply them to the SQLite table. Then, insert a row with them, and
+		// a row with other values.
+		$this->sqlite->exec(
+			"UPDATE _wp_sqlite_mysql_information_schema_columns
+			SET
+				column_default = '0',
+				datetime_precision = CASE WHEN datetime_precision IS NULL THEN NULL ELSE 0 END
+			WHERE table_name = '_tmp_table'"
+		);
+		$this->assertQuery( 'OPTIMIZE TABLE _tmp_table' );
+		$this->assertQuery( 'INSERT INTO _tmp_table (id) VALUES (1)' );
+		$this->assertQuery(
+			"INSERT INTO _tmp_table (id, created_at, created_at_fsp, updated_on, duration)
+			VALUES (2, '2020-01-02 03:04:05', '2020-01-02 03:04:05', '2020-01-02', '01:02:03')"
+		);
+
+		$this->reconnectAfterDriverUpgrade();
+
+		// YEAR and expression defaults are not normalized.
+		$expected_create_table = implode(
+			"\n",
+			array(
+				'CREATE TABLE `_tmp_table` (',
+				"  `id` int NOT NULL DEFAULT '0',",
+				"  `created_at` timestamp NOT NULL DEFAULT '0000-00-00 00:00:00',",
+				"  `created_at_fsp` datetime(3) NOT NULL DEFAULT '0000-00-00 00:00:00.000',",
+				"  `updated_on` date NOT NULL DEFAULT '0000-00-00',",
+				"  `duration` time(2) NOT NULL DEFAULT '00:00:00.00',",
+				"  `year_number` year NOT NULL DEFAULT '0',",
+				"  `year_string` year NOT NULL DEFAULT '0',",
+				'  `expression` datetime NOT NULL DEFAULT (0),',
+				"  `label` varchar(20) NOT NULL DEFAULT '0'",
+				') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+			)
+		);
+		$this->assertQuery( 'SHOW CREATE TABLE _tmp_table' );
+		$this->assertSame( $expected_create_table, $this->last_result[0]->{'Create Table'} );
+
+		// The existing row with the old defaults gets the zero values, while the
+		// other existing row is unchanged. New rows get the normalized defaults
+		// in both strict and non-strict SQL mode.
+		$this->assertQuery( 'INSERT INTO _tmp_table (id) VALUES (3)' );
+		$this->assertQuery( "SET sql_mode = ''" );
+		$this->assertQuery( 'INSERT INTO _tmp_table (id) VALUES (4)' );
+		$expected_rows_query = 'SELECT id, created_at, created_at_fsp, updated_on, duration FROM _tmp_table ORDER BY id';
+		$expected_rows       = array(
+			(object) array(
+				'id'             => '1',
+				'created_at'     => '0000-00-00 00:00:00',
+				'created_at_fsp' => '0000-00-00 00:00:00.000',
+				'updated_on'     => '0000-00-00',
+				'duration'       => '00:00:00.00',
+			),
+			(object) array(
+				'id'             => '2',
+				'created_at'     => '2020-01-02 03:04:05',
+				'created_at_fsp' => '2020-01-02 03:04:05',
+				'updated_on'     => '2020-01-02',
+				'duration'       => '01:02:03',
+			),
+			(object) array(
+				'id'             => '3',
+				'created_at'     => '0000-00-00 00:00:00',
+				'created_at_fsp' => '0000-00-00 00:00:00.000',
+				'updated_on'     => '0000-00-00',
+				'duration'       => '00:00:00.00',
+			),
+			(object) array(
+				'id'             => '4',
+				'created_at'     => '0000-00-00 00:00:00',
+				'created_at_fsp' => '0000-00-00 00:00:00.000',
+				'updated_on'     => '0000-00-00',
+				'duration'       => '00:00:00.00',
+			),
+		);
+		$this->assertQuery( $expected_rows_query );
+		$this->assertEquals( $expected_rows, $this->last_result );
+
+		// The existing row keeps the YEAR and expression values, as their defaults are not normalized.
+		$this->assertQuery( 'SELECT year_number, year_string, expression FROM _tmp_table WHERE id = 1' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'year_number' => '0',
+					'year_string' => '0',
+					'expression'  => '0',
+				),
+			),
+			$this->last_result
+		);
+
+		// Configuring the database again changes nothing.
+		$this->reconnectAfterDriverUpgrade();
+		$this->assertQuery( 'SHOW CREATE TABLE _tmp_table' );
+		$this->assertSame( $expected_create_table, $this->last_result[0]->{'Create Table'} );
+		$this->assertQuery( $expected_rows_query );
+		$this->assertEquals( $expected_rows, $this->last_result );
+	}
+
+	public function testConfigurationNormalizesStoredTemporalZeroValuesWithoutRunningTriggers(): void {
+		$this->assertQuery(
+			'CREATE TABLE _tmp_table (
+				id INT NOT NULL,
+				created_at TIMESTAMP NOT NULL DEFAULT 0,
+				updated_at TIMESTAMP NULL ON UPDATE CURRENT_TIMESTAMP
+			)'
+		);
+
+		// Store the default verbatim, as older driver versions did, and apply it to the SQLite table.
+		$this->sqlite->exec( "UPDATE _wp_sqlite_mysql_information_schema_columns SET column_default = '0' WHERE table_name = '_tmp_table' AND column_name = 'created_at'" );
+		$this->assertQuery( 'OPTIMIZE TABLE _tmp_table' );
+		$this->assertQuery( "INSERT INTO _tmp_table (id, updated_at) VALUES (1, '2020-01-02 03:04:05')" );
+
+		// Updating the stored zero doesn't run the ON UPDATE CURRENT_TIMESTAMP trigger.
+		$this->reconnectAfterDriverUpgrade();
+		$this->assertQuery( 'SELECT created_at, updated_at FROM _tmp_table' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'created_at' => '0000-00-00 00:00:00',
+					'updated_at' => '2020-01-02 03:04:05',
+				),
+			),
+			$this->last_result
+		);
+
+		// The recreated table has the trigger again.
+		$this->assertQuery( 'UPDATE _tmp_table SET id = 2' );
+		$this->assertQuery( 'SELECT updated_at FROM _tmp_table' );
+		$this->assertNotSame( '2020-01-02 03:04:05', $this->last_result[0]->updated_at );
+	}
+
+	/**
+	 * @dataProvider migrationDriverVersions
+	 */
+	public function testConfigurationRunsMigrationsOnlyForOlderDriverVersions(
+		string $saved_version,
+		string $expected_default,
+		string $expected_precision
+	): void {
+		// Store the default verbatim and a zero precision, as older driver versions
+		// did, and apply them to the SQLite table.
+		$this->assertQuery( 'CREATE TABLE _tmp_table (created_at DATETIME(3) NOT NULL DEFAULT 0)' );
+		$this->sqlite->exec( "UPDATE _wp_sqlite_mysql_information_schema_columns SET column_default = '0', datetime_precision = 0 WHERE table_name = '_tmp_table'" );
+		$this->assertQuery( 'OPTIMIZE TABLE _tmp_table' );
+
+		// Configure the database as if it was last configured by the given driver version.
+		$this->sqlite->exec(
+			sprintf(
+				"UPDATE %s SET value = '%s' WHERE name = '%s'",
+				WP_MySQL_On_SQLite::GLOBAL_VARIABLES_TABLE_NAME,
+				$saved_version,
+				WP_MySQL_On_SQLite::DRIVER_VERSION_VARIABLE_NAME
+			)
+		);
+		$configurator = new WP_SQLite_Configurator(
+			$this->engine,
+			new WP_SQLite_Information_Schema_Builder( WP_MySQL_On_SQLite::RESERVED_PREFIX, $this->engine->get_connection() )
+		);
+		$configurator->configure_database();
+
+		$this->assertQuery( 'SHOW CREATE TABLE _tmp_table' );
+		$this->assertSame(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `_tmp_table` (',
+					"  `created_at` datetime(3) NOT NULL DEFAULT '$expected_default'",
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$this->last_result[0]->{'Create Table'}
+		);
+		$this->assertQuery( "SELECT datetime_precision FROM information_schema.columns WHERE table_name = '_tmp_table'" );
+		$this->assertSame( $expected_precision, $this->last_result[0]->DATETIME_PRECISION );
+	}
+
+	public static function migrationDriverVersions(): array {
+		return array(
+			'migrated from 3.1.1'     => array( '3.1.1', '0000-00-00 00:00:00.000', '3' ),
+			'not migrated from 3.1.2' => array( '3.1.2', '0', '0' ),
+		);
+	}
+
+	public function testConfigurationNormalizesStoredTemporalZeroDefaultsOfReferencedTable(): void {
+		$this->assertQuery( 'CREATE TABLE _tmp_parent (id INT PRIMARY KEY, created_at TIMESTAMP NOT NULL DEFAULT 0)' );
+		$this->assertQuery( 'CREATE TABLE _tmp_cascade (id INT PRIMARY KEY, parent_id INT, FOREIGN KEY (parent_id) REFERENCES _tmp_parent (id) ON DELETE CASCADE)' );
+		$this->assertQuery( 'CREATE TABLE _tmp_no_action (id INT PRIMARY KEY, parent_id INT, FOREIGN KEY (parent_id) REFERENCES _tmp_parent (id))' );
+
+		// Store the default verbatim, as older driver versions did, and apply it to the SQLite table.
+		$this->sqlite->exec( "UPDATE _wp_sqlite_mysql_information_schema_columns SET column_default = '0' WHERE table_name = '_tmp_parent' AND column_name = 'created_at'" );
+		$this->assertQuery( 'OPTIMIZE TABLE _tmp_parent' );
+
+		$this->assertQuery( 'INSERT INTO _tmp_parent (id) VALUES (1), (2)' );
+		$this->assertQuery( 'INSERT INTO _tmp_cascade (id, parent_id) VALUES (1, 1), (2, 2)' );
+		$this->assertQuery( 'INSERT INTO _tmp_no_action (id, parent_id) VALUES (1, 1)' );
+
+		// Recreating the parent table must not trigger the foreign key actions.
+		$this->reconnectAfterDriverUpgrade();
+
+		$this->assertQuery( 'SHOW CREATE TABLE _tmp_parent' );
+		$this->assertSame(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `_tmp_parent` (',
+					'  `id` int NOT NULL,',
+					"  `created_at` timestamp NOT NULL DEFAULT '0000-00-00 00:00:00',",
+					'  PRIMARY KEY (`id`)',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$this->last_result[0]->{'Create Table'}
+		);
+		$this->assertQuery( 'SELECT id, parent_id FROM _tmp_cascade ORDER BY id' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'        => '1',
+					'parent_id' => '1',
+				),
+				(object) array(
+					'id'        => '2',
+					'parent_id' => '2',
+				),
+			),
+			$this->last_result
+		);
+		$this->assertQuery( 'SELECT COUNT(*) AS count FROM _tmp_no_action' );
+		$this->assertSame( '1', $this->last_result[0]->count );
+
+		// Foreign keys are enforced again.
+		$this->assertQueryError(
+			'DELETE FROM _tmp_parent WHERE id = 1',
+			'SQLSTATE[23000]: Integrity constraint violation: 19 FOREIGN KEY constraint failed'
+		);
+		$this->assertQuery( 'DELETE FROM _tmp_parent WHERE id = 2' );
+		$this->assertQuery( 'SELECT id FROM _tmp_cascade' );
+		$this->assertEquals( array( (object) array( 'id' => '1' ) ), $this->last_result );
+	}
+
+	public function testConfigurationNormalizesTemporalZeroDefaultsOfReconstructedTable(): void {
+		// A table created by the legacy SQLite driver, with no information schema data.
+		$this->sqlite->exec(
+			'CREATE TABLE _mysql_data_types_cache (
+				`table` TEXT NOT NULL,
+				`column_or_index` TEXT NOT NULL,
+				`mysql_type` TEXT NOT NULL,
+				PRIMARY KEY(`table`, `column_or_index`)
+			)'
+		);
+		$this->sqlite->exec(
+			"INSERT INTO _mysql_data_types_cache VALUES
+				('_tmp_table', 'id', 'int'),
+				('_tmp_table', 'created_at', 'timestamp'),
+				('_tmp_table', 'created_at_fsp', 'datetime(3)'),
+				('_tmp_table', 'updated_on', 'date'),
+				('_tmp_table', 'year_number', 'year'),
+				('_tmp_table', 'year_string', 'year'),
+				('_tmp_double_quoted', 'id', 'int'),
+				('_tmp_double_quoted', 'created_at', 'timestamp'),
+				('_tmp_number_forms', 'id', 'int'),
+				('_tmp_number_forms', 'negative_zero', 'datetime'),
+				('_tmp_number_forms', 'decimal_zero', 'datetime')"
+		);
+		$this->sqlite->exec(
+			"CREATE TABLE _tmp_table (
+				id INTEGER,
+				created_at TEXT NOT NULL DEFAULT 0,
+				created_at_fsp TEXT NOT NULL DEFAULT 0,
+				updated_on TEXT NOT NULL DEFAULT '0',
+				year_number TEXT NOT NULL DEFAULT 0,
+				year_string TEXT NOT NULL DEFAULT '0'
+			)"
+		);
+		$this->sqlite->exec( 'INSERT INTO _tmp_table (id) VALUES (1)' );
+
+		// A double-quoted SQLite default is a string as well.
+		$this->sqlite->exec( 'CREATE TABLE _tmp_double_quoted (id INTEGER, created_at TEXT NOT NULL DEFAULT "0")' );
+		$this->sqlite->exec( 'INSERT INTO _tmp_double_quoted (id) VALUES (1)' );
+
+		// Rows store numeric defaults as converted by the column affinity, e.g., -0 as '0'.
+		$this->sqlite->exec( 'CREATE TABLE _tmp_number_forms (id INTEGER, negative_zero TEXT NOT NULL DEFAULT -0, decimal_zero TEXT NOT NULL DEFAULT 0.0)' );
+		$this->sqlite->exec( 'INSERT INTO _tmp_number_forms (id) VALUES (1)' );
+
+		// The information schema is reconstructed, and then the defaults are normalized.
+		// A string zero of a YEAR column, such as '0', is not normalized.
+		$this->reconnectAfterDriverUpgrade();
+		$this->assertQuery( 'SHOW CREATE TABLE _tmp_table' );
+		$this->assertSame(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `_tmp_table` (',
+					'  `id` int DEFAULT NULL,',
+					"  `created_at` timestamp NOT NULL DEFAULT '0000-00-00 00:00:00',",
+					"  `created_at_fsp` datetime(3) NOT NULL DEFAULT '0000-00-00 00:00:00.000',",
+					"  `updated_on` date NOT NULL DEFAULT '0000-00-00',",
+					"  `year_number` year NOT NULL DEFAULT '0000',",
+					"  `year_string` year NOT NULL DEFAULT '0'",
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$this->last_result[0]->{'Create Table'}
+		);
+
+		// The existing row gets the zero values, except for the YEAR string zero.
+		// New rows get the normalized defaults.
+		$this->assertQuery( 'INSERT INTO _tmp_table (id) VALUES (2)' );
+		$this->assertQuery( 'SELECT * FROM _tmp_table ORDER BY id' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'             => '1',
+					'created_at'     => '0000-00-00 00:00:00',
+					'created_at_fsp' => '0000-00-00 00:00:00.000',
+					'updated_on'     => '0000-00-00',
+					'year_number'    => '0000',
+					'year_string'    => '0',
+				),
+				(object) array(
+					'id'             => '2',
+					'created_at'     => '0000-00-00 00:00:00',
+					'created_at_fsp' => '0000-00-00 00:00:00.000',
+					'updated_on'     => '0000-00-00',
+					'year_number'    => '0000',
+					'year_string'    => '0',
+				),
+			),
+			$this->last_result
+		);
+
+		$this->assertQuery( 'INSERT INTO _tmp_double_quoted (id) VALUES (2)' );
+		$this->assertQuery( 'SELECT id, created_at FROM _tmp_double_quoted ORDER BY id' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'         => '1',
+					'created_at' => '0000-00-00 00:00:00',
+				),
+				(object) array(
+					'id'         => '2',
+					'created_at' => '0000-00-00 00:00:00',
+				),
+			),
+			$this->last_result
+		);
+
+		$this->assertQuery( 'SELECT negative_zero, decimal_zero FROM _tmp_number_forms' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'negative_zero' => '0000-00-00 00:00:00',
+					'decimal_zero'  => '0000-00-00 00:00:00',
+				),
+			),
+			$this->last_result
+		);
+	}
+
+	public function testConfigurationRollsBackWhenRecreatingTableFails(): void {
+		$this->assertQuery( 'CREATE TABLE _tmp_recreated (id INT, created_at TIMESTAMP NOT NULL DEFAULT 0)' );
+		$this->assertQuery( 'CREATE TABLE _tmp_failing (id INT, created_at TIMESTAMP NOT NULL DEFAULT 0)' );
+		$this->assertQuery( 'INSERT INTO _tmp_failing (id) VALUES (NULL)' );
+
+		// Store the defaults verbatim, as older driver versions did, and apply them to the SQLite tables.
+		$this->sqlite->exec( "UPDATE _wp_sqlite_mysql_information_schema_columns SET column_default = '0' WHERE table_name IN ('_tmp_recreated', '_tmp_failing') AND column_name = 'created_at'" );
+		$this->assertQuery( 'OPTIMIZE TABLE _tmp_recreated, _tmp_failing' );
+
+		// Make recreating the second table fail, as its data doesn't match the information schema.
+		$this->sqlite->exec( "UPDATE _wp_sqlite_mysql_information_schema_columns SET is_nullable = 'NO' WHERE table_name = '_tmp_failing' AND column_name = 'id'" );
+
+		$sqlite_schema_query = "SELECT sql FROM sqlite_master WHERE name IN ('_tmp_recreated', '_tmp_failing') ORDER BY name";
+		$sqlite_schema       = $this->sqlite->query( $sqlite_schema_query )->fetchAll( PDO::FETCH_COLUMN );
+
+		$exception = null;
+		try {
+			$this->reconnectAfterDriverUpgrade();
+		} catch ( Throwable $e ) {
+			$exception = $e;
+		}
+		$this->assertInstanceOf( WP_MySQL_On_SQLite_Exception::class, $exception );
+		$this->assertStringContainsString( 'Failed to recreate table "_tmp_failing"', $exception->getMessage() );
+		$this->assertStringContainsString( 'NOT NULL constraint failed', $exception->getMessage() );
+
+		// All configuration changes are rolled back, including the recreated table.
+		$this->assertSame( '0.0.0', $this->engine->get_saved_driver_version() );
+		$this->assertSame( $sqlite_schema, $this->sqlite->query( $sqlite_schema_query )->fetchAll( PDO::FETCH_COLUMN ) );
+		$this->assertQuery( "SELECT table_name, column_default FROM information_schema.columns WHERE column_name = 'created_at' ORDER BY table_name" );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'TABLE_NAME'     => '_tmp_failing',
+					'COLUMN_DEFAULT' => '0',
+				),
+				(object) array(
+					'TABLE_NAME'     => '_tmp_recreated',
+					'COLUMN_DEFAULT' => '0',
+				),
+			),
+			$this->last_result
+		);
+
+		// Foreign keys are enabled again.
+		$this->assertSame( 1, (int) $this->sqlite->query( 'PRAGMA foreign_keys' )->fetchColumn() );
+	}
+
+	public function testConfigurationKeepsTransactionOfSharedConnection(): void {
+		// The configuration can't start its transaction within an active one.
+		$this->sqlite->beginTransaction();
+		$this->sqlite->exec( "INSERT INTO _options (option_name, option_value) VALUES ('name', 'value')" );
+		$error = '';
+		try {
+			$this->reconnectAfterDriverUpgrade();
+		} catch ( Throwable $e ) {
+			$error = $e->getMessage();
+		}
+		$this->assertStringContainsString( 'cannot start a transaction within a transaction', $error );
+
+		// The failed configuration must not roll back the active transaction.
+		$this->assertTrue( $this->sqlite->inTransaction() );
+		$this->assertSame( 1, (int) $this->sqlite->query( "SELECT COUNT(*) FROM _options WHERE option_name = 'name'" )->fetchColumn() );
+		$this->sqlite->rollBack();
+	}
+
+	public function testConfigurationRecreatesTablesWithDriverSubclass(): void {
+		$this->assertQuery( 'CREATE TABLE _tmp_table (id INT, created_at TIMESTAMP NOT NULL DEFAULT 0)' );
+
+		// Store the default verbatim, as older driver versions did, and apply it to the SQLite table.
+		$this->sqlite->exec( "UPDATE _wp_sqlite_mysql_information_schema_columns SET column_default = '0' WHERE table_name = '_tmp_table' AND column_name = 'created_at'" );
+		$this->assertQuery( 'OPTIMIZE TABLE _tmp_table' );
+
+		// Configure the database again, using a driver subclass.
+		$this->sqlite->exec(
+			sprintf(
+				"UPDATE %s SET value = '0.0.0' WHERE name = '%s'",
+				WP_MySQL_On_SQLite::GLOBAL_VARIABLES_TABLE_NAME,
+				WP_MySQL_On_SQLite::DRIVER_VERSION_VARIABLE_NAME
+			)
+		);
+		$this->engine = new class(
+			'mysql-on-sqlite:dbname=wp',
+			null,
+			null,
+			array( 'sqlite_pdo' => $this->sqlite )
+		) extends WP_MySQL_On_SQLite {};
+		$this->engine->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
+
+		// The table was recreated, so new rows get the normalized default.
+		$this->assertQuery( 'INSERT INTO _tmp_table (id) VALUES (1)' );
+		$this->assertQuery( 'SELECT created_at FROM _tmp_table' );
+		$this->assertSame( '0000-00-00 00:00:00', $this->last_result[0]->created_at );
 	}
 
 	public function testShowCreateTableWithEmptyDatetimeDefault() {

@@ -234,6 +234,44 @@ class WP_MySQL_On_SQLite_Metadata_Tests extends TestCase {
 		return $retval;
 	}
 
+	public function testAnalyzeTable() {
+		$this->assertQuery( 'CREATE TABLE t1 (id INT, name TEXT)' );
+
+		// A good table.
+		$result = $this->assertQuery( 'ANALYZE TABLE t1' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Table'    => 'wp.t1',
+					'Op'       => 'analyze',
+					'Msg_type' => 'status',
+					'Msg_text' => 'OK',
+				),
+			),
+			$result
+		);
+
+		// A missing table.
+		$result = $this->assertQuery( 'ANALYZE TABLE missing' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Table'    => 'wp.missing',
+					'Op'       => 'analyze',
+					'Msg_type' => 'Error',
+					'Msg_text' => "Table 'missing' doesn't exist",
+				),
+				(object) array(
+					'Table'    => 'wp.missing',
+					'Op'       => 'analyze',
+					'Msg_type' => 'status',
+					'Msg_text' => 'Operation failed',
+				),
+			),
+			$result
+		);
+	}
+
 	public function testCheckTable() {
 		$this->assertQuery( 'CREATE TABLE t1 (id INT, name TEXT)' );
 		$this->assertQuery( 'CREATE TABLE t2 (id INT, name TEXT)' );
@@ -427,6 +465,33 @@ class WP_MySQL_On_SQLite_Metadata_Tests extends TestCase {
 				),
 				(object) array(
 					'Table'    => 'wp.missing',
+					'Op'       => 'optimize',
+					'Msg_type' => 'status',
+					'Msg_text' => 'Operation failed',
+				),
+			),
+			$result
+		);
+	}
+
+	public function testOptimizeTableWithFailedRecreation() {
+		$this->assertQuery( 'CREATE TABLE t (id INT, name TEXT)' );
+
+		// Make recreating the table fail, as its information schema names a column that doesn't exist.
+		$this->sqlite->exec( "UPDATE _wp_sqlite_mysql_information_schema_columns SET column_name = 'title' WHERE table_name = 't' AND column_name = 'name'" );
+
+		// The error from SQLite is reported, not a missing table.
+		$result = $this->assertQuery( 'OPTIMIZE TABLE t' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Table'    => 'wp.t',
+					'Op'       => 'optimize',
+					'Msg_type' => 'Error',
+					'Msg_text' => 'SQLSTATE[HY000]: General error: 1 no such column: title',
+				),
+				(object) array(
+					'Table'    => 'wp.t',
 					'Op'       => 'optimize',
 					'Msg_type' => 'status',
 					'Msg_text' => 'Operation failed',

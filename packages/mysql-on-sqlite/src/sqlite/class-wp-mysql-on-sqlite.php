@@ -4155,7 +4155,11 @@ class WP_MySQL_On_SQLite extends PDO {
 			} catch ( PDOException $e ) {
 				if ( '42S02' === $e->getCode() && isset( $e->errorInfo[2] ) ) {
 					$errors = array( $e->errorInfo[2] );
-				} elseif ( 'HY000' === $e->getCode() ) {
+				} elseif (
+					// SQLite reports a missing table as a general error.
+					'HY000' === $e->getCode()
+					&& str_starts_with( $e->errorInfo[2] ?? '', 'no such table' )
+				) {
 					$errors = array( "Table '$table_name' doesn't exist" );
 				} else {
 					$errors = array( $e->getMessage() );
