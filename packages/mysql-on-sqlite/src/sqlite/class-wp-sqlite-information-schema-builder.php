@@ -676,11 +676,14 @@ class WP_SQLite_Information_Schema_Builder {
 			// ADD
 			if ( WP_MySQL_Lexer::ADD_SYMBOL === $first_token->id ) {
 				// ADD [COLUMN] (...[, ...])
-				$column_definitions = $action->get_descendant_nodes( 'columnDefinition' );
-				if ( count( $column_definitions ) > 0 ) {
-					foreach ( $column_definitions as $column_definition ) {
-						$name = $this->get_value( $column_definition->get_first_child_node( 'identifier' ) );
+				$table_element_list = $action->get_first_child_node( 'tableElementList' );
+				if ( null !== $table_element_list ) {
+					foreach ( $table_element_list->get_descendant_nodes( 'columnDefinition' ) as $column_definition ) {
+						$name = $this->get_value( $column_definition->get_first_child_node( 'fieldIdentifier' ) );
 						$this->record_add_column( $table_is_temporary, $table_name, $name, $column_definition );
+					}
+					foreach ( $table_element_list->get_descendant_nodes( 'tableConstraintDef' ) as $constraint ) {
+						$this->record_add_constraint_or_index( $table_is_temporary, $table_name, $constraint );
 					}
 					continue;
 				}
