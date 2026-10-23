@@ -178,6 +178,35 @@ class WP_MySQL_On_SQLite_Concurrency_Tests extends TestCase {
 		}
 	}
 
+	public function testWriteQueryFailsImmediatelyWithZeroBusyTimeoutWhileAnotherConnectionHoldsWriteLock(): void {
+		// Connection A: set up the database and hold a write transaction.
+		$conn_a   = new WP_SQLite_Connection( array( 'path' => $this->db_path ) );
+		$driver_a = $this->create_driver( $conn_a );
+		$driver_a->query( 'CREATE TABLE t (id INT, name VARCHAR(255))' );
+		$driver_a->query( "INSERT INTO t VALUES (1, 'Alice')" );
+
+		// Simulate another PHP process holding a write transaction.
+		$conn_a->get_pdo()->exec( 'BEGIN IMMEDIATE' );
+
+		try {
+			// Connection B with a zero busy timeout — any lock conflict fails
+			// immediately instead of waiting for the default timeout.
+			$driver_b = new WP_MySQL_On_SQLite(
+				sprintf( 'mysql-on-sqlite:path=%s;dbname=wp', $this->db_path ),
+				null,
+				null,
+				array( 'sqlite_timeout' => 0 )
+			);
+
+			$this->expectException( PDOException::class );
+			$this->expectExceptionMessage( 'database is locked' );
+
+			$driver_b->query( "INSERT INTO t VALUES (2, 'Bob')" );
+		} finally {
+			$conn_a->get_pdo()->exec( 'ROLLBACK' );
+		}
+	}
+
 	private function create_in_memory_driver(): WP_MySQL_On_SQLite {
 		$pdo_class  = PHP_VERSION_ID >= 80400 ? Pdo\Sqlite::class : PDO::class;
 		$pdo        = new $pdo_class( 'sqlite::memory:' );
