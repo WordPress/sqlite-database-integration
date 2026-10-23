@@ -1612,20 +1612,10 @@ class WP_MySQL_On_SQLite extends PDO {
 			$this->mysql_version,
 			$this->get_active_sql_mode_names()
 		);
-		$tokens = $lexer instanceof WP_MySQL_Native_Lexer
-			? $lexer->native_token_stream()
-			: $lexer->remaining_tokens();
-		return $this->reset_or_create_parser( $tokens );
-	}
+		$tokens = $lexer->remaining_tokens();
 
-	/**
-	 * Reset the reusable parser with new tokens or create it on first use.
-	 *
-	 * @param  array<WP_Parser_Token>|object $tokens Parser tokens.
-	 * @return WP_MySQL_Parser                       A parser initialized for the token stream.
-	 */
-	private function reset_or_create_parser( $tokens ): WP_MySQL_Parser {
-		if ( null === $this->mysql_parser || ! method_exists( $this->mysql_parser, 'reset_tokens' ) ) {
+		// Reset the reusable parser with new tokens or create it on first use.
+		if ( null === $this->mysql_parser ) {
 			$this->mysql_parser = new WP_MySQL_Parser( self::$mysql_grammar, $tokens );
 		} else {
 			$this->mysql_parser->reset_tokens( $tokens );
