@@ -1036,6 +1036,17 @@ class WP_SQLite_Information_Schema_Builder {
 			throw WP_SQLite_Information_Schema_Exception::column_not_found( $column_name, $table_name );
 		}
 
+		/*
+		 * MySQL accepts these changes but hides them from its schema.
+		 * These are known MySQL bugs that are not worth replicating.
+		 *
+		 * @see https://bugs.mysql.com/bug.php?id=111702
+		 * @see https://bugs.mysql.com/bug.php?id=80222
+		 */
+		if ( str_contains( $column['EXTRA'], 'auto_increment' ) ) {
+			throw new Exception( 'SET DEFAULT and DROP DEFAULT on AUTO_INCREMENT columns are not supported.' );
+		}
+
 		$default = null;
 		$extra   = trim( str_replace( 'DEFAULT_GENERATED', '', $column['EXTRA'] ) );
 		if ( $node->has_child_token( WP_MySQL_Lexer::SET_SYMBOL ) ) {
@@ -1048,20 +1059,8 @@ class WP_SQLite_Information_Schema_Builder {
 				throw WP_SQLite_Information_Schema_Exception::invalid_default_value( $column_name );
 			}
 			if ( $expression && ! $literal ) {
-				if ( str_contains( $extra, 'auto_increment' ) ) {
-					throw WP_SQLite_Information_Schema_Exception::invalid_default_value( $column_name );
-				}
 				$extra = trim( 'DEFAULT_GENERATED ' . $extra );
 			}
-		}
-
-		/*
-		 * MySQL hides SET DEFAULT and DROP DEFAULT on AUTO_INCREMENT columns from
-		 * the schema, but applies them to inserts that omit the column. Emulating
-		 * that would need hidden metadata, so the driver keeps generating IDs.
-		 */
-		if ( str_contains( $extra, 'auto_increment' ) ) {
-			$default = null;
 		}
 
 		$this->update_values(

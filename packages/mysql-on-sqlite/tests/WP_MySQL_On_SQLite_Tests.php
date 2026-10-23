@@ -2806,45 +2806,54 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 	}
 
 	/**
-	 * @dataProvider alterAutoIncrementDefaultValues
+	 * @dataProvider alterAutoIncrementDefaultActions
 	 */
-	public function testAlterColumnDefaultOnAutoIncrementColumn( string $default_clause, bool $valid ): void {
-		$this->assertQuery( 'CREATE TABLE t (id INT PRIMARY KEY AUTO_INCREMENT, value INT DEFAULT 1)' );
-		if ( $valid ) {
-			$this->assertQuery( "ALTER TABLE t ALTER id SET DEFAULT $default_clause, ALTER value SET DEFAULT 5" );
-		} else {
-			$this->assertQueryError(
-				"ALTER TABLE t ALTER value SET DEFAULT 5, ALTER id SET DEFAULT $default_clause",
-				"SQLSTATE[42000]: Syntax error or access violation: 1067 Invalid default value for 'id'"
-			);
-		}
-		$columns = $this->assertQuery( 'SHOW COLUMNS FROM t' );
-		$this->assertNull( $columns[0]->Default );
-		$this->assertSame( 'auto_increment', $columns[0]->Extra );
-		$this->assertSame( $valid ? '5' : '1', $columns[1]->Default );
-		$create_table = $this->assertQuery( 'SHOW CREATE TABLE t' )[0]->{'Create Table'};
-		$this->assertStringContainsString( "`id` int NOT NULL AUTO_INCREMENT,\n", $create_table );
-
-		// Unlike MySQL, the driver ignores an accepted default and generates an ID.
+	public function testAlterColumnDefaultRejectsAutoIncrementColumn( string $action, string $temporary ): void {
+		$this->assertQuery( "CREATE $temporary TABLE t (id INT PRIMARY KEY AUTO_INCREMENT, value INT DEFAULT 1)" );
 		$this->assertQuery( 'INSERT INTO t (value) VALUES (1)' );
-		$this->assertSame( '1', $this->assertQuery( 'SELECT id FROM t' )[0]->id );
+		$columns      = $this->assertQuery( 'SHOW COLUMNS FROM t' );
+		$create_table = $this->assertQuery( 'SHOW CREATE TABLE t' );
 
-		// Unlike MySQL in strict mode, the driver doesn't reject an omitted ID after DROP DEFAULT.
-		$this->assertQuery( 'ALTER TABLE t ALTER id DROP DEFAULT' );
-		$this->assertQuery( 'INSERT INTO t (value) VALUES (1)' );
-		$this->assertSame( '2', $this->assertQuery( 'SELECT MAX(id) AS id FROM t' )[0]->id );
+		$this->assertQueryError(
+			"ALTER TABLE t ALTER value SET DEFAULT 5, ALTER id $action",
+			'SET DEFAULT and DROP DEFAULT on AUTO_INCREMENT columns are not supported.'
+		);
+		$this->assertEquals( $columns, $this->assertQuery( 'SHOW COLUMNS FROM t' ) );
+		$this->assertEquals( $create_table, $this->assertQuery( 'SHOW CREATE TABLE t' ) );
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (NULL)' );
+		$this->assertQuery( 'INSERT INTO t (value) VALUES (2)' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'    => '1',
+					'value' => '1',
+				),
+				(object) array(
+					'id'    => '2',
+					'value' => '1',
+				),
+				(object) array(
+					'id'    => '3',
+					'value' => '2',
+				),
+			),
+			$this->assertQuery( 'SELECT * FROM t ORDER BY id' )
+		);
 	}
 
-	public static function alterAutoIncrementDefaultValues(): array {
+	public static function alterAutoIncrementDefaultActions(): array {
 		return array(
-			'literal'               => array( '10', true ),
-			'parenthesized literal' => array( '(10)', true ),
-			'nested literal'        => array( '((10))', true ),
-			'unary plus'            => array( '(+10)', true ),
-			'numeric string'        => array( "'10'", true ),
-			'null'                  => array( 'NULL', false ),
-			'parenthesized null'    => array( '(NULL)', false ),
-			'expression'            => array( '(1 + 2)', false ),
+			'literal'                => array( 'SET DEFAULT 10', '' ),
+			'parenthesized literal'  => array( 'SET DEFAULT (10)', '' ),
+			'nested literal'         => array( 'SET DEFAULT ((10))', '' ),
+			'unary plus'             => array( 'SET DEFAULT (+10)', '' ),
+			'numeric string'         => array( "SET DEFAULT '10'", '' ),
+			'null'                   => array( 'SET DEFAULT NULL', '' ),
+			'parenthesized null'     => array( 'SET DEFAULT (NULL)', '' ),
+			'expression'             => array( 'SET DEFAULT (1 + 2)', '' ),
+			'drop default'           => array( 'DROP DEFAULT', '' ),
+			'temporary set default'  => array( 'SET DEFAULT 10', 'TEMPORARY' ),
+			'temporary drop default' => array( 'DROP DEFAULT', 'TEMPORARY' ),
 		);
 	}
 
