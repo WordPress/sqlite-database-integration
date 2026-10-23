@@ -765,6 +765,16 @@ class WP_SQLite_Information_Schema_Builder {
 					continue;
 				}
 			}
+
+			// ALTER [COLUMN]
+			if ( WP_MySQL_Lexer::ALTER_SYMBOL === $first_token->id ) {
+				// SET DEFAULT and DROP DEFAULT
+				$column_ref = $action->get_first_child_node( 'fieldIdentifier' );
+				if ( null !== $column_ref && $action->has_child_token( WP_MySQL_Lexer::DEFAULT_SYMBOL ) ) {
+					$name = $this->get_value( $column_ref );
+					$this->record_alter_column_default( $table_is_temporary, $table_name, $name, $action );
+				}
+			}
 		}
 	}
 
@@ -1000,6 +1010,103 @@ class WP_SQLite_Information_Schema_Builder {
 		WP_Parser_Node $node
 	): void {
 		$this->record_change_column( $table_is_temporary, $table_name, $column_name, $column_name, $node );
+	}
+
+	/**
+	 * Record SET DEFAULT or DROP DEFAULT data in the information schema.
+	 *
+	 * @param bool           $table_is_temporary Whether the table is temporary.
+	 * @param string         $table_name         The table name.
+	 * @param string         $column_name        The column name.
+	 * @param WP_Parser_Node $node               The "alterListItem" AST node.
+	 */
+	private function record_alter_column_default(
+		bool $table_is_temporary,
+		string $table_name,
+		string $column_name,
+		WP_Parser_Node $node
+	): void {
+		$columns_table = $this->get_table_name( $table_is_temporary, 'columns' );
+		$column        = $this->connection->query(
+			'SELECT DATA_TYPE, IS_NULLABLE, EXTRA FROM ' . $this->connection->quote_identifier( $columns_table ) . '
+			WHERE table_schema = ? AND table_name = ? AND column_name = ?',
+			array( self::SAVED_DATABASE_NAME, $table_name, $column_name )
+		)->fetch( PDO::FETCH_ASSOC );
+		if ( false === $column ) {
+			throw WP_SQLite_Information_Schema_Exception::column_not_found( $column_name, $table_name );
+		}
+
+		/*
+		 * MySQL accepts these changes but hides them from its schema.
+		 * These are known MySQL bugs that are not worth replicating.
+		 *
+		 * @see https://bugs.mysql.com/bug.php?id=111702
+		 * @see https://bugs.mysql.com/bug.php?id=80222
+		 */
+		if ( str_contains( $column['EXTRA'], 'auto_increment' ) ) {
+			throw new Exception( 'SET DEFAULT and DROP DEFAULT on AUTO_INCREMENT columns are not supported.' );
+		}
+
+		$default = null;
+		$extra   = trim( str_replace( 'DEFAULT_GENERATED', '', $column['EXTRA'] ) );
+		if ( $node->has_child_token( WP_MySQL_Lexer::SET_SYMBOL ) ) {
+			$expression = $node->get_first_child_node( 'exprWithParentheses' );
+			$literal    = $expression ? $this->get_parenthesized_default_literal( $expression ) : null;
+			$default    = $literal
+				? $this->get_literal_default( $literal, $column['DATA_TYPE'], $column_name )
+				: $this->get_default_value( $node, $column['DATA_TYPE'], $column_name );
+			if ( null === $default && 'NO' === $column['IS_NULLABLE'] ) {
+				throw WP_SQLite_Information_Schema_Exception::invalid_default_value( $column_name );
+			}
+			if ( $expression && ! $literal ) {
+				$extra = trim( 'DEFAULT_GENERATED ' . $extra );
+			}
+		}
+
+		$this->update_values(
+			$columns_table,
+			array(
+				'column_default' => $default,
+				'extra'          => $extra,
+			),
+			array(
+				'table_schema' => self::SAVED_DATABASE_NAME,
+				'table_name'   => $table_name,
+				'column_name'  => $column_name,
+			)
+		);
+	}
+
+	/**
+	 * Find a literal wrapped only in parentheses or unary plus operators.
+	 *
+	 * @param  WP_Parser_Node $node The default expression.
+	 * @return WP_Parser_Node|null  The literal, or null for other expressions.
+	 */
+	private function get_parenthesized_default_literal( WP_Parser_Node $node ): ?WP_Parser_Node {
+		while ( 'literal' !== $node->rule_name ) {
+			$children = $node->get_children();
+			if (
+				3 === count( $children )
+				&& $children[0] instanceof WP_Parser_Token
+				&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $children[0]->id
+				&& $children[2] instanceof WP_Parser_Token
+				&& WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $children[2]->id
+			) {
+				$children = array( $children[1] );
+			} elseif (
+				2 === count( $children )
+				&& $children[0] instanceof WP_Parser_Token
+				&& WP_MySQL_Lexer::PLUS_OPERATOR === $children[0]->id
+			) {
+				$children = array( $children[1] );
+			}
+			if ( 1 !== count( $children ) || ! $children[0] instanceof WP_Parser_Node ) {
+				return null;
+			}
+			$node = $children[0];
+		}
+		return $node;
 	}
 
 	/**
@@ -2079,34 +2186,54 @@ class WP_SQLite_Information_Schema_Builder {
 		if ( null === $default_attr ) {
 			return null;
 		}
+		return $this->get_default_value( $default_attr, $data_type, $column_name );
+	}
 
+	/**
+	 * Extract a default value from a column attribute or ALTER COLUMN action.
+	 *
+	 * @param  WP_Parser_Node $node        The "columnAttribute" or "alterListItem" AST node.
+	 * @param  string         $data_type   The column data type as stored in information schema.
+	 * @param  string         $column_name The column name.
+	 * @return string|null                 The default value as stored in information schema.
+	 */
+	private function get_default_value( WP_Parser_Node $node, string $data_type, string $column_name ): ?string {
 		/*
 		 * [GRAMMAR]
-		 * DEFAULT_SYMBOL (
-		 *    signedLiteral
-		 *    | NOW_SYMBOL timeFunctionParameters?
-		 *    | {serverVersion >= 80013}? exprWithParentheses
-		 * )
+		 * columnAttribute:
+		 *   DEFAULT_SYMBOL (
+		 *      signedLiteral
+		 *      | NOW_SYMBOL timeFunctionParameters?
+		 *      | {serverVersion >= 80013}? exprWithParentheses
+		 *   )
+		 *
+		 * alterListItem:
+		 *   ALTER_SYMBOL COLUMN_SYMBOL? fieldIdentifier SET_SYMBOL DEFAULT_SYMBOL (
+		 *      {serverVersion >= 80014}? exprWithParentheses
+		 *      | signedLiteral
+		 *   )
 		 */
 
 		// DEFAULT NOW()
-		if ( $default_attr->has_child_token( WP_MySQL_Lexer::NOW_SYMBOL ) ) {
+		if ( $node->has_child_token( WP_MySQL_Lexer::NOW_SYMBOL ) ) {
 			return 'CURRENT_TIMESTAMP';
 		}
 
 		// DEFAULT signedLiteral
-		$signed_literal = $default_attr->get_first_child_node( 'signedLiteral' );
+		$signed_literal = $node->get_first_child_node( 'signedLiteral' );
 		if ( $signed_literal ) {
 			$literal = $signed_literal->get_first_child_node( 'literal' );
 			if ( null === $literal ) {
 				// A signed number, such as "-5", has no "literal" child node.
-				return $this->get_value( $signed_literal );
+				// Like MySQL, drop the unary plus, e.g., "+5" becomes "5".
+				$number = ltrim( $this->get_value( $signed_literal ), '+' );
+				return $this->normalize_literal_default( $number, $data_type, $column_name );
 			}
 			return $this->get_literal_default( $literal, $data_type, $column_name );
 		}
 
 		// DEFAULT (expression) - MySQL 8.0.13+ supports exprWithParentheses
-		$expr_with_parens = $default_attr->get_first_child_node( 'exprWithParentheses' );
+		$expr_with_parens = $node->get_first_child_node( 'exprWithParentheses' );
 		if ( $expr_with_parens ) {
 			return $this->serialize_mysql_expression( $expr_with_parens );
 		}
@@ -2135,14 +2262,24 @@ class WP_SQLite_Information_Schema_Builder {
 			return 'bit' === $data_type ? "b'{$bool_value}'" : $bool_value;
 		}
 
-		$default = $this->get_value( $literal );
+		return $this->normalize_literal_default( $this->get_value( $literal ), $data_type, $column_name );
+	}
 
+	/**
+	 * Normalize a literal default value for the column data type.
+	 *
+	 * @param  string $default_value The literal default value.
+	 * @param  string $data_type     The column data type as stored in information schema.
+	 * @param  string $column_name   The column name.
+	 * @return string                The default value as stored in information schema.
+	 */
+	private function normalize_literal_default( string $default_value, string $data_type, string $column_name ): string {
 		if ( 'bit' === $data_type ) {
 			/*
 			 * @TODO: Validate and normalize defaults from their AST and the full
 			 * column definition before storing them in the information schema.
 			 */
-			$bit_default = $this->get_bit_default( $default );
+			$bit_default = $this->get_bit_default( $default_value );
 			if ( null === $bit_default ) {
 				throw WP_SQLite_Information_Schema_Exception::invalid_default_value( $column_name );
 			}
@@ -2158,13 +2295,13 @@ class WP_SQLite_Information_Schema_Builder {
 		 *  - The charset introducer dropped from text-literal defaults.
 		 *  - Numeric defaults normalized, e.g. 1.0 to 1 or 1e3 to 1000.
 		 */
-		return $default;
+		return $default_value;
 	}
 
 	/**
 	 * Normalize a BIT default value to a MySQL bit literal.
 	 *
-	 * The value may be a bit literal, a hex literal, or a decimal.
+	 * The value may be a bit literal, a hex literal, or a non-negative decimal.
 	 *
 	 * @param  string      $default_value The BIT default value.
 	 * @return string|null                The default as a bit literal, e.g. "b'101'", or null when not a bit value.
@@ -2194,8 +2331,8 @@ class WP_SQLite_Information_Schema_Builder {
 			return "b'" . decbin( hexdec( $matches[1] ) ) . "'";
 		}
 
-		// Decimal, e.g. 5, or a numeric string literal such as '0'.
-		if ( is_numeric( $value ) ) {
+		// Non-negative decimal, e.g. 5, or a numeric string literal such as '0'.
+		if ( is_numeric( $value ) && $value >= 0 ) {
 			return "b'" . decbin( (int) $value ) . "'";
 		}
 
