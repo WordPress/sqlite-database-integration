@@ -474,31 +474,40 @@ class WP_MySQL_On_SQLite_Metadata_Tests extends TestCase {
 		);
 	}
 
-	public function testOptimizeTableWithFailedRecreation() {
-		$this->assertQuery( 'CREATE TABLE t (id INT, name TEXT)' );
+	/**
+	 * @dataProvider data_rebuild_operations_and_table_types
+	 */
+	public function testAdministrationWithFailedRecreation( string $operation, bool $temporary ): void {
+		$this->assertQuery( 'CREATE ' . ( $temporary ? 'TEMPORARY ' : '' ) . 'TABLE t (id INT, name TEXT)' );
+		$this->assertQuery( "INSERT INTO t VALUES (1, 'a'), (2, 'b')" );
 
 		// Make recreating the table fail, as its information schema names a column that doesn't exist.
-		$this->sqlite->exec( "UPDATE _wp_sqlite_mysql_information_schema_columns SET column_name = 'title' WHERE table_name = 't' AND column_name = 'name'" );
+		$columns_table = $temporary ? '_wp_sqlite_mysql_information_schema_tmp_columns' : '_wp_sqlite_mysql_information_schema_columns';
+		$this->sqlite->exec( "UPDATE $columns_table SET column_name = 'title' WHERE table_name = 't' AND column_name = 'name'" );
+		$schema = $this->getSqliteSchema();
+		$data   = $this->sqlite->query( 'SELECT rowid, * FROM t ORDER BY rowid' )->fetchAll( PDO::FETCH_ASSOC );
 
 		// The error from SQLite is reported, not a missing table.
-		$result = $this->assertQuery( 'OPTIMIZE TABLE t' );
+		$result = $this->assertQuery( "$operation TABLE t" );
 		$this->assertEquals(
 			array(
 				(object) array(
 					'Table'    => 'wp.t',
-					'Op'       => 'optimize',
+					'Op'       => strtolower( $operation ),
 					'Msg_type' => 'Error',
 					'Msg_text' => 'SQLSTATE[HY000]: General error: 1 no such column: title',
 				),
 				(object) array(
 					'Table'    => 'wp.t',
-					'Op'       => 'optimize',
+					'Op'       => strtolower( $operation ),
 					'Msg_type' => 'status',
 					'Msg_text' => 'Operation failed',
 				),
 			),
 			$result
 		);
+		$this->assertSame( $schema, $this->getSqliteSchema() );
+		$this->assertSame( $data, $this->sqlite->query( 'SELECT rowid, * FROM t ORDER BY rowid' )->fetchAll( PDO::FETCH_ASSOC ) );
 	}
 
 	public function testRepairTable() {
@@ -583,6 +592,114 @@ class WP_MySQL_On_SQLite_Metadata_Tests extends TestCase {
 				),
 			),
 			$result
+		);
+	}
+
+	/**
+	 * @dataProvider data_rebuild_operations_and_table_types
+	 */
+	public function testAdministrationRollsBackFailedDrop( string $operation, bool $temporary ): void {
+		$this->assertQuery( 'CREATE ' . ( $temporary ? 'TEMPORARY ' : '' ) . 'TABLE t (id INT PRIMARY KEY, name TEXT)' );
+		$this->assertQuery( "INSERT INTO t VALUES (1, 'a'), (2, 'b')" );
+		$schema = $this->getSqliteSchema();
+		$data   = $this->sqlite->query( 'SELECT rowid, * FROM t ORDER BY rowid' )->fetchAll( PDO::FETCH_ASSOC );
+
+		// SQLite can't drop a table while another statement is still reading.
+		$read = $this->sqlite->query( 'SELECT * FROM t' );
+		$read->fetch();
+
+		// Repeated failures must not leave copies of the table behind.
+		for ( $i = 0; $i < 2; ++$i ) {
+			$result = $this->assertQuery( "$operation TABLE t" );
+			$this->assertCount( 2, $result );
+			$this->assertStringContainsString( 'database table is locked', $result[0]->Msg_text );
+			$this->assertSame( 'Operation failed', $result[1]->Msg_text );
+			$this->assertSame( $schema, $this->getSqliteSchema() );
+			$this->assertSame( $data, $this->sqlite->query( 'SELECT rowid, * FROM t ORDER BY rowid' )->fetchAll( PDO::FETCH_ASSOC ) );
+		}
+	}
+
+	/**
+	 * @dataProvider data_rebuild_operations_and_table_types
+	 */
+	public function testAdministrationRollsBackFailedIndexRecreation( string $operation, bool $temporary ): void {
+		$this->assertQuery(
+			'CREATE ' . ( $temporary ? 'TEMPORARY ' : '' ) . 'TABLE t (id INT AUTO_INCREMENT PRIMARY KEY, name TEXT, UNIQUE KEY u (name), KEY k (id)) AUTO_INCREMENT = 100'
+		);
+
+		// These values fit the existing binary index but conflict when its NOCASE definition is restored.
+		$this->sqlite->exec( 'DROP INDEX t__u' );
+		$this->sqlite->exec( 'CREATE UNIQUE INDEX t__u ON t (name COLLATE BINARY)' );
+		$this->sqlite->exec( "INSERT INTO t VALUES (1, 'a'), (2, 'A')" );
+		$schema         = $this->getSqliteSchema();
+		$data           = $this->sqlite->query( 'SELECT rowid, * FROM t ORDER BY rowid' )->fetchAll( PDO::FETCH_ASSOC );
+		$sequence_table = $temporary ? 'temp.sqlite_sequence' : 'main.sqlite_sequence';
+		$sequence       = $this->sqlite->query( "SELECT seq FROM $sequence_table WHERE name = 't'" )->fetchColumn();
+
+		$result = $this->assertQuery( "$operation TABLE t" );
+		$this->assertCount( 2, $result );
+		$this->assertStringContainsString( 'UNIQUE constraint failed', $result[0]->Msg_text );
+		$this->assertSame( 'Operation failed', $result[1]->Msg_text );
+		$this->assertSame( $schema, $this->getSqliteSchema() );
+		$this->assertSame( $data, $this->sqlite->query( 'SELECT rowid, * FROM t ORDER BY rowid' )->fetchAll( PDO::FETCH_ASSOC ) );
+		$this->assertSame( $sequence, $this->sqlite->query( "SELECT seq FROM $sequence_table WHERE name = 't'" )->fetchColumn() );
+	}
+
+	/**
+	 * @dataProvider data_rebuild_operations_and_transactions
+	 */
+	public function testAdministrationKeepsSuccessfulRebuilds( string $operation, bool $in_transaction ): void {
+		$this->assertQuery( 'CREATE TABLE good_before (id INT, KEY k (id))' );
+		$this->assertQuery( 'CREATE TABLE bad (id INT)' );
+		$this->assertQuery( 'CREATE TABLE good_after (id INT, KEY k (id))' );
+		$this->assertQuery( 'INSERT INTO bad VALUES (NULL)' );
+		$this->sqlite->exec( "UPDATE _wp_sqlite_mysql_information_schema_columns SET is_nullable = 'NO' WHERE table_name = 'bad'" );
+
+		// Rebuilding the good tables must restore their missing indexes.
+		$this->sqlite->exec( 'DROP INDEX good_before__k' );
+		$this->sqlite->exec( 'DROP INDEX good_after__k' );
+		if ( $in_transaction ) {
+			$this->assertQuery( 'START TRANSACTION' );
+			$this->assertQuery( 'INSERT INTO good_before VALUES (1)' );
+		}
+
+		$result = $this->assertQuery( "$operation TABLE good_before, bad, good_after" );
+		$this->assertSame( array( 'wp.good_before', 'wp.bad', 'wp.bad', 'wp.good_after' ), array_column( $result, 'Table' ) );
+		$this->assertSame( array( 'status', 'Error', 'status', 'status' ), array_column( $result, 'Msg_type' ) );
+		$this->assertSame( 'OK', $result[0]->Msg_text );
+		$this->assertStringContainsString( 'NOT NULL constraint failed', $result[1]->Msg_text );
+		$this->assertSame( 'Operation failed', $result[2]->Msg_text );
+		$this->assertSame( 'OK', $result[3]->Msg_text );
+		$this->assertSame(
+			array( 'good_after__k', 'good_before__k' ),
+			$this->sqlite->query( "SELECT name FROM sqlite_master WHERE type = 'index' AND name IN ('good_before__k', 'good_after__k') ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+		$this->assertSame( array( null ), $this->sqlite->query( 'SELECT id FROM bad' )->fetchAll( PDO::FETCH_COLUMN ) );
+		$this->assertSame( array(), $this->sqlite->query( "SELECT name FROM sqlite_master WHERE name GLOB '_wp_sqlite_tmp_*'" )->fetchAll( PDO::FETCH_COLUMN ) );
+
+		// MySQL commits before table administration, so only check the committed result.
+		if ( $in_transaction ) {
+			$this->assertQuery( 'COMMIT' );
+			$this->assertEquals( array( (object) array( 'id' => '1' ) ), $this->assertQuery( 'SELECT id FROM good_before' ) );
+		}
+		$this->assertFalse( $this->engine->inTransaction() );
+	}
+
+	public function data_rebuild_operations_and_table_types(): array {
+		return array(
+			'optimize permanent' => array( 'OPTIMIZE', false ),
+			'optimize temporary' => array( 'OPTIMIZE', true ),
+			'repair permanent'   => array( 'REPAIR', false ),
+			'repair temporary'   => array( 'REPAIR', true ),
+		);
+	}
+
+	public function data_rebuild_operations_and_transactions(): array {
+		return array(
+			'optimize autocommit'  => array( 'OPTIMIZE', false ),
+			'optimize transaction' => array( 'OPTIMIZE', true ),
+			'repair autocommit'    => array( 'REPAIR', false ),
+			'repair transaction'   => array( 'REPAIR', true ),
 		);
 	}
 
@@ -2712,5 +2829,14 @@ class WP_MySQL_On_SQLite_Metadata_Tests extends TestCase {
 
 		$result = $this->assertQuery( 'SELECT * FROM information_schema.check_constraints' );
 		$this->assertCount( 0, $result );
+	}
+
+	private function getSqliteSchema(): array {
+		return $this->sqlite->query(
+			"SELECT 'main' AS db, type, name, tbl_name, sql FROM sqlite_master
+			UNION ALL
+			SELECT 'temp' AS db, type, name, tbl_name, sql FROM sqlite_temp_master
+			ORDER BY db, type, name"
+		)->fetchAll( PDO::FETCH_ASSOC );
 	}
 }
