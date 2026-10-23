@@ -5788,8 +5788,11 @@ class WP_MySQL_On_SQLite extends PDO {
 			$this->execute_sqlite_query(
 				sprintf(
 					'UPDATE %s.sqlite_sequence
-					SET seq = MAX(seq, COALESCE((SELECT seq FROM %s.sqlite_sequence WHERE name = ? COLLATE NOCASE), 0))
-					WHERE name = ?',
+					SET seq = MAX(seq, COALESCE((
+						SELECT seq FROM %s.sqlite_sequence
+						WHERE name = ? COLLATE NOCASE -- $table_name: original table
+					), 0))
+					WHERE name = ? -- $tmp_table_name: update only the replacement\'s row.',
 					$schema,
 					$schema
 				),
