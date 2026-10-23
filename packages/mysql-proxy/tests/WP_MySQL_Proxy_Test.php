@@ -4,16 +4,27 @@ use PHPUnit\Framework\TestCase;
 
 abstract class WP_MySQL_Proxy_Test extends TestCase {
 	/** @var int */
-	protected $port = 3306;
+	protected $port;
+
+	/** @var string */
+	protected $log_level = 'error';
 
 	/** @var MySQL_Server_Process */
 	protected $server;
 
 	public function setUp(): void {
+		// Keep the tests away from any local MySQL server on its default port.
+		$listener   = stream_socket_server( 'tcp://127.0.0.1:0', $errno, $error );
+		$address    = stream_socket_get_name( $listener, false );
+		$this->port = (int) substr( strrchr( $address, ':' ), 1 );
+		fclose( $listener );
+
 		$this->server = new MySQL_Server_Process(
 			array(
-				'port'    => $this->port,
-				'db_path' => ':memory:',
+				'port'        => $this->port,
+				'db_path'     => ':memory:',
+				'log_level'   => $this->log_level,
+				'auth_plugin' => MySQL_Test_Client::auth_plugin(),
 			)
 		);
 	}

@@ -23,7 +23,7 @@ class SQLite_Adapter implements Adapter {
 
 	public function handle_query( string $query ): MySQL_Result {
 		$affected_rows  = 0;
-		$last_insert_id = null;
+		$last_insert_id = 0;
 		$columns        = array();
 		$rows           = array();
 
