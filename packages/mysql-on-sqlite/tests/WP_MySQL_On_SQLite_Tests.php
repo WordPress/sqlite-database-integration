@@ -7393,6 +7393,24 @@ QUERY
 		$this->assertEquals( $expected_rows, $this->last_result );
 	}
 
+	public function testConfigurationPreservesAutoIncrementWhenNormalizingTemporalZeroDefaults(): void {
+		$this->assertQuery( 'CREATE TABLE _tmp_table (id INT AUTO_INCREMENT PRIMARY KEY, created_at DATETIME NOT NULL DEFAULT 0)' );
+		$this->assertQuery( 'CREATE TABLE _tmp_empty (id INT AUTO_INCREMENT PRIMARY KEY, created_at DATETIME NOT NULL DEFAULT 0)' );
+		$this->sqlite->exec( "UPDATE _wp_sqlite_mysql_information_schema_columns SET column_default = '0' WHERE table_name IN ('_tmp_table', '_tmp_empty') AND column_name = 'created_at'" );
+		$this->assertQuery( 'OPTIMIZE TABLE _tmp_table, _tmp_empty' );
+		$this->assertQuery( 'INSERT INTO _tmp_table (id) VALUES (1), (2), (3)' );
+		$this->assertQuery( 'DELETE FROM _tmp_table WHERE id = 3' );
+		$this->assertQuery( 'ALTER TABLE _tmp_empty AUTO_INCREMENT = 1000' );
+
+		$this->reconnectAfterDriverUpgrade();
+
+		$this->assertQuery( 'INSERT INTO _tmp_table (id) VALUES (NULL)' );
+		$this->assertSame( '4', $this->assertQuery( 'SELECT MAX(id) AS id FROM _tmp_table' )[0]->id );
+		$this->assertQuery( 'INSERT INTO _tmp_empty (id) VALUES (NULL)' );
+		$this->assertSame( '1000', $this->assertQuery( 'SELECT id FROM _tmp_empty' )[0]->id );
+		$this->assertSame( '0000-00-00 00:00:00', $this->assertQuery( 'SELECT created_at FROM _tmp_empty' )[0]->created_at );
+	}
+
 	public function testConfigurationNormalizesStoredTemporalZeroValuesWithoutRunningTriggers(): void {
 		$this->assertQuery(
 			'CREATE TABLE _tmp_table (
