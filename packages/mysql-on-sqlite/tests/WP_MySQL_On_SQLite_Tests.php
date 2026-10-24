@@ -8626,6 +8626,14 @@ QUERY
 		$result = $this->assertQuery( 'SELECT * FROM t3' );
 		$this->assertCount( 1, $result );
 		$this->assertSame( '', $result[0]->value );
+
+		// No value saves DEFAULT '0' (issue #552):
+		$this->assertQuery( "CREATE TABLE t4 (id INT NOT NULL, label VARCHAR(10) NOT NULL DEFAULT '0', count INT NOT NULL DEFAULT 0)" );
+		$this->assertQuery( 'INSERT INTO t4 (id) VALUES (1)' );
+		$result = $this->assertQuery( 'SELECT * FROM t4 WHERE id = 1' );
+		$this->assertCount( 1, $result );
+		$this->assertSame( '0', $result[0]->label );
+		$this->assertSame( '0', $result[0]->count );
 	}
 
 	public function testNonStrictModeWithDefaultCurrentTimestamp(): void {
