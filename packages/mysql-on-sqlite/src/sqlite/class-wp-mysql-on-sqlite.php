@@ -4444,6 +4444,11 @@ class WP_MySQL_On_SQLite extends PDO {
 					return $this->translate_like( $node );
 				}
 				return $this->translate_sequence( $node->get_children() );
+			case 'sumExpr':
+				if ( $node->has_child_token( WP_MySQL_Lexer::GROUP_CONCAT_SYMBOL ) ) {
+					return $this->translate_group_concat( $node );
+				}
+				return $this->translate_sequence( $node->get_children() );
 			case 'runtimeFunctionCall':
 				return $this->translate_runtime_function_call( $node );
 			case 'functionCall':
@@ -5409,6 +5414,65 @@ class WP_MySQL_On_SQLite extends PDO {
 			default:
 				return $this->translate_sequence( $node->get_children() );
 		}
+	}
+
+	/**
+	 * Translate MySQL GROUP_CONCAT() to SQLite.
+	 *
+	 *   MySQL:  GROUP_CONCAT([DISTINCT] expr [, expr ...] [ORDER BY ...] [SEPARATOR str])
+	 *   SQLite: GROUP_CONCAT([DISTINCT] expr [, separator] [ORDER BY ...])
+	 *
+	 * In MySQL, several expressions are concatenated per row; in SQLite, the
+	 * second argument is the separator. As in MySQL, a row in which one of the
+	 * expressions is NULL is skipped, because "||" returns NULL then.
+	 *
+	 * ORDER BY in an aggregate function requires SQLite 3.44.0 or newer. SQLite
+	 * allows DISTINCT only with a single argument, so DISTINCT can't be combined
+	 * with a separator other than the default ",".
+	 *
+	 * @param  WP_Parser_Node $node The "sumExpr" AST node.
+	 * @return string               The translated value.
+	 * @throws WP_MySQL_On_SQLite_Exception When the translation fails.
+	 */
+	private function translate_group_concat( WP_Parser_Node $node ): string {
+		$expressions = array();
+		foreach ( $node->get_first_child_node( 'exprList' )->get_child_nodes( 'expr' ) as $expr ) {
+			$expressions[] = $this->translate( $expr );
+		}
+		$value = 1 === count( $expressions ) ? $expressions[0] : '(' . implode( ' || ', $expressions ) . ')';
+
+		$is_distinct = $node->has_child_token( WP_MySQL_Lexer::DISTINCT_SYMBOL );
+		$args        = $is_distinct ? 'DISTINCT ' . $value : $value;
+
+		$separator = $node->get_first_child_node( 'textString' );
+		if ( null !== $separator ) {
+			$separator_sql = $this->translate( $separator );
+			if ( $this->quote_sqlite_value( ',' ) !== $separator_sql ) {
+				if ( $is_distinct ) {
+					throw $this->new_not_supported_exception(
+						'GROUP_CONCAT() with DISTINCT and a SEPARATOR other than ","'
+					);
+				}
+				$args .= ', ' . $separator_sql;
+			}
+		}
+
+		$order = $node->get_first_child_node( 'orderClause' );
+		if ( null !== $order ) {
+			if ( version_compare( $this->get_sqlite_version(), '3.44.0', '<' ) ) {
+				throw $this->new_not_supported_exception(
+					'GROUP_CONCAT() with ORDER BY requires SQLite 3.44.0 or newer'
+				);
+			}
+			$args .= ' ' . $this->translate( $order );
+		}
+
+		$sql    = sprintf( 'GROUP_CONCAT(%s)', $args );
+		$window = $node->get_first_child_node( 'windowingClause' );
+		if ( null !== $window ) {
+			$sql .= ' ' . $this->translate( $window );
+		}
+		return $sql;
 	}
 
 	/**
