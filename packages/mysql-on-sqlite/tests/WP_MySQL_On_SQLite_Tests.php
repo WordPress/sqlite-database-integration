@@ -6462,6 +6462,7 @@ QUERY
 			'escaped wildcards' => array( "\xff%_", "\xff\\%\\_", '1' ),
 			'escaped newline'   => array( "\n", "\\\n", '1' ),
 			'escaped Unicode'   => array( '©🙂', '\\©\\🙂', '1' ),
+			'literal brackets'  => array( 'a[b]', 'a[b]', '1' ),
 			'null pattern'      => array( 'x', null, null ),
 			'null value'        => array( null, 'x', null ),
 		);
