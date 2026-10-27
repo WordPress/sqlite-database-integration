@@ -379,30 +379,27 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		}
 	}
 
-	public function test_timeout_driver_option_sets_sqlite_busy_timeout(): void {
+	public function test_busy_timeout_driver_option(): void {
 		$driver = new WP_MySQL_On_SQLite(
 			'mysql-on-sqlite:path=:memory:;dbname=wp',
 			null,
 			null,
 			array(
-				'sqlite_timeout' => 5,
+				'sqlite_busy_timeout' => 2500,
 			)
 		);
 
-		// The PDO SQLite driver does not support reading "PDO::ATTR_TIMEOUT"
-		// back with "getAttribute()", but the SQLite busy timeout reflects it
-		// in milliseconds.
 		$this->assertSame(
-			5000,
+			2500,
 			(int) $driver->get_sqlite_pdo()->query( 'PRAGMA busy_timeout' )->fetchColumn()
 		);
 	}
 
-	public function test_timeout_defaults_to_the_connection_default(): void {
+	public function test_busy_timeout_defaults_to_the_connection_default(): void {
 		$driver = new WP_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname=wp' );
 
 		$this->assertSame(
-			WP_SQLite_Connection::DEFAULT_SQLITE_TIMEOUT * 1000,
+			WP_SQLite_Connection::DEFAULT_SQLITE_BUSY_TIMEOUT,
 			(int) $driver->get_sqlite_pdo()->query( 'PRAGMA busy_timeout' )->fetchColumn()
 		);
 	}

@@ -133,8 +133,8 @@ class WP_MySQL_On_SQLite_Concurrency_Tests extends TestCase {
 			// Connection B with zero timeout — any lock conflict fails immediately.
 			$conn_b   = new WP_SQLite_Connection(
 				array(
-					'path'    => $this->db_path,
-					'timeout' => 0,
+					'path'         => $this->db_path,
+					'busy_timeout' => 0,
 				)
 			);
 			$driver_b = $this->create_driver( $conn_b );
@@ -163,8 +163,8 @@ class WP_MySQL_On_SQLite_Concurrency_Tests extends TestCase {
 			// Connection B with zero timeout — any lock conflict fails immediately.
 			$conn_b   = new WP_SQLite_Connection(
 				array(
-					'path'    => $this->db_path,
-					'timeout' => 0,
+					'path'         => $this->db_path,
+					'busy_timeout' => 0,
 				)
 			);
 			$driver_b = $this->create_driver( $conn_b );
@@ -195,7 +195,7 @@ class WP_MySQL_On_SQLite_Concurrency_Tests extends TestCase {
 				sprintf( 'mysql-on-sqlite:path=%s;dbname=wp', $this->db_path ),
 				null,
 				null,
-				array( 'sqlite_timeout' => 0 )
+				array( 'sqlite_busy_timeout' => 0 )
 			);
 
 			$this->expectException( PDOException::class );
