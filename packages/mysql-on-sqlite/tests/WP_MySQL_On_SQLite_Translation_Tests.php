@@ -1742,6 +1742,16 @@ class WP_MySQL_On_SQLite_Translation_Tests extends TestCase {
 			"SELECT x'417a' AS `0x417a`",
 			'SELECT 0x417a'
 		);
+
+		// Odd-length 0x... values need a leading zero to form full bytes.
+		$this->assertQuery(
+			"SELECT x'0711' AS `0x711`",
+			'SELECT 0x711'
+		);
+		$this->assertQuery(
+			"SELECT x'000711' AS `0x00711`",
+			'SELECT 0x00711'
+		);
 	}
 
 	public function testSystemVariables(): void {
