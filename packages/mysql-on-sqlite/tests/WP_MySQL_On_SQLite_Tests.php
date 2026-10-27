@@ -10407,6 +10407,183 @@ END;
 		$this->assertSame( array(), (array) array_column( $result, 'id' ) );
 	}
 
+	public function testFailedStatementKeepsTransactionActive(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT PRIMARY KEY)' );
+		$this->assertQuery( 'BEGIN' );
+		$this->assertQuery( 'INSERT INTO t VALUES (1)' );
+
+		// A failed write and a failed read keep the transaction active.
+		$this->assertQueryError(
+			'INSERT INTO t VALUES (1)',
+			'SQLSTATE[23000]: Integrity constraint violation: 19 UNIQUE constraint failed: t.id'
+		);
+		$this->assertTrue( $this->engine->inTransaction() );
+		$this->assertQueryError(
+			'SELECT * FROM missing_table',
+			"SQLSTATE[42S02]: Base table or view not found: 1146 Table 'missing_table' doesn't exist"
+		);
+		$this->assertTrue( $this->engine->inTransaction() );
+
+		$this->assertQuery( 'INSERT INTO t VALUES (2)' );
+		$this->assertQuery( 'COMMIT' );
+		$result = $this->assertQuery( 'SELECT id FROM t ORDER BY id' );
+		$this->assertSame( array( '1', '2' ), array_column( $result, 'id' ) );
+	}
+
+	public function testFailedStatementIsRolledBackInTransaction(): void {
+		$this->assertQuery( 'CREATE TABLE t1 (id INT PRIMARY KEY)' );
+		$this->assertQuery( 'CREATE TABLE t2 (id INT PRIMARY KEY)' );
+		$this->assertQuery( 'CREATE TABLE t3 (id INT PRIMARY KEY, t2_id INT, FOREIGN KEY (t2_id) REFERENCES t2 (id))' );
+		$this->assertQuery( 'INSERT INTO t1 VALUES (1)' );
+		$this->assertQuery( 'INSERT INTO t2 VALUES (1)' );
+		$this->assertQuery( 'INSERT INTO t3 VALUES (1, 1)' );
+		$this->assertQuery( 'BEGIN' );
+		$this->assertQuery( 'INSERT INTO t1 VALUES (2)' );
+
+		/*
+		 * A multi-table DELETE runs a DELETE query for each table. Deleting
+		 * from t1 succeeds, and then deleting from t2 fails on the foreign key.
+		 */
+		$this->assertQueryError(
+			'DELETE t1, t2 FROM t1 JOIN t2 ON t2.id = t1.id',
+			'SQLSTATE[23000]: Integrity constraint violation: 19 FOREIGN KEY constraint failed'
+		);
+		$this->assertTrue( $this->engine->inTransaction() );
+		$this->assertQuery( 'COMMIT' );
+
+		// The changes of the failed statement are undone, and the rest is kept.
+		$result = $this->assertQuery( 'SELECT id FROM t1 ORDER BY id' );
+		$this->assertSame( array( '1', '2' ), array_column( $result, 'id' ) );
+		$result = $this->assertQuery( 'SELECT id FROM t2' );
+		$this->assertSame( array( '1' ), array_column( $result, 'id' ) );
+	}
+
+	public function testRollbackToSavepointAfterFailedStatement(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT PRIMARY KEY)' );
+		$this->assertQuery( 'BEGIN' );
+		$this->assertQuery( 'INSERT INTO t VALUES (1)' );
+		$this->assertQuery( 'SAVEPOINT sp1' );
+		$this->assertQuery( 'INSERT INTO t VALUES (2)' );
+		$this->assertQueryError(
+			'INSERT INTO t VALUES (1)',
+			'SQLSTATE[23000]: Integrity constraint violation: 19 UNIQUE constraint failed: t.id'
+		);
+
+		// The savepoint still exists after the failed statement.
+		$this->assertQuery( 'ROLLBACK TO SAVEPOINT sp1' );
+		$this->assertQuery( 'COMMIT' );
+		$result = $this->assertQuery( 'SELECT id FROM t ORDER BY id' );
+		$this->assertSame( array( '1' ), array_column( $result, 'id' ) );
+	}
+
+	public function testFailedStatementKeepsTableLock(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT PRIMARY KEY)' );
+		$this->assertQuery( 'LOCK TABLES t WRITE' );
+		$this->assertQuery( 'INSERT INTO t VALUES (1)' );
+		$this->assertQueryError(
+			'INSERT INTO t VALUES (1)',
+			'SQLSTATE[23000]: Integrity constraint violation: 19 UNIQUE constraint failed: t.id'
+		);
+
+		// UNLOCK TABLES keeps the rows written before the failed statement.
+		$this->assertQuery( 'UNLOCK TABLES' );
+		$this->assertFalse( $this->engine->inTransaction() );
+		$result = $this->assertQuery( 'SELECT id FROM t' );
+		$this->assertSame( array( '1' ), array_column( $result, 'id' ) );
+	}
+
+	/**
+	 * @dataProvider dataFailedCommits
+	 */
+	public function testFailedCommitRollsBackTransaction( string $begin_query, string $commit_query ): void {
+		$this->assertQuery( 'CREATE TABLE p (id INT PRIMARY KEY)' );
+		$this->assertQuery( 'CREATE TABLE c (id INT PRIMARY KEY, p_id INT, FOREIGN KEY (p_id) REFERENCES p (id))' );
+		$this->assertQuery( $begin_query );
+
+		// Make the commit fail by deferring a foreign key check to it.
+		$this->sqlite->exec( 'PRAGMA defer_foreign_keys = ON' );
+		$this->assertQuery( 'INSERT INTO c VALUES (1, 1)' );
+		$this->assertQueryError(
+			$commit_query,
+			'SQLSTATE[23000]: Integrity constraint violation: 19 FOREIGN KEY constraint failed'
+		);
+
+		// Like MySQL, the failed commit rolls back the transaction.
+		$this->assertFalse( $this->engine->inTransaction() );
+		$result = $this->assertQuery( 'SELECT id FROM c' );
+		$this->assertSame( array(), array_column( $result, 'id' ) );
+
+		// The table lock is released, so UNLOCK TABLES doesn't commit a new transaction.
+		$this->assertQuery( 'BEGIN' );
+		$this->assertQuery( 'UNLOCK TABLES' );
+		$this->assertTrue( $this->engine->inTransaction() );
+	}
+
+	public static function dataFailedCommits(): array {
+		return array(
+			'COMMIT'                     => array( 'BEGIN', 'COMMIT' ),
+			'UNLOCK TABLES'              => array( 'LOCK TABLES c WRITE', 'UNLOCK TABLES' ),
+			'implicit START TRANSACTION' => array( 'BEGIN', 'START TRANSACTION' ),
+			'implicit BEGIN'             => array( 'BEGIN', 'BEGIN' ),
+			'implicit LOCK TABLES'       => array( 'BEGIN', 'LOCK TABLES p WRITE' ),
+		);
+	}
+
+	public function testFailedStatementRolledBackBySqliteEndsTransaction(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT PRIMARY KEY)' );
+
+		// Some SQLite errors roll back the whole transaction. Emulate them with a trigger.
+		$this->sqlite->exec(
+			"CREATE TRIGGER t_rollback BEFORE INSERT ON t WHEN NEW.id = 2 BEGIN SELECT RAISE(ROLLBACK, 'Rolled back'); END"
+		);
+
+		$this->assertQuery( 'BEGIN' );
+		$this->assertQuery( 'INSERT INTO t VALUES (1)' );
+		$this->assertQuery( 'SAVEPOINT sp1' );
+		$this->assertQueryError(
+			'INSERT INTO t VALUES (2)',
+			'SQLSTATE[23000]: Integrity constraint violation: 19 Rolled back'
+		);
+
+		// The transaction and its savepoints are gone.
+		$this->assertFalse( $this->engine->inTransaction() );
+		$this->assertQueryError(
+			'ROLLBACK TO SAVEPOINT sp1',
+			'SQLSTATE[42000]: Syntax error or access violation: 1305 SAVEPOINT sp1 does not exist'
+		);
+
+		// Without a transaction, the same error leaves the connection usable.
+		$this->assertQueryError(
+			'INSERT INTO t VALUES (2)',
+			'SQLSTATE[23000]: Integrity constraint violation: 19 Rolled back'
+		);
+		$this->assertFalse( $this->engine->inTransaction() );
+		$this->assertQuery( 'INSERT INTO t VALUES (3)' );
+		$result = $this->assertQuery( 'SELECT id FROM t' );
+		$this->assertSame( array( '3' ), array_column( $result, 'id' ) );
+	}
+
+	public function testFailedStatementRolledBackBySqliteReleasesTableLock(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT PRIMARY KEY)' );
+
+		// Some SQLite errors roll back the whole transaction. Emulate them with a trigger.
+		$this->sqlite->exec(
+			"CREATE TRIGGER t_rollback BEFORE INSERT ON t WHEN NEW.id = 2 BEGIN SELECT RAISE(ROLLBACK, 'Rolled back'); END"
+		);
+
+		$this->assertQuery( 'LOCK TABLES t WRITE' );
+		$this->assertQueryError(
+			'INSERT INTO t VALUES (2)',
+			'SQLSTATE[23000]: Integrity constraint violation: 19 Rolled back'
+		);
+		$this->assertFalse( $this->engine->inTransaction() );
+
+		// The table lock is released, so UNLOCK TABLES doesn't commit a new transaction.
+		$this->assertQuery( 'BEGIN' );
+		$this->assertQuery( 'UNLOCK TABLES' );
+		$this->assertTrue( $this->engine->inTransaction() );
+	}
+
 	public function testSavepointWithoutTransactionDoesNotStartTransaction(): void {
 		$this->assertQuery( 'CREATE TABLE t (id INT PRIMARY KEY, v INT)' );
 		$this->assertQuery( 'INSERT INTO t (id, v) VALUES (1, 1)' );

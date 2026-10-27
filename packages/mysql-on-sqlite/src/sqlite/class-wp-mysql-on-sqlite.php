@@ -1210,16 +1210,18 @@ class WP_MySQL_On_SQLite extends PDO {
 			$this->error_info = array( '00000', null, null );
 			return $stmt;
 		} catch ( Throwable $e ) {
-			// MySQL error 1305 reports a missing savepoint without ending the transaction.
-			$preserves_transaction = $e instanceof WP_MySQL_On_SQLite_Exception
-				&& 1305 === ( $e->errorInfo[1] ?? null );
-			if ( ! $preserves_transaction ) {
-				try {
-					$this->rollback_user_transaction();
-					$this->table_lock_active = false;
-				} catch ( Throwable $rollback_exception ) {
-					// Ignore rollback errors.
-				}
+			/*
+			 * Undo the failed statement. Like MySQL, keep an active user
+			 * transaction open, so the caller can decide whether to commit
+			 * or roll back the rest of it.
+			 */
+			try {
+				$this->rollback_wrapper_transaction();
+			} catch ( Throwable $rollback_exception ) {
+				// Ignore rollback errors.
+			}
+			if ( ! $this->inTransaction() ) {
+				$this->table_lock_active = false;
 			}
 			if ( $e instanceof WP_SQLite_Information_Schema_Exception ) {
 				$e = $this->convert_information_schema_exception( $e );
@@ -1396,7 +1398,12 @@ class WP_MySQL_On_SQLite extends PDO {
 			throw $this->new_driver_exception( 'There is no active transaction' );
 		}
 		$this->flush();
-		$this->commit_user_transaction();
+
+		// Unlike a COMMIT statement, PDO::commit() doesn't roll back on failure,
+		// so the caller can still call PDO::rollBack(), as with PDO MySQL.
+		$this->connection->query( 'COMMIT' );
+		$this->in_transaction  = false;
+		$this->savepoint_names = array();
 		return true;
 	}
 
@@ -2096,6 +2103,33 @@ class WP_MySQL_On_SQLite extends PDO {
 	}
 
 	/**
+	 * Roll back a wrapper transaction.
+	 *
+	 * This undoes all changes of a failed statement. When the wrapper is
+	 * a savepoint, the user transaction around it stays active.
+	 */
+	private function rollback_wrapper_transaction(): void {
+		if ( 'transaction' === $this->wrapper_transaction_type ) {
+			$this->rollback_user_transaction();
+		} elseif ( 'savepoint' === $this->wrapper_transaction_type ) {
+			$savepoint_name = $this->get_internal_savepoint_name( 'wrapper' );
+			try {
+				$this->connection->query( sprintf( 'ROLLBACK TO SAVEPOINT %s', $savepoint_name ) );
+			} catch ( PDOException $e ) {
+				/*
+				 * Some SQLite errors roll back the whole transaction automatically,
+				 * which also removes the savepoint. In that case, end the transaction.
+				 *
+				 * @see https://www.sqlite.org/lang_transaction.html#response_to_errors_within_a_transaction
+				 */
+				$this->rollback_user_transaction();
+				return;
+			}
+			$this->connection->query( sprintf( 'RELEASE SAVEPOINT %s', $savepoint_name ) );
+		}
+	}
+
+	/**
 	 * Execute the "BEGIN" or "START TRANSACTION" MySQL statement in SQLite.
 	 */
 	private function begin_user_transaction(): void {
@@ -2127,7 +2161,17 @@ class WP_MySQL_On_SQLite extends PDO {
 		if ( ! $this->inTransaction() ) {
 			return;
 		}
-		$this->connection->query( 'COMMIT' );
+		try {
+			$this->connection->query( 'COMMIT' );
+		} catch ( PDOException $e ) {
+			// Like MySQL, roll back a transaction that fails to commit.
+			try {
+				$this->rollback_user_transaction();
+			} catch ( PDOException $rollback_exception ) {
+				// SQLite has already rolled back the transaction.
+			}
+			throw $e;
+		}
 		$this->in_transaction  = false;
 		$this->savepoint_names = array();
 	}
@@ -2136,13 +2180,16 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * Execute the "ROLLBACK" MySQL statement in SQLite.
 	 */
 	private function rollback_user_transaction(): void {
-		// MySQL doesn't throw an error if there is no active transaction.
-		if ( ! $this->inTransaction() ) {
-			return;
+		try {
+			// MySQL doesn't throw an error if there is no active transaction.
+			if ( $this->inTransaction() ) {
+				$this->connection->query( 'ROLLBACK' );
+			}
+		} finally {
+			// A ROLLBACK always ends the transaction, even when it fails.
+			$this->in_transaction  = false;
+			$this->savepoint_names = array();
 		}
-		$this->connection->query( 'ROLLBACK' );
-		$this->in_transaction  = false;
-		$this->savepoint_names = array();
 	}
 
 	/**
