@@ -8420,6 +8420,61 @@ END;
 		$this->assertSame( array( '1' ), array_column( $result, 'id' ) );
 	}
 
+	public function testFailedStatementRolledBackBySqliteEndsTransaction(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT PRIMARY KEY)' );
+
+		// Some SQLite errors roll back the whole transaction. Emulate them with a trigger.
+		$this->sqlite->exec(
+			"CREATE TRIGGER t_rollback BEFORE INSERT ON t WHEN NEW.id = 2 BEGIN SELECT RAISE(ROLLBACK, 'Rolled back'); END"
+		);
+
+		$this->assertQuery( 'BEGIN' );
+		$this->assertQuery( 'INSERT INTO t VALUES (1)' );
+		$this->assertQuery( 'SAVEPOINT sp1' );
+		$this->assertQueryError(
+			'INSERT INTO t VALUES (2)',
+			'SQLSTATE[23000]: Integrity constraint violation: 19 Rolled back'
+		);
+
+		// The transaction and its savepoints are gone.
+		$this->assertFalse( $this->engine->inTransaction() );
+		$this->assertQueryError(
+			'ROLLBACK TO SAVEPOINT sp1',
+			'SQLSTATE[42000]: Syntax error or access violation: 1305 SAVEPOINT sp1 does not exist'
+		);
+
+		// Without a transaction, the same error leaves the connection usable.
+		$this->assertQueryError(
+			'INSERT INTO t VALUES (2)',
+			'SQLSTATE[23000]: Integrity constraint violation: 19 Rolled back'
+		);
+		$this->assertFalse( $this->engine->inTransaction() );
+		$this->assertQuery( 'INSERT INTO t VALUES (3)' );
+		$result = $this->assertQuery( 'SELECT id FROM t' );
+		$this->assertSame( array( '3' ), array_column( $result, 'id' ) );
+	}
+
+	public function testFailedStatementRolledBackBySqliteReleasesTableLock(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT PRIMARY KEY)' );
+
+		// Some SQLite errors roll back the whole transaction. Emulate them with a trigger.
+		$this->sqlite->exec(
+			"CREATE TRIGGER t_rollback BEFORE INSERT ON t WHEN NEW.id = 2 BEGIN SELECT RAISE(ROLLBACK, 'Rolled back'); END"
+		);
+
+		$this->assertQuery( 'LOCK TABLES t WRITE' );
+		$this->assertQueryError(
+			'INSERT INTO t VALUES (2)',
+			'SQLSTATE[23000]: Integrity constraint violation: 19 Rolled back'
+		);
+		$this->assertFalse( $this->engine->inTransaction() );
+
+		// The table lock is released, so UNLOCK TABLES doesn't commit a new transaction.
+		$this->assertQuery( 'BEGIN' );
+		$this->assertQuery( 'UNLOCK TABLES' );
+		$this->assertTrue( $this->engine->inTransaction() );
+	}
+
 	public function testSavepointWithoutTransactionDoesNotStartTransaction(): void {
 		$this->assertQuery( 'CREATE TABLE t (id INT PRIMARY KEY, v INT)' );
 		$this->assertQuery( 'INSERT INTO t (id, v) VALUES (1, 1)' );
