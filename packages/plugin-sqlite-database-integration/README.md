@@ -58,22 +58,6 @@ for an in-memory SQLite database. The database directory must be writable by PHP
 Integrations should always read `DB_PATH` after WordPress loads instead of assuming
 a fixed database path.
 
-## Busy timeout
-
-SQLite allows only one writer at a time. When a write cannot start because another
-connection holds the write lock, SQLite waits up to the busy timeout before failing
-with a "database is locked" error. The default timeout is 10 seconds.
-
-To change the timeout, define the `SQLITE_BUSY_TIMEOUT` constant in `wp-config.php`
-with a value in whole seconds:
-
-```php
-// Wait up to 30 seconds for the write lock before failing.
-define( 'SQLITE_BUSY_TIMEOUT', 30 );
-```
-
-Set it to `0` to fail immediately instead of waiting.
-
 ## Development
 
 Run these commands from the repository root:
