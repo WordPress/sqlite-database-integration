@@ -8359,18 +8359,30 @@ END;
 	}
 
 	public function testFailedStatementIsRolledBackInTransaction(): void {
-		$this->assertQuery( 'CREATE TABLE t (id INT PRIMARY KEY)' );
+		$this->assertQuery( 'CREATE TABLE t1 (id INT PRIMARY KEY)' );
+		$this->assertQuery( 'CREATE TABLE t2 (id INT PRIMARY KEY)' );
+		$this->assertQuery( 'CREATE TABLE t3 (id INT PRIMARY KEY, t2_id INT, FOREIGN KEY (t2_id) REFERENCES t2 (id))' );
+		$this->assertQuery( 'INSERT INTO t1 VALUES (1)' );
+		$this->assertQuery( 'INSERT INTO t2 VALUES (1)' );
+		$this->assertQuery( 'INSERT INTO t3 VALUES (1, 1)' );
 		$this->assertQuery( 'BEGIN' );
-		$this->assertQuery( 'INSERT INTO t VALUES (1)' );
+		$this->assertQuery( 'INSERT INTO t1 VALUES (2)' );
 
-		// The first row of the failed statement is not kept.
+		/*
+		 * A multi-table DELETE runs a DELETE query for each table. Deleting
+		 * from t1 succeeds, and then deleting from t2 fails on the foreign key.
+		 */
 		$this->assertQueryError(
-			'INSERT INTO t VALUES (2), (1)',
-			'SQLSTATE[23000]: Integrity constraint violation: 19 UNIQUE constraint failed: t.id'
+			'DELETE t1, t2 FROM t1 JOIN t2 ON t2.id = t1.id',
+			'SQLSTATE[23000]: Integrity constraint violation: 19 FOREIGN KEY constraint failed'
 		);
-
+		$this->assertTrue( $this->engine->inTransaction() );
 		$this->assertQuery( 'COMMIT' );
-		$result = $this->assertQuery( 'SELECT id FROM t ORDER BY id' );
+
+		// The changes of the failed statement are undone, and the rest is kept.
+		$result = $this->assertQuery( 'SELECT id FROM t1 ORDER BY id' );
+		$this->assertSame( array( '1', '2' ), array_column( $result, 'id' ) );
+		$result = $this->assertQuery( 'SELECT id FROM t2' );
 		$this->assertSame( array( '1' ), array_column( $result, 'id' ) );
 	}
 
