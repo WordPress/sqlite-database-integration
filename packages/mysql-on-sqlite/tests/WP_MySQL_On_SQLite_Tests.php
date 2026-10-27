@@ -11153,15 +11153,81 @@ END;
 		$this->assertEquals( array( (object) array( '0b000000001' => pack( 'H*', '0001' ) ) ), $result );
 	}
 
-	public function testHexadecimalLiterals(): void {
-		$result = $this->assertQuery( 'SELECT 0x417a' );
-		$this->assertEquals( array( (object) array( '0x417a' => 'Az' ) ), $result );
+	/**
+	 * @dataProvider hexadecimalLiterals
+	 */
+	public function testHexadecimalLiterals( string $literal, string $hex ): void {
+		$result = $this->assertQuery( "SELECT $literal" );
+		$this->assertEquals( array( (object) array( $literal => hex2bin( $hex ) ) ), $result );
 
-		$result = $this->assertQuery( "SELECT x'417a'" );
-		$this->assertEquals( array( (object) array( "x'417a'" => 'Az' ) ), $result );
+		$result = $this->assertQuery( "SELECT HEX($literal) AS value" );
+		$this->assertSame( $hex, $result[0]->value );
+	}
 
-		$result = $this->assertQuery( "SELECT X'417a'" );
-		$this->assertEquals( array( (object) array( "X'417a'" => 'Az' ) ), $result );
+	public static function hexadecimalLiterals(): array {
+		return array(
+			array( '0x0', '00' ),
+			array( '0x1', '01' ),
+			array( '0xF', '0F' ),
+			array( '0x711', '0711' ),
+			array( '0xaBc', '0ABC' ),
+			array( '0x0711', '0711' ),
+			array( '0x00711', '000711' ),
+			array( '0x000711', '000711' ),
+			array( '0x000', '0000' ),
+			array( '0x123456789abcdef01', '0123456789ABCDEF01' ),
+			array( '0x417a', '417A' ),
+			array( "x'417a'", '417A' ),
+			array( "X'417a'", '417A' ),
+			array( "x''", '' ),
+			array( "X''", '' ),
+		);
+	}
+
+	public function testOddLengthHexadecimalLiteralsInWrites(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT PRIMARY KEY, title TEXT, name VARCHAR(200), data BLOB)' );
+		$this->assertQuery( 'INSERT INTO t (id, title, name, data) VALUES (51701, 0x711, 0x711, 0x711)' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'    => '51701',
+					'title' => '0711',
+					'name'  => '0711',
+					'data'  => '0711',
+				),
+			),
+			$this->assertQuery( 'SELECT id, HEX(title) AS title, HEX(name) AS name, HEX(data) AS data FROM t' )
+		);
+
+		$this->assertQuery( 'UPDATE t SET title = 0x00711, name = 0x00711, data = 0x00711 WHERE id = 51701' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'    => '51701',
+					'title' => '000711',
+					'name'  => '000711',
+					'data'  => '000711',
+				),
+			),
+			$this->assertQuery( 'SELECT id, HEX(title) AS title, HEX(name) AS name, HEX(data) AS data FROM t' )
+		);
+	}
+
+	/**
+	 * @dataProvider oddLengthQuotedHexadecimalLiterals
+	 */
+	public function testOddLengthQuotedHexadecimalLiteralsAreRejected( string $literal ): void {
+		$this->expectException( WP_MySQL_On_SQLite_Exception::class );
+		$this->assertQuery( "SELECT $literal" );
+	}
+
+	public static function oddLengthQuotedHexadecimalLiterals(): array {
+		return array(
+			array( "x'1'" ),
+			array( "X'1'" ),
+			array( "x'711'" ),
+			array( "X'711'" ),
+		);
 	}
 
 	public function testColumnInfo(): void {

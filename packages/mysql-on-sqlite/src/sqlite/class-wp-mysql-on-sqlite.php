@@ -4541,7 +4541,13 @@ class WP_MySQL_On_SQLite extends PDO {
 				 */
 				$value = $token->get_value();
 				if ( '0' === $value[0] && 'x' === $value[1] ) {
-					return sprintf( "x'%s'", substr( $value, 2 ) );
+					$hex = substr( $value, 2 );
+
+					// MySQL pads odd-length 0x literals with a leading zero.
+					if ( 1 === strlen( $hex ) % 2 ) {
+						$hex = '0' . $hex;
+					}
+					return sprintf( "x'%s'", $hex );
 				}
 				return $value;
 			case WP_MySQL_Lexer::AUTO_INCREMENT_SYMBOL:
