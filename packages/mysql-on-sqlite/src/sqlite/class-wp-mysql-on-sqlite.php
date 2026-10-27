@@ -4097,6 +4097,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	private function execute_administration_statement( WP_Parser_Node $node ): void {
 		$first_token    = $node->get_first_child_token();
 		$table_ref_list = $node->get_first_child_node( 'tableRefList' );
+		$savepoint_name = $this->get_internal_savepoint_name( 'table_administration' );
 		$results        = array();
 		foreach ( $table_ref_list->get_child_nodes( 'tableRef' ) as $table_ref ) {
 			$database = $this->get_database_name( $table_ref );
@@ -4106,6 +4107,9 @@ class WP_MySQL_On_SQLite extends PDO {
 
 			$table_name        = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
 			$quoted_table_name = $this->quote_sqlite_identifier( $table_name );
+
+			// Each table must be atomic because failures are reported as result rows.
+			$this->execute_sqlite_query( sprintf( 'SAVEPOINT %s', $savepoint_name ) );
 			try {
 				switch ( $first_token->id ) {
 					case WP_MySQL_Lexer::ANALYZE_SYMBOL:
@@ -4143,6 +4147,7 @@ class WP_MySQL_On_SQLite extends PDO {
 						);
 				}
 			} catch ( PDOException $e ) {
+				$this->execute_sqlite_query( sprintf( 'ROLLBACK TO SAVEPOINT %s', $savepoint_name ) );
 				if ( '42S02' === $e->getCode() && isset( $e->errorInfo[2] ) ) {
 					$errors = array( $e->errorInfo[2] );
 				} elseif (
@@ -4155,6 +4160,7 @@ class WP_MySQL_On_SQLite extends PDO {
 					$errors = array( $e->getMessage() );
 				}
 			}
+			$this->execute_sqlite_query( sprintf( 'RELEASE SAVEPOINT %s', $savepoint_name ) );
 
 			$operation = strtolower( $first_token->get_value() );
 			foreach ( $errors as $error ) {
