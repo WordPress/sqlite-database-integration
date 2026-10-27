@@ -189,6 +189,59 @@ class WP_SQLite_Connection_Tests extends TestCase {
 		$this->assertSame( 'delete', $this->get_journal_mode( $driver->get_connection() ) );
 	}
 
+	public function testDefaultBusyTimeout(): void {
+		$connection = new WP_SQLite_Connection( array( 'path' => $this->db_path ) );
+
+		$this->assertSame( '10000', $this->get_busy_timeout( $connection ) );
+	}
+
+	public function testBusyTimeoutAcceptsZero(): void {
+		$connection = new WP_SQLite_Connection(
+			array(
+				'path'         => $this->db_path,
+				'busy_timeout' => 0,
+			)
+		);
+
+		$this->assertSame( '0', $this->get_busy_timeout( $connection ) );
+	}
+
+	public function testBusyTimeoutAcceptsMaximumValue(): void {
+		$connection = new WP_SQLite_Connection(
+			array(
+				'path'         => $this->db_path,
+				'busy_timeout' => 2147483647,
+			)
+		);
+
+		$this->assertSame( '2147483647', $this->get_busy_timeout( $connection ) );
+	}
+
+	/**
+	 * @dataProvider provideInvalidBusyTimeouts
+	 */
+	public function testInvalidBusyTimeoutThrows( $busy_timeout ): void {
+		$this->expectException( InvalidArgumentException::class );
+		$this->expectExceptionMessage( 'Invalid SQLite busy timeout. It must be an integer from 0 to 2147483647.' );
+		new WP_SQLite_Connection(
+			array(
+				'path'         => $this->db_path,
+				'busy_timeout' => $busy_timeout,
+			)
+		);
+	}
+
+	public function provideInvalidBusyTimeouts(): array {
+		return array(
+			'string'        => array( '10000' ),
+			'float'         => array( 10000.0 ),
+			'boolean'       => array( false ),
+			'array'         => array( array( 10000 ) ),
+			'negative'      => array( -1 ),
+			'above maximum' => array( 2147483648 ),
+		);
+	}
+
 	/**
 	 * Create the database file first, and then make its directory read-only,
 	 * so that the WAL sidecar files ("-wal", "-shm") cannot be created.
@@ -215,5 +268,9 @@ class WP_SQLite_Connection_Tests extends TestCase {
 
 	private function get_synchronous( WP_SQLite_Connection $connection ): string {
 		return (string) $connection->query( 'PRAGMA synchronous' )->fetchColumn();
+	}
+
+	private function get_busy_timeout( WP_SQLite_Connection $connection ): string {
+		return (string) $connection->query( 'PRAGMA busy_timeout' )->fetchColumn();
 	}
 }

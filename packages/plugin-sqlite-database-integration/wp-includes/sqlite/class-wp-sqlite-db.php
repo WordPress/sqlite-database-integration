@@ -453,7 +453,7 @@ class WP_SQLite_DB extends wpdb {
 		try {
 			$options = array(
 				'sqlite_journal_mode' => defined( 'SQLITE_JOURNAL_MODE' ) ? SQLITE_JOURNAL_MODE : null,
-				'sqlite_busy_timeout' => defined( 'SQLITE_BUSY_TIMEOUT' ) ? (int) SQLITE_BUSY_TIMEOUT : null,
+				'sqlite_busy_timeout' => defined( 'SQLITE_BUSY_TIMEOUT' ) ? SQLITE_BUSY_TIMEOUT : null,
 			);
 			$dbh     = new WP_MySQL_On_SQLite(
 				sprintf(

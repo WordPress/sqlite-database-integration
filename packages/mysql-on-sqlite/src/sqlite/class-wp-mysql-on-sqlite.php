@@ -801,7 +801,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 *     @type string|int|null $sqlite_synchronous  Optional. SQLite synchronous setting.
 	 * }
 	 *
-	 * @throws InvalidArgumentException     When the MySQL version is invalid.
+	 * @throws InvalidArgumentException     When the MySQL version or an SQLite option is invalid.
 	 * @throws WP_MySQL_On_SQLite_Exception When the driver initialization fails.
 	 */
 	public function __construct(

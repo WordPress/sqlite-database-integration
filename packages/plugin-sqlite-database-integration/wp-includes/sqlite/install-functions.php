@@ -30,7 +30,7 @@ function sqlite_make_db_sqlite() {
 			null,
 			array(
 				'sqlite_journal_mode' => defined( 'SQLITE_JOURNAL_MODE' ) ? SQLITE_JOURNAL_MODE : null,
-				'sqlite_busy_timeout' => defined( 'SQLITE_BUSY_TIMEOUT' ) ? (int) SQLITE_BUSY_TIMEOUT : null,
+				'sqlite_busy_timeout' => defined( 'SQLITE_BUSY_TIMEOUT' ) ? SQLITE_BUSY_TIMEOUT : null,
 			)
 		);
 		$translator->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true ); // phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO

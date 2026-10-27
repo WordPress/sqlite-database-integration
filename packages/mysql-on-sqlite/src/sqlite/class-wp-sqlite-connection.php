@@ -107,11 +107,12 @@ class WP_SQLite_Connection {
 		// Throw exceptions on error.
 		$this->pdo->setAttribute( PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION );
 
-		// Configure SQLite busy timeout.
-		if ( isset( $options['busy_timeout'] ) && is_int( $options['busy_timeout'] ) ) {
-			$busy_timeout = $options['busy_timeout'];
-		} else {
-			$busy_timeout = self::DEFAULT_SQLITE_BUSY_TIMEOUT;
+		// Configure SQLite busy timeout. SQLite stores it as a 32-bit signed integer.
+		$busy_timeout = $options['busy_timeout'] ?? self::DEFAULT_SQLITE_BUSY_TIMEOUT;
+		if ( ! is_int( $busy_timeout ) || $busy_timeout < 0 || $busy_timeout > 2147483647 ) {
+			throw new InvalidArgumentException(
+				'Invalid SQLite busy timeout. It must be an integer from 0 to 2147483647.'
+			);
 		}
 		$this->query( 'PRAGMA busy_timeout = ' . $busy_timeout );
 
