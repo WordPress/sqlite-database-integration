@@ -1398,7 +1398,12 @@ class WP_MySQL_On_SQLite extends PDO {
 			throw $this->new_driver_exception( 'There is no active transaction' );
 		}
 		$this->flush();
-		$this->commit_user_transaction();
+
+		// Unlike a COMMIT statement, PDO::commit() doesn't roll back on failure,
+		// so the caller can still call PDO::rollBack(), as with PDO MySQL.
+		$this->connection->query( 'COMMIT' );
+		$this->in_transaction  = false;
+		$this->savepoint_names = array();
 		return true;
 	}
 
@@ -2166,7 +2171,17 @@ class WP_MySQL_On_SQLite extends PDO {
 		if ( ! $this->inTransaction() ) {
 			return;
 		}
-		$this->connection->query( 'COMMIT' );
+		try {
+			$this->connection->query( 'COMMIT' );
+		} catch ( PDOException $e ) {
+			// Like MySQL, roll back a transaction that fails to commit.
+			try {
+				$this->rollback_user_transaction();
+			} catch ( PDOException $rollback_exception ) {
+				// SQLite has already rolled back the transaction.
+			}
+			throw $e;
+		}
 		$this->in_transaction  = false;
 		$this->savepoint_names = array();
 	}

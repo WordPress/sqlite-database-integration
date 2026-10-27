@@ -8420,6 +8420,43 @@ END;
 		$this->assertSame( array( '1' ), array_column( $result, 'id' ) );
 	}
 
+	/**
+	 * @dataProvider dataFailedCommits
+	 */
+	public function testFailedCommitRollsBackTransaction( string $begin_query, string $commit_query ): void {
+		$this->assertQuery( 'CREATE TABLE p (id INT PRIMARY KEY)' );
+		$this->assertQuery( 'CREATE TABLE c (id INT PRIMARY KEY, p_id INT, FOREIGN KEY (p_id) REFERENCES p (id))' );
+		$this->assertQuery( $begin_query );
+
+		// Make the commit fail by deferring a foreign key check to it.
+		$this->sqlite->exec( 'PRAGMA defer_foreign_keys = ON' );
+		$this->assertQuery( 'INSERT INTO c VALUES (1, 1)' );
+		$this->assertQueryError(
+			$commit_query,
+			'SQLSTATE[23000]: Integrity constraint violation: 19 FOREIGN KEY constraint failed'
+		);
+
+		// Like MySQL, the failed commit rolls back the transaction.
+		$this->assertFalse( $this->engine->inTransaction() );
+		$result = $this->assertQuery( 'SELECT id FROM c' );
+		$this->assertSame( array(), array_column( $result, 'id' ) );
+
+		// The table lock is released, so UNLOCK TABLES doesn't commit a new transaction.
+		$this->assertQuery( 'BEGIN' );
+		$this->assertQuery( 'UNLOCK TABLES' );
+		$this->assertTrue( $this->engine->inTransaction() );
+	}
+
+	public static function dataFailedCommits(): array {
+		return array(
+			'COMMIT'                     => array( 'BEGIN', 'COMMIT' ),
+			'UNLOCK TABLES'              => array( 'LOCK TABLES c WRITE', 'UNLOCK TABLES' ),
+			'implicit START TRANSACTION' => array( 'BEGIN', 'START TRANSACTION' ),
+			'implicit BEGIN'             => array( 'BEGIN', 'BEGIN' ),
+			'implicit LOCK TABLES'       => array( 'BEGIN', 'LOCK TABLES p WRITE' ),
+		);
+	}
+
 	public function testFailedStatementRolledBackBySqliteEndsTransaction(): void {
 		$this->assertQuery( 'CREATE TABLE t (id INT PRIMARY KEY)' );
 
