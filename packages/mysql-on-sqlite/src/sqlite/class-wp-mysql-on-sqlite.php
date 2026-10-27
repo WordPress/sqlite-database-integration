@@ -6077,7 +6077,7 @@ class WP_MySQL_On_SQLite extends PDO {
 						return false;
 					}
 					$is_nullable  = 'YES' === $column['IS_NULLABLE'];
-					$has_default  = $column['COLUMN_DEFAULT'];
+					$has_default  = null !== $column['COLUMN_DEFAULT'];
 					$is_generated = str_contains( $column['EXTRA'], 'auto_increment' );
 					return ! ( $is_nullable || $has_default || $is_generated );
 				}
