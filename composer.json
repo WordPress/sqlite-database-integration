@@ -67,7 +67,7 @@
 		"wp-test-php": [
 			"@wp-test-ensure-env @no_additional_args",
 			"@wp-test-remove-database @no_additional_args",
-			"cd wordpress && node tools/local-env/scripts/docker.js run --rm php php -d opcache.enable_cli=1 -d opcache.memory_consumption=256 ./vendor/bin/phpunit @additional_args"
+			"cd wordpress && node tools/local-env/scripts/docker.js run --rm php php -d opcache.enable_cli=1 -d opcache.memory_consumption=256 -d opcache.jit=tracing -d opcache.jit_buffer_size=64M ./vendor/bin/phpunit @additional_args"
 		],
 		"wp-test-sqlite-plugin-php": [
 			"@wp-test-php /var/www/tests-sqlite-database-integration/phpunit"
