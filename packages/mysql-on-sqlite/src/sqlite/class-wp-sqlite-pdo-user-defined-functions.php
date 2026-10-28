@@ -81,6 +81,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'utc_timestamp'                => 'utc_timestamp',
 		'version'                      => 'version',
 		'reverse'                      => 'reverse',
+		'substring_index'            => 'substring_index',
 
 		// Internal helper functions.
 		'_helper_like_to_glob_pattern' => '_helper_like_to_glob_pattern',
@@ -925,6 +926,63 @@ class WP_SQLite_PDO_User_Defined_Functions {
 			return implode( '', array_reverse( $matches[0] ) );
 		}
 		return strrev( $str );
+	}
+
+	/**
+	 * Method to emulate MySQL SUBSTRING_INDEX() function.
+	 *
+	 * Returns the substring of a string before a given number of
+	 * occurrences of a delimiter. A positive count searches from the left
+	 * and a negative count searches from the right. A count of zero, an
+	 * empty delimiter, or fewer delimiters than requested (in the searched
+	 * direction) yields defined fallbacks matching MySQL. Any NULL input
+	 * yields NULL.
+	 *
+	 * This is a local addition to the vendored SQLite Database Integration
+	 * plugin so plugins relying on MySQL string functions keep working.
+	 * Propose it upstream rather than extending it here.
+	 *
+	 * @param string|null $str   The string to search.
+	 * @param string|null $delim The delimiter to search for.
+	 * @param mixed       $count How many delimiters to skip; negative counts from the right.
+	 *
+	 * @return string|null The substring, or NULL on NULL input.
+	 */
+	public function substring_index( $str, $delim, $count ) {
+		if ( null === $str || null === $delim || null === $count ) {
+			return null;
+		}
+		$str   = (string) $str;
+		$delim = (string) $delim;
+		$count = (int) $count;
+		if ( '' === $delim || 0 === $count ) {
+			return '';
+		}
+		$delim_len = strlen( $delim );
+		if ( $count > 0 ) {
+			$offset = 0;
+			for ( $i = 0; $i < $count; $i++ ) {
+				$pos = strpos( $str, $delim, $offset );
+				if ( false === $pos ) {
+					return $str;
+				}
+				$offset = $pos + $delim_len;
+			}
+			return substr( $str, 0, $offset - $delim_len );
+		}
+		$count = -$count;
+		$end   = strlen( $str );
+		for ( $i = 0; $i < $count; $i++ ) {
+			$pos = strrpos( substr( $str, 0, $end ), $delim );
+			if ( false === $pos ) {
+				return $str;
+			}
+			if ( $i === $count - 1 ) {
+				return substr( $str, $pos + $delim_len );
+			}
+			$end = $pos;
+		}
+		return $str;
 	}
 
 	/**

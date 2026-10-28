@@ -339,6 +339,39 @@ QUERY;
 		$this->assertEquals( 0, count( $actual ) );
 	}
 
+	public function testSubstringIndex() {
+		$query = <<<'QUERY'
+SELECT SUBSTRING_INDEX('www.mysql.com', '.', 2) AS two_from_left,
+       SUBSTRING_INDEX('www.mysql.com', '.', -2) AS two_from_right,
+       SUBSTRING_INDEX('www.mysql.com', '.', 7) AS beyond_last,
+       SUBSTRING_INDEX('nosuchdelim', '.', 3) AS no_match,
+       SUBSTRING_INDEX('a--b--c', '--', -1) AS multi_char
+QUERY;
+
+		$this->assertQuery( $query );
+		$actual = $this->last_result;
+		$this->assertEquals( 'www.mysql', $actual[0]->two_from_left );
+		$this->assertEquals( 'mysql.com', $actual[0]->two_from_right );
+		$this->assertEquals( 'www.mysql.com', $actual[0]->beyond_last );
+		$this->assertEquals( 'nosuchdelim', $actual[0]->no_match );
+		$this->assertEquals( 'c', $actual[0]->multi_char );
+	}
+
+	public function testSubstringIndexDomainExtraction() {
+		$this->assertQuery(
+			"INSERT INTO wp_options (option_name, option_value, autoload) VALUES ('_substring_index_probe', 'https://example.com/a?x=1', 'no');"
+		);
+		$query = <<<'QUERY'
+SELECT DISTINCT SUBSTRING_INDEX(SUBSTRING_INDEX(SUBSTRING_INDEX(option_value, '/', 3), '://', -1), '/', 1) AS domain
+FROM wp_options WHERE option_name = '_substring_index_probe'
+QUERY;
+
+		$this->assertQuery( $query );
+		$actual = $this->last_result;
+		$this->assertEquals( 1, count( $actual ) );
+		$this->assertEquals( 'example.com', $actual[0]->domain );
+	}
+
 	public function testCharLengthComplex() {
 		$query = <<<'QUERY'
 SELECT option_name,
