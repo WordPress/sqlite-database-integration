@@ -17,6 +17,8 @@
 	},
 	"require": {
 		"php": ">=7.2",
+		"ext-filter": "*",
+		"ext-hash": "*",
 		"ext-sockets": "*",
 		"composer-runtime-api": "^2.2"
 	},
@@ -33,6 +35,8 @@
 		"bin/wp-mysql-proxy.php"
 	],
 	"require-dev": {
+		"ext-mysqli": "*",
+		"ext-pdo_mysql": "*",
 		"phpunit/phpunit": "^8.5",
 		"symfony/process": "^5.4",
 		"wordpress/mysql-on-sqlite": "*@dev"

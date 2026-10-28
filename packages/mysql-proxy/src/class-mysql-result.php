@@ -4,7 +4,7 @@ namespace WP_MySQL_Proxy;
 
 class MySQL_Result {
 	public $affected_rows  = 0;
-	public $last_insert_id = null;
+	public $last_insert_id = 0;
 	public $columns        = array();
 	public $rows           = array();
 

@@ -14,8 +14,11 @@ class MySQL_Server_Process {
 		$env           = array_merge(
 			$_ENV,
 			array(
-				'PORT'    => $port,
-				'DB_PATH' => $options['db_path'] ?? ':memory:',
+				'PORT'         => $port,
+				'DB_PATH'      => $options['db_path'] ?? ':memory:',
+				'LOG_LEVEL'    => $options['log_level'] ?? 'error',
+				'AUTH_PLUGIN'  => $options['auth_plugin'] ?? 'caching_sha2_password',
+				'BIND_ADDRESS' => $options['bind_address'] ?? '127.0.0.1',
 			)
 		);
 		$this->process = new Process(
@@ -27,7 +30,10 @@ class MySQL_Server_Process {
 
 		// Wait for the server to be ready.
 		for ( $i = 0; $i < 20; $i++ ) {
-			$connection = @fsockopen( '127.0.0.1', $port ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+			if ( ! $this->process->isRunning() ) {
+				break;
+			}
+			$connection = @fsockopen( $options['connect_address'] ?? '127.0.0.1', $port, $errno, $error, 0.1 ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
 			if ( $connection ) {
 				fclose( $connection );
 				return;
@@ -68,5 +74,18 @@ class MySQL_Server_Process {
 			return '';
 		}
 		return $this->process->getErrorOutput();
+	}
+
+	/**
+	 * Find a free local port for a server.
+	 *
+	 * The port is released before the server binds it, so another process could
+	 * take it in between, which is unlikely in a test run.
+	 */
+	public static function free_port(): int {
+		$listener = stream_socket_server( 'tcp://127.0.0.1:0', $errno, $error );
+		$address  = stream_socket_get_name( $listener, false );
+		fclose( $listener );
+		return (int) substr( strrchr( $address, ':' ), 1 );
 	}
 }

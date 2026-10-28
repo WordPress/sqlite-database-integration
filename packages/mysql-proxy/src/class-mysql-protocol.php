@@ -212,6 +212,9 @@ class MySQL_Protocol {
 	const AUTH_PLUGIN_NO_LOGIN              = 'no_login_plugin';       // Disable client connection for specific accounts.
 	const AUTH_PLUGIN_SOCKET                = 'auth_socket';           // Authenticate local Unix socket connections.
 
+	// Authentication switch request.
+	const AUTH_SWITCH_REQUEST_HEADER = 0xfe;
+
 	// Auth specific markers for caching_sha2_password
 	const AUTH_MORE_DATA_HEADER  = 0x01;  // followed by 1 byte (caching_sha2_password specific)
 	const CACHING_SHA2_FAST_AUTH = 3;
@@ -303,18 +306,21 @@ class MySQL_Protocol {
 	 *
 	 * @see https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_err_packet.html
 	 *
-	 * @param  int    $sequence_id The sequence ID of the packet.
-	 * @param  int    $error_code  The error code.
-	 * @param  string $sql_state   The SQLSTATE value.
-	 * @param  string $message     The error message.
-	 * @return string              The ERR packet.
+	 * @param  int         $sequence_id The sequence ID of the packet.
+	 * @param  int         $error_code  The error code.
+	 * @param  string|null $sql_state   The SQLSTATE value, or null to omit it, as MySQL does
+	 *                                  before the client has sent its capabilities.
+	 * @param  string      $message     The error message.
+	 * @return string                   The ERR packet.
 	 */
 	public static function build_err_packet(
 		int $sequence_id,
 		int $error_code,
-		string $sql_state,
+		?string $sql_state,
 		string $message
 	): string {
+		$state = null === $sql_state ? '' : '#' . strtoupper( $sql_state );
+
 		/**
 		 * Assemble the ERR packet payload.
 		 *
@@ -328,10 +334,10 @@ class MySQL_Protocol {
 		 */
 		$payload = pack(
 			'Cva*a*',
-			self::ERR_PACKET_HEADER,        // (C)  ERR packet header.
-			$error_code,                    // (v)  Error code.
-			'#' . strtoupper( $sql_state ), // (a*) SQL state.
-			$message                        // (a*) Message.
+			self::ERR_PACKET_HEADER, // (C)  ERR packet header.
+			$error_code,             // (v)  Error code.
+			$state,                  // (a*) SQL state marker and SQL state, if any.
+			$message                 // (a*) Message.
 		);
 		return self::build_packet( $sequence_id, $payload );
 	}
@@ -385,6 +391,8 @@ class MySQL_Protocol {
 	 * @param  string $auth_plugin_data The authentication plugin data (scramble).
 	 * @param  int    $capabilities     The capabilities that are supported by the server.
 	 * @param  int    $status_flags     The status flags representing the server state.
+	 * @param  string $auth_plugin      The authentication plugin the client should use.
+	 *                                  Default: DEFAULT_AUTH_PLUGIN.
 	 * @return string                   The handshake packet.
 	 */
 	public static function build_handshake_packet(
@@ -394,7 +402,8 @@ class MySQL_Protocol {
 		int $connection_id,
 		string $auth_plugin_data,
 		int $capabilities,
-		int $status_flags
+		int $status_flags,
+		string $auth_plugin = self::DEFAULT_AUTH_PLUGIN
 	): string {
 		$cap_flags_lower = $capabilities & 0xffff;
 		$cap_flags_upper = $capabilities >> 16;
@@ -403,7 +412,7 @@ class MySQL_Protocol {
 
 		if ( $capabilities & MySQL_Protocol::CLIENT_PLUGIN_AUTH ) {
 			$auth_plugin_data_length = strlen( $auth_plugin_data ) + 1;
-			$auth_plugin_name        = self::DEFAULT_AUTH_PLUGIN . "\0";
+			$auth_plugin_name        = $auth_plugin . "\0";
 		} else {
 			$auth_plugin_data_length = 0;
 			$auth_plugin_name        = '';
@@ -569,37 +578,6 @@ class MySQL_Protocol {
 	}
 
 	/**
-	 * Read MySQL length-encoded integer from a payload and advance the offset.
-	 *
-	 * @see https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_dt_integers.html
-	 *
-	 * @param  string $payload A payload of bytes to read from.
-	 * @param  int    $offset  And offset to start reading from within the payload.
-	 *                         The value will be advanced by the number of bytes read.
-	 * @return int             The decoded integer value.
-	 */
-	public static function read_length_encoded_int( string $payload, int &$offset ): int {
-		$first_byte = ord( $payload[ $offset ] ?? "\0" );
-		$offset    += 1;
-
-		if ( $first_byte < 0xfb ) {
-			$value = $first_byte;
-		} elseif ( 0xfb === $first_byte ) {
-			$value = 0;
-		} elseif ( 0xfc === $first_byte ) {
-			$value   = unpack( 'v', $payload, $offset )[1];
-			$offset += 2;
-		} elseif ( 0xfd === $first_byte ) {
-			$value   = unpack( 'VX', $payload, $offset )[1];
-			$offset += 3;
-		} else {
-			$value   = unpack( 'P', $payload, $offset )[1];
-			$offset += 8;
-		}
-		return $value;
-	}
-
-	/**
 	 * Read MySQL length-encoded string from a payload and advance the offset.
 	 *
 	 * @see https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_dt_strings.html
@@ -610,8 +588,55 @@ class MySQL_Protocol {
 	 * @return string          The decoded string value.
 	 */
 	public static function read_length_encoded_string( string $payload, int &$offset ): string {
-		$length  = self::read_length_encoded_int( $payload, $offset );
+		$length = self::read_length_encoded_int( $payload, $offset );
+		if ( $length > strlen( $payload ) - $offset ) {
+			throw new MySQL_Proxy_Exception( 'Incomplete length-encoded string.' );
+		}
 		$value   = substr( $payload, $offset, $length );
+		$offset += $length;
+		return $value;
+	}
+
+	/**
+	 * Read MySQL length-encoded integer from a payload and advance the offset.
+	 *
+	 * @see https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_dt_integers.html
+	 *
+	 * @param  string $payload A payload of bytes to read from.
+	 * @param  int    $offset  And offset to start reading from within the payload.
+	 *                         The value will be advanced by the number of bytes read.
+	 * @return int             The decoded integer value.
+	 */
+	public static function read_length_encoded_int( string $payload, int &$offset ): int {
+		if ( $offset < 0 || $offset >= strlen( $payload ) ) {
+			throw new MySQL_Proxy_Exception( 'Missing length-encoded integer.' );
+		}
+		$first_byte = ord( $payload[ $offset++ ] );
+		if ( $first_byte < 0xfb ) {
+			return $first_byte;
+		}
+		if ( 0xfb === $first_byte ) {
+			return 0;
+		}
+
+		$lengths = array(
+			0xfc => 2,
+			0xfd => 3,
+			0xfe => 8,
+		);
+		$length  = $lengths[ $first_byte ] ?? 0;
+		if ( 0 === $length || $length > strlen( $payload ) - $offset ) {
+			throw new MySQL_Proxy_Exception( 'Invalid length-encoded integer.' );
+		}
+
+		$value = 0;
+		for ( $i = $length - 1; $i >= 0; $i-- ) {
+			$byte = ord( $payload[ $offset + $i ] );
+			if ( $value > intdiv( PHP_INT_MAX - $byte, 256 ) ) {
+				throw new MySQL_Proxy_Exception( 'Length-encoded integer is too large.' );
+			}
+			$value = $value * 256 + $byte;
+		}
 		$offset += $length;
 		return $value;
 	}
@@ -627,8 +652,12 @@ class MySQL_Protocol {
 	 * @return string          The decoded string value.
 	 */
 	public static function read_null_terminated_string( string $payload, int &$offset ): string {
-		$value   = unpack( 'Z*', $payload, $offset )[1];
-		$offset += strlen( $value ) + 1;
+		$end = $offset < 0 || $offset >= strlen( $payload ) ? false : strpos( $payload, "\0", $offset );
+		if ( false === $end ) {
+			throw new MySQL_Proxy_Exception( 'Missing string terminator.' );
+		}
+		$value  = substr( $payload, $offset, $end - $offset );
+		$offset = $end + 1;
 		return $value;
 	}
 }

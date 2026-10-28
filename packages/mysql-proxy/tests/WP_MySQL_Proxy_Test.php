@@ -4,16 +4,24 @@ use PHPUnit\Framework\TestCase;
 
 abstract class WP_MySQL_Proxy_Test extends TestCase {
 	/** @var int */
-	protected $port = 3306;
+	protected $port;
+
+	/** @var string */
+	protected $log_level = 'error';
 
 	/** @var MySQL_Server_Process */
 	protected $server;
 
 	public function setUp(): void {
+		// Keep the tests away from any local MySQL server on its default port.
+		$this->port = MySQL_Server_Process::free_port();
+
 		$this->server = new MySQL_Server_Process(
 			array(
-				'port'    => $this->port,
-				'db_path' => ':memory:',
+				'port'        => $this->port,
+				'db_path'     => ':memory:',
+				'log_level'   => $this->log_level,
+				'auth_plugin' => $this->get_auth_plugin(),
 			)
 		);
 	}
@@ -31,5 +39,9 @@ abstract class WP_MySQL_Proxy_Test extends TestCase {
 				$this->server->get_stderr()
 			);
 		}
+	}
+
+	protected function get_auth_plugin(): string {
+		return MySQL_Test_Client::auth_plugin();
 	}
 }

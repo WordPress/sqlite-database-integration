@@ -10,6 +10,32 @@ use WP_MySQL_Proxy\Adapter\Adapter;
  */
 class MySQL_Session {
 	/**
+	 * Reasons the session closes a connection.
+	 */
+	const CLOSE_LOGIN_FAILED     = 'login failed';
+	const CLOSE_CLIENT_QUIT      = 'client quit';
+	const CLOSE_PACKET_TOO_LARGE = 'packet too large';
+	const CLOSE_MALFORMED_PACKET = 'malformed packet';
+
+	/**
+	 * Largest message accepted from an authenticated client.
+	 *
+	 * This is the "max_allowed_packet" equivalent, at the 16 MB default of MySQL
+	 * clients rather than the 64 MB server default. It bounds the memory a single
+	 * connection can hold, because a split message is assembled in memory.
+	 */
+	const MAX_MESSAGE_SIZE = 16777216;
+
+	/**
+	 * Largest message accepted before the client is authenticated.
+	 *
+	 * A login packet carries a username, a challenge response, a database name,
+	 * and connection attributes, so it stays well below MySQL's own 16 KB
+	 * network buffer. Anything larger is a malformed or hostile login.
+	 */
+	const MAX_UNAUTHENTICATED_PACKET_SIZE = 16384;
+
+	/**
 	 * Client capabilities that are supported by the server.
 	 */
 	const CAPABILITIES = (
@@ -78,6 +104,34 @@ class MySQL_Session {
 	private $is_authenticated = false;
 
 	/**
+	 * The account verifier shared by proxy sessions.
+	 *
+	 * @var MySQL_Authentication
+	 */
+	private $authentication;
+
+	/**
+	 * Login details retained while waiting for an authentication switch response.
+	 *
+	 * @var array{username: string, plugin: string, database: string, client_flags: int}|null
+	 */
+	private $pending_authentication;
+
+	/**
+	 * Why the connection must be closed, or null while it stays open.
+	 *
+	 * @var string|null
+	 */
+	private $close_reason;
+
+	/**
+	 * Logger instance.
+	 *
+	 * @var Logger
+	 */
+	private $logger;
+
+	/**
 	 * Packet sequence ID.
 	 *
 	 * @var int
@@ -94,17 +148,48 @@ class MySQL_Session {
 	/**
 	 * Constructor.
 	 *
-	 * @param Adapter $adapter       The MySQL query adapter instance.
-	 * @param int     $connection_id The connection ID.
+	 * @param Adapter              $adapter        The MySQL query adapter instance.
+	 * @param int                  $connection_id  The connection ID.
+	 * @param MySQL_Authentication $authentication The configured account verifier.
+	 * @param Logger|null          $logger         The logger for internal errors. Default: a new logger.
 	 */
-	public function __construct( Adapter $adapter, int $connection_id ) {
-		$this->adapter          = $adapter;
-		$this->connection_id    = $connection_id;
-		$this->auth_plugin_data = '';
-		$this->packet_id        = 0;
+	public function __construct( Adapter $adapter, int $connection_id, MySQL_Authentication $authentication, ?Logger $logger = null ) {
+		$this->authentication = $authentication;
+		$this->adapter        = $adapter;
+		$this->connection_id  = $connection_id;
+		$this->logger         = $logger ?? new Logger();
+		$this->packet_id      = 0;
 
-		// Generate random auth plugin data (20-byte salt)
-		$this->auth_plugin_data = random_bytes( 20 );
+		// Like MySQL's generate_user_salt(), use 7-bit characters other than NUL and '$'.
+		// Some clients read the challenge as a C string or as text.
+		$this->auth_plugin_data = strtr( random_bytes( 20 ) & str_repeat( "\x7f", 20 ), "\0$", "\1%" );
+	}
+
+	/**
+	 * Whether the connection has completed authentication.
+	 *
+	 * @return bool
+	 */
+	public function is_authenticated(): bool {
+		return $this->is_authenticated;
+	}
+
+	/**
+	 * Whether the transport must close this connection.
+	 *
+	 * @return bool
+	 */
+	public function is_closed(): bool {
+		return null !== $this->close_reason;
+	}
+
+	/**
+	 * Why the connection is closing.
+	 *
+	 * @return string|null One of the CLOSE_* reasons, or null while it stays open.
+	 */
+	public function get_close_reason(): ?string {
+		return $this->close_reason;
 	}
 
 	/**
@@ -133,6 +218,7 @@ class MySQL_Session {
 	 * @return string The initial handshake packet.
 	 */
 	public function get_initial_handshake(): string {
+		// Ask for the account's plugin, so clients that follow the server need no switch.
 		return MySQL_Protocol::build_handshake_packet(
 			0,
 			$this->server_version,
@@ -140,7 +226,8 @@ class MySQL_Session {
 			$this->connection_id,
 			$this->auth_plugin_data,
 			self::CAPABILITIES,
-			$this->status_flags
+			$this->status_flags,
+			$this->authentication->get_plugin()
 		);
 	}
 
@@ -152,39 +239,22 @@ class MySQL_Session {
 	 * @throws Incomplete_Input_Exception When more data is needed to complete a packet.
 	 */
 	public function receive_bytes( string $data ): ?string {
+		if ( $this->is_closed() ) {
+			return null;
+		}
+
 		// Append new data to the existing buffer.
 		$this->buffer .= $data;
 
-		// Check if we have enough data for a packet header.
-		if ( strlen( $this->buffer ) < 4 ) {
-			throw new Incomplete_Input_Exception( 'Incomplete packet header, need more bytes' );
+		// Read one message, which the client may have split across packets.
+		$received_sequence_id = null;
+		$payload              = $this->read_message( $received_sequence_id );
+		if ( null === $payload ) {
+			return $this->reject_oversized_message();
 		}
-
-		// Parse packet header.
-		$payload_length       = unpack( 'V', substr( $this->buffer, 0, 3 ) . "\x00" )[1];
-		$received_sequence_id = ord( $this->buffer[3] );
-		$this->packet_id      = $received_sequence_id + 1;
-
-		// Check if we have the complete packet.
-		$packet_length = 4 + $payload_length;
-		if ( strlen( $this->buffer ) < $packet_length ) {
-			throw new Incomplete_Input_Exception(
-				sprintf(
-					'Incomplete packet payload, have %d bytes, but need %d bytes',
-					strlen( $this->buffer ),
-					$packet_length
-				)
-			);
-		}
-
-		// Extract the packet payload.
-		$payload = substr( $this->buffer, 4, $payload_length );
-
-		// Remove the whole packet from the buffer.
-		$this->buffer = substr( $this->buffer, $packet_length );
 
 		/*
-		 * Process the packet.
+		 * Process the message.
 		 *
 		 * Depending on the lifecycle phase, handle authentication or a command.
 		 *
@@ -193,16 +263,33 @@ class MySQL_Session {
 
 		// Authentication phase.
 		if ( ! $this->is_authenticated ) {
+			$expected_sequence_id = null === $this->pending_authentication ? 1 : 3;
+			if ( $expected_sequence_id !== $received_sequence_id ) {
+				return $this->reject_authentication();
+			}
 			return $this->process_authentication( $payload );
 		}
 
-		// Command phase.
+		// Command phase. Like MySQL, refuse a packet that carries no command.
+		if ( '' === $payload ) {
+			$this->close( self::CLOSE_MALFORMED_PACKET );
+			return MySQL_Protocol::build_err_packet( $this->packet_id++, 1835, 'HY000', 'Malformed communication packet' );
+		}
+
 		$command = ord( $payload[0] );
 		switch ( $command ) {
 			case MySQL_Protocol::COM_QUIT:
+				// MySQL closes the connection itself, without a response.
+				$this->close( self::CLOSE_CLIENT_QUIT );
 				return '';
 			case MySQL_Protocol::COM_INIT_DB:
-				return $this->process_query( 'USE ' . substr( $payload, 1 ) );
+				$database = substr( $payload, 1 );
+				if ( '' === $database ) {
+					// Like MySQL, refuse an empty name without looking it up.
+					return MySQL_Protocol::build_err_packet( $this->packet_id++, 1046, '3D000', 'No database selected' );
+				}
+				return $this->use_database( $database )
+					?? MySQL_Protocol::build_ok_packet( $this->packet_id++, $this->status_flags );
 			case MySQL_Protocol::COM_QUERY:
 				return $this->process_query( substr( $payload, 1 ) );
 			case MySQL_Protocol::COM_PING:
@@ -218,99 +305,270 @@ class MySQL_Session {
 	}
 
 	/**
+	 * Read one client message from the buffer, joining packets the client split.
+	 *
+	 * The message is removed from the buffer only once it is complete, so an
+	 * incomplete message stays buffered for the next read.
+	 *
+	 * @param  int|null $first_sequence_id Receives the sequence ID of the first packet.
+	 * @return string|null                 The message payload, or null if it is too large.
+	 * @throws Incomplete_Input_Exception  When more data is needed to complete the message.
+	 */
+	private function read_message( ?int &$first_sequence_id ): ?string {
+		$limit   = $this->is_authenticated ? self::MAX_MESSAGE_SIZE : self::MAX_UNAUTHENTICATED_PACKET_SIZE;
+		$offset  = 0;
+		$payload = '';
+
+		while ( true ) {
+			// Check if we have enough data for a packet header.
+			if ( strlen( $this->buffer ) < $offset + 4 ) {
+				throw new Incomplete_Input_Exception( 'Incomplete packet header, need more bytes' );
+			}
+
+			// Parse the packet header. A response continues the client's sequence.
+			$payload_length    = unpack( 'V', substr( $this->buffer, $offset, 3 ) . "\x00" )[1];
+			$sequence_id       = ord( $this->buffer[ $offset + 3 ] );
+			$first_sequence_id = $first_sequence_id ?? $sequence_id;
+			$this->packet_id   = $sequence_id + 1;
+
+			// Refuse the message before buffering more than the limit allows.
+			if ( strlen( $payload ) + $payload_length > $limit ) {
+				return null;
+			}
+
+			// Check if we have the complete packet.
+			$packet_length = 4 + $payload_length;
+			if ( strlen( $this->buffer ) < $offset + $packet_length ) {
+				throw new Incomplete_Input_Exception(
+					sprintf(
+						'Incomplete packet payload, have %d bytes, but need %d bytes',
+						strlen( $this->buffer ) - $offset,
+						$packet_length
+					)
+				);
+			}
+
+			$payload .= substr( $this->buffer, $offset + 4, $payload_length );
+			$offset  += $packet_length;
+
+			// A full payload means the message continues in the next packet.
+			// See https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_packets.html.
+			if ( MySQL_Protocol::MAX_PACKET_LENGTH !== $payload_length ) {
+				break;
+			}
+		}
+
+		// Remove the whole message from the buffer.
+		$this->buffer = substr( $this->buffer, $offset );
+		return $payload;
+	}
+
+	/**
+	 * Refuse a message larger than this session accepts.
+	 *
+	 * @return string The error packet.
+	 */
+	private function reject_oversized_message(): string {
+		if ( ! $this->is_authenticated ) {
+			return $this->reject_authentication();
+		}
+		$this->close( self::CLOSE_PACKET_TOO_LARGE );
+		return MySQL_Protocol::build_err_packet(
+			$this->packet_id++,
+			1153,
+			'08S01',
+			"Got a packet bigger than 'max_allowed_packet' bytes"
+		);
+	}
+
+	/**
 	 * Process authentication payload from the client.
 	 *
 	 * @param  string  $payload The authentication payload.
 	 * @return string           The authentication response packet.
 	 */
 	private function process_authentication( string $payload ): string {
-		$payload_length = strlen( $payload );
-
-		// Decode the first 5 fields.
-		$data = unpack(
-			'Vclient_flags/Vmax_packet_size/Ccharacter_set/x23filler/Z*username',
-			$payload
-		);
-
-		// Calculate the offset of the authentication response.
-		$offset = 32 + strlen( $data['username'] ) + 1;
-
-		$client_flags              = $data['client_flags'];
-		$this->client_capabilities = $client_flags;
-
-		// Decode the authentication response.
-		$auth_response = '';
-		if ( $client_flags & MySQL_Protocol::CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA ) {
-			$auth_response = MySQL_Protocol::read_length_encoded_string( $payload, $offset );
-		} else {
-			$length        = ord( $payload[ $offset++ ] );
-			$auth_response = substr( $payload, $offset, $length );
-			$offset       += $length;
+		if ( null !== $this->pending_authentication ) {
+			$login                        = $this->pending_authentication;
+			$this->pending_authentication = null;
+			return $this->complete_authentication(
+				$login['username'],
+				$login['plugin'],
+				$payload,
+				$login['database'],
+				$login['client_flags']
+			);
 		}
 
-		// Get the database name.
-		if ( $client_flags & MySQL_Protocol::CLIENT_CONNECT_WITH_DB ) {
-			$database = MySQL_Protocol::read_null_terminated_string( $payload, $offset );
-			if ( '' !== $database ) {
-				$result = $this->adapter->handle_query( 'USE ' . $database );
-				if ( $result->error_info ) {
-					return MySQL_Protocol::build_err_packet(
-						$this->packet_id++,
-						1049,
-						'42000',
-						sprintf( "Unknown database: '%s'", $database )
-					);
+		try {
+			if ( strlen( $payload ) < 32 ) {
+				return $this->reject_authentication();
+			}
+			$client_flags = unpack( 'V', $payload )[1];
+			if ( ! ( $client_flags & MySQL_Protocol::CLIENT_PROTOCOL_41 )
+				|| ( $client_flags & MySQL_Protocol::CLIENT_SSL )
+			) {
+				return $this->reject_authentication();
+			}
+
+			$offset   = 32;
+			$username = MySQL_Protocol::read_null_terminated_string( $payload, $offset );
+			if ( $client_flags & MySQL_Protocol::CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA ) {
+				$auth_response = MySQL_Protocol::read_length_encoded_string( $payload, $offset );
+			} elseif ( $client_flags & MySQL_Protocol::CLIENT_SECURE_CONNECTION ) {
+				if ( $offset >= strlen( $payload ) ) {
+					return $this->reject_authentication();
 				}
+				$length = ord( $payload[ $offset++ ] );
+				if ( $length > strlen( $payload ) - $offset ) {
+					return $this->reject_authentication();
+				}
+				$auth_response = substr( $payload, $offset, $length );
+				$offset       += $length;
+			} else {
+				return $this->reject_authentication();
 			}
+
+			$database = '';
+			if ( $client_flags & MySQL_Protocol::CLIENT_CONNECT_WITH_DB ) {
+				$database = MySQL_Protocol::read_null_terminated_string( $payload, $offset );
+			}
+
+			$plugin = MySQL_Protocol::AUTH_PLUGIN_MYSQL_NATIVE_PASSWORD;
+			if ( $client_flags & MySQL_Protocol::CLIENT_PLUGIN_AUTH ) {
+				// Like MySQL, read a missing or unterminated name as empty, which
+				// switches the client to the account's plugin.
+				$plugin = false === strpos( $payload, "\0", $offset )
+					? ''
+					: MySQL_Protocol::read_null_terminated_string( $payload, $offset );
+			}
+		} catch ( MySQL_Proxy_Exception $e ) {
+			return $this->reject_authentication();
 		}
 
-		// Get the authentication plugin name.
-		$auth_plugin_name = '';
+		$switch_plugin = null;
 		if ( $client_flags & MySQL_Protocol::CLIENT_PLUGIN_AUTH ) {
-			$auth_plugin_name = MySQL_Protocol::read_null_terminated_string( $payload, $offset );
-		}
-
-		// Get the connection attributes.
-		if ( $client_flags & MySQL_Protocol::CLIENT_CONNECT_ATTRS ) {
-			$attrs_length = MySQL_Protocol::read_length_encoded_int( $payload, $offset );
-			$offset       = min( $payload_length, $offset + $attrs_length );
-			// TODO: Process connection attributes.
-		}
-
-		/**
-		 * Authentication flow.
-		 *
-		 * @see https://dev.mysql.com/doc/dev/mysql-server/8.4.6/page_caching_sha2_authentication_exchanges.html
-		 */
-		if ( MySQL_Protocol::AUTH_PLUGIN_CACHING_SHA2_PASSWORD === $auth_plugin_name ) {
-			// TODO: Implement authentication.
-			$this->is_authenticated = true;
-			if ( "\0" === $auth_response || '' === $auth_response ) {
-				/*
-				 * Fast path for empty password.
-				 *
-				 * With the "caching_sha2_password" and "sha256_password" plugins,
-				 * an empty password is represented as a single "\0" character.
-				 *
-				 * @see https://github.com/mysql/mysql-server/blob/aa461240270d809bcac336483b886b3d1789d4d9/sql/auth/sha2_password.cc#L1017-L1022
-				 */
-				return MySQL_Protocol::build_ok_packet( $this->packet_id++, $this->status_flags );
+			if ( $this->authentication->get_plugin() !== $plugin ) {
+				// Like MySQL, switch a client that chose another method to the account's.
+				$switch_plugin = $this->authentication->get_plugin();
+			} elseif ( MySQL_Protocol::AUTH_PLUGIN_MYSQL_NATIVE_PASSWORD === $plugin && '' === $auth_response ) {
+				// Older clients request native authentication without sending a response yet.
+				$switch_plugin = $plugin;
 			}
-			$fast_auth_payload = pack( 'CC', MySQL_Protocol::AUTH_MORE_DATA_HEADER, MySQL_Protocol::CACHING_SHA2_FAST_AUTH );
-			$fast_auth_packet  = MySQL_Protocol::build_packet( $this->packet_id++, $fast_auth_payload );
-			return $fast_auth_packet . MySQL_Protocol::build_ok_packet( $this->packet_id++, $this->status_flags );
-		} elseif ( MySQL_Protocol::AUTH_PLUGIN_MYSQL_NATIVE_PASSWORD === $auth_plugin_name ) {
-			// TODO: Implement authentication.
-			$this->is_authenticated = true;
-			return MySQL_Protocol::build_ok_packet( $this->packet_id++, $this->status_flags );
+		} elseif ( $this->authentication->get_plugin() !== $plugin ) {
+			// Like MySQL, refuse a client that cannot switch to the account's method.
+			$this->close( self::CLOSE_LOGIN_FAILED );
+			return MySQL_Protocol::build_err_packet(
+				$this->packet_id++,
+				1251,
+				'08004',
+				'Client does not support authentication protocol requested by server; consider upgrading MySQL client'
+			);
 		}
 
-		// Unsupported authentication plugin.
+		if ( null !== $switch_plugin ) {
+			$this->pending_authentication = array(
+				'username'     => $username,
+				'plugin'       => $switch_plugin,
+				'database'     => $database,
+				'client_flags' => $client_flags,
+			);
+			return MySQL_Protocol::build_packet(
+				$this->packet_id++,
+				chr( MySQL_Protocol::AUTH_SWITCH_REQUEST_HEADER ) . $switch_plugin . "\0" . $this->auth_plugin_data . "\0"
+			);
+		}
+
+		return $this->complete_authentication( $username, $plugin, $auth_response, $database, $client_flags );
+	}
+
+	/**
+	 * Verify credentials before selecting the database and completing the login.
+	 *
+	 * @param string $username      The client account name.
+	 * @param string $plugin        The authentication plugin.
+	 * @param string $auth_response The client challenge response.
+	 * @param string $database      The initial database name.
+	 * @param int    $client_flags  The client capabilities.
+	 * @return string The authentication result packets.
+	 */
+	private function complete_authentication( string $username, string $plugin, string $auth_response, string $database, int $client_flags ): string {
+		if ( ! $this->authentication->verify( $username, $plugin, $auth_response, $this->auth_plugin_data ) ) {
+			return $this->reject_authentication();
+		}
+
+		// No adapter calls are allowed until the credentials have been verified.
+		if ( '' !== $database ) {
+			$error = $this->use_database( $database );
+			if ( null !== $error ) {
+				$this->close( self::CLOSE_LOGIN_FAILED );
+				return $error;
+			}
+		}
+
+		$this->client_capabilities = $client_flags & self::CAPABILITIES;
+		$this->is_authenticated    = true;
+		$response                  = '';
+		if ( MySQL_Protocol::AUTH_PLUGIN_CACHING_SHA2_PASSWORD === $plugin ) {
+			$response = MySQL_Protocol::build_packet(
+				$this->packet_id++,
+				pack( 'CC', MySQL_Protocol::AUTH_MORE_DATA_HEADER, MySQL_Protocol::CACHING_SHA2_FAST_AUTH )
+			);
+		}
+		return $response . MySQL_Protocol::build_ok_packet( $this->packet_id++, $this->status_flags );
+	}
+
+	/**
+	 * Deny authentication and discard any pipelined commands.
+	 *
+	 * @return string The access denied packet.
+	 */
+	private function reject_authentication(): string {
+		$this->close( self::CLOSE_LOGIN_FAILED );
+		return MySQL_Protocol::build_err_packet( $this->packet_id++, 1045, '28000', 'Access denied' );
+	}
+
+	/**
+	 * Stop serving this connection and discard any pipelined commands.
+	 *
+	 * @param string $reason One of the CLOSE_* reasons.
+	 */
+	private function close( string $reason ): void {
+		$this->close_reason           = $reason;
+		$this->buffer                 = '';
+		$this->pending_authentication = null;
+	}
+
+	/**
+	 * Select a client-supplied database, for COM_INIT_DB and the login.
+	 *
+	 * The name is quoted as an identifier. Like MySQL, any failure is reported
+	 * as an unknown database. The adapter's reason goes to the log.
+	 *
+	 * @param  string $database The database name.
+	 * @return string|null      The error packet, or null when the database is selected.
+	 */
+	private function use_database( string $database ): ?string {
+		try {
+			$result = $this->adapter->handle_query( 'USE `' . str_replace( '`', '``', $database ) . '`' );
+			if ( ! $result->error_info ) {
+				return null;
+			}
+			$this->logger->warning(
+				'Client [{client_id}]: cannot select a database: {error}',
+				array(
+					'client_id' => $this->connection_id,
+					'error'     => $result->error_info[2],
+				)
+			);
+		} catch ( Throwable $e ) {
+			$this->log_internal_error( $e );
+		}
 		return MySQL_Protocol::build_err_packet(
 			$this->packet_id++,
-			0x04D2,
-			'HY000',
-			'Unsupported authentication plugin: ' . $auth_plugin_name
+			1049,
+			'42000',
+			sprintf( "Unknown database '%s'", $database )
 		);
 	}
 
@@ -350,13 +608,34 @@ class MySQL_Session {
 				$result->last_insert_id
 			);
 		} catch ( Throwable $e ) {
-			return MySQL_Protocol::build_err_packet(
-				$this->packet_id++,
-				0,
-				'HY000',
-				'Unknown error: ' . $e->getMessage()
-			);
+			$this->log_internal_error( $e );
+			return MySQL_Protocol::build_err_packet( $this->packet_id++, 1105, 'HY000', 'Unknown error' );
 		}
+	}
+
+	/**
+	 * Log an internal error, which must not reach the client.
+	 *
+	 * Its message can contain internal details, such as file paths. The log
+	 * names the original error and where it was raised, because the driver
+	 * wraps PHP errors in its own exceptions.
+	 *
+	 * @param Throwable $error The internal error.
+	 */
+	private function log_internal_error( Throwable $error ): void {
+		while ( null !== $error->getPrevious() ) {
+			$error = $error->getPrevious();
+		}
+		$this->logger->error(
+			'Client [{client_id}]: internal error: {class}: {error} in {file}:{line}',
+			array(
+				'client_id' => $this->connection_id,
+				'class'     => get_class( $error ),
+				'error'     => $error->getMessage(),
+				'file'      => $error->getFile(),
+				'line'      => $error->getLine(),
+			)
+		);
 	}
 
 	/**
