@@ -5364,6 +5364,12 @@ class WP_MySQL_On_SQLite extends PDO {
 					return sprintf( 'CAST(STRFTIME(%s, %s) AS FLOAT)', $format, $date );
 				}
 				return sprintf( 'STRFTIME(%s, %s)', $format, $date );
+			case 'SUBSTRING_INDEX':
+				$argument_nodes = isset( $nodes[1] ) ? $nodes[1]->get_child_nodes() : array();
+				if ( isset( $argument_nodes[0] ) && $this->contains_binary_token( $argument_nodes[0] ) ) {
+					return sprintf( '_helper_substr_index_binary(%s)', implode( ', ', $args ) );
+				}
+				return $this->translate_sequence( $node->get_children() );
 			case 'CHAR_LENGTH':
 				// @TODO LENGTH and CHAR_LENGTH aren't always the same in MySQL for utf8 characters.
 				return 'LENGTH(' . $args[0] . ')';
@@ -5390,6 +5396,21 @@ class WP_MySQL_On_SQLite extends PDO {
 			default:
 				return $this->translate_sequence( $node->get_children() );
 		}
+	}
+
+	/**
+	 * Check whether an expression contains the MySQL BINARY operator or type.
+	 *
+	 * @param WP_Parser_Node $node The expression to inspect.
+	 * @return bool Whether the expression contains a BINARY token.
+	 */
+	private function contains_binary_token( WP_Parser_Node $node ): bool {
+		foreach ( $node->get_descendants() as $descendant ) {
+			if ( $descendant instanceof WP_Parser_Token && WP_MySQL_Lexer::BINARY_SYMBOL === $descendant->id ) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/**
