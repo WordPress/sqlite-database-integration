@@ -616,16 +616,24 @@ class MySQL_Session {
 	/**
 	 * Log an internal error, which must not reach the client.
 	 *
-	 * Its message can contain internal details, such as file paths.
+	 * Its message can contain internal details, such as file paths. The log
+	 * names the original error and where it was raised, because the driver
+	 * wraps PHP errors in its own exceptions.
 	 *
 	 * @param Throwable $error The internal error.
 	 */
 	private function log_internal_error( Throwable $error ): void {
+		while ( null !== $error->getPrevious() ) {
+			$error = $error->getPrevious();
+		}
 		$this->logger->error(
-			'Client [{client_id}]: internal error: {error}',
+			'Client [{client_id}]: internal error: {class}: {error} in {file}:{line}',
 			array(
 				'client_id' => $this->connection_id,
+				'class'     => get_class( $error ),
 				'error'     => $error->getMessage(),
+				'file'      => $error->getFile(),
+				'line'      => $error->getLine(),
 			)
 		);
 	}

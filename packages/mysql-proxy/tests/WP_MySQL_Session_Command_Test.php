@@ -147,6 +147,29 @@ class WP_MySQL_Session_Command_Test extends TestCase {
 		$this->assertStringNotContainsString( '/srv/secret/path.php', $response );
 	}
 
+	public function test_internal_error_is_logged_where_it_was_raised(): void {
+		$cause   = new TypeError( 'Private detail' );
+		$line    = __LINE__ - 1;
+		$adapter = $this->createMock( Adapter::class );
+		$adapter->expects( $this->once() )->method( 'handle_query' )->willThrowException( new RuntimeException( 'Wrapper', 0, $cause ) );
+
+		// The log names the wrapped PHP error, not the wrapper.
+		$logger = $this->createMock( Logger::class );
+		$logger->expects( $this->once() )->method( 'error' )->with(
+			'Client [{client_id}]: internal error: {class}: {error} in {file}:{line}',
+			array(
+				'client_id' => 1,
+				'class'     => TypeError::class,
+				'error'     => 'Private detail',
+				'file'      => __FILE__,
+				'line'      => $line,
+			)
+		);
+
+		$session = $this->authenticated_session( $adapter, $logger );
+		$session->receive_bytes( MySQL_Protocol::build_packet( 0, chr( MySQL_Protocol::COM_QUERY ) . 'SELECT 1' ) );
+	}
+
 	public function test_result_without_an_insert_id_is_an_ok_packet(): void {
 		$adapter = $this->createMock( Adapter::class );
 		$adapter->expects( $this->once() )->method( 'handle_query' )->willReturn( new MySQL_Result() );
