@@ -1,0 +1,22 @@
+name: sqlite-playwright
+services:
+  playwright:
+    image: mcr.microsoft.com/playwright:v${PLAYWRIGHT_VERSION}-noble
+    init: true
+    network_mode: host
+    ipc: host
+    volumes:
+      - ${PLAYWRIGHT_NODE_MODULES}:${PLAYWRIGHT_NODE_MODULES}:ro
+    entrypoint: node
+    command: [ '${PLAYWRIGHT_PACKAGE}/cli.js', run-server, --host, '127.0.0.1', --port, '3000' ]
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      start_period: 30s
+      start_interval: 1s
+      interval: 30s
+      timeout: 5s
+      retries: 3
