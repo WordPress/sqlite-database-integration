@@ -66,7 +66,11 @@ sed -i.bak "s#class WpdbExposedMethodsForTesting extends wpdb {#class WpdbExpose
 echo "Disabling the PHP OPcache revalidation delay..."
 printf '\nopcache.revalidate_freq = 0\n' >> "$WP_DIR/tools/local-env/php-config.ini"
 
-# 7. Install dependencies.
+# 7. Create the ".env" file early, so that Docker commands before "env:start" use it too.
+echo "Creating the '.env' file..."
+cp "$WP_DIR/.env.example" "$WP_DIR/.env"
+
+# 8. Install dependencies.
 echo "Installing dependencies..."
 npm --prefix "$WP_DIR" install
 npm --prefix "$WP_DIR" run build:dev

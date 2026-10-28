@@ -1,0 +1,63 @@
+name: Run Playwright tests
+description: Run E2E tests with browsers from the matching official Playwright image.
+inputs:
+  test-script:
+    description: Composer script that runs the E2E tests.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Resolve Playwright version
+      id: playwright
+      shell: bash
+      working-directory: wordpress
+      run: |
+        node <<'NODE' >> "$GITHUB_ENV"
+        const { createRequire } = require( 'node:module' );
+        const { realpathSync } = require( 'node:fs' );
+        const path = require( 'node:path' );
+        const testRequire = createRequire( require.resolve( '@playwright/test/package.json' ) );
+        const playwright = testRequire.resolve( 'playwright/package.json' );
+        console.log( `PLAYWRIGHT_VERSION=${require( playwright ).version}` );
+        console.log( `PLAYWRIGHT_PACKAGE=${path.dirname( playwright )}` );
+        console.log( `PLAYWRIGHT_NODE_MODULES=${realpathSync( 'node_modules' )}` );
+        NODE
+
+    - name: Start Playwright browser server
+      shell: bash
+      run: |
+        # Pull the WordPress images meanwhile, so the test script can start them sooner.
+        npm --prefix wordpress run env:pull -- --quiet &
+        wordpress_pull=$!
+
+        # Bound each attempt, as a stalled pull would otherwise run into the job timeout.
+        for attempt in 1 2 3; do
+          timeout 3m docker compose -f "$GITHUB_ACTION_PATH/docker-compose.yml" pull && break
+          if [ "$attempt" -eq 3 ]; then
+            echo "Failed to pull the Playwright image after $attempt attempts." >&2
+            exit 1
+          fi
+          echo "Pulling the Playwright image failed. Retrying in $(( attempt * 10 )) seconds..."
+          sleep $(( attempt * 10 ))
+        done
+
+        docker compose -f "$GITHUB_ACTION_PATH/docker-compose.yml" up --wait --wait-timeout 60
+        wait "$wordpress_pull"
+
+    - name: Run E2E tests
+      shell: bash
+      env:
+        TEST_SCRIPT: ${{ inputs.test-script }}
+        PW_TEST_CONNECT_WS_ENDPOINT: ws://127.0.0.1:3000/
+        PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+      run: composer run "$TEST_SCRIPT"
+
+    - name: Show browser server logs
+      if: ( failure() || cancelled() ) && steps.playwright.outcome == 'success'
+      shell: bash
+      run: docker compose -f "$GITHUB_ACTION_PATH/docker-compose.yml" logs
+
+    - name: Stop Playwright browser server
+      if: always() && steps.playwright.outcome == 'success'
+      shell: bash
+      run: docker compose -f "$GITHUB_ACTION_PATH/docker-compose.yml" down
