@@ -85,6 +85,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'json_contains'                => 'json_contains',
 
 		// Internal helper functions.
+		'_helper_json_unquote_extract' => 'json_unquote_extract',
 		'_helper_like_to_glob_pattern' => '_helper_like_to_glob_pattern',
 	);
 
@@ -937,8 +938,8 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 *
 	 * SQLite's json_extract() already returns strings unquoted, whereas MySQL's
 	 * JSON_EXTRACT() returns them quoted. So JSON_UNQUOTE( JSON_EXTRACT( ... ) )
-	 * receives the plain string here. The one case this cannot tell apart is an
-	 * extracted string that itself begins and ends with a literal double quote.
+	 * is translated to an internal helper that preserves extracted strings,
+	 * including strings that begin and end with literal double quotes.
 	 *
 	 * @param string|null $json The JSON string literal to unquote.
 	 *
@@ -958,6 +959,41 @@ class WP_SQLite_PDO_User_Defined_Functions {
 			throw new Exception( 'Invalid JSON text in argument 1 to function json_unquote.' );
 		}
 		return $decoded;
+	}
+
+	/**
+	 * Emulate JSON_UNQUOTE(JSON_EXTRACT(document, path)) without losing quotes
+	 * that are part of an extracted JSON string.
+	 *
+	 * @param string|null $json The JSON document.
+	 * @param string|null $path The JSON path to extract.
+	 *
+	 * @throws Exception When the document or path is invalid or unsupported.
+	 * @return string|null The extracted value as text, or NULL when the path is absent.
+	 */
+	public function json_unquote_extract( $json, $path ) {
+		if ( null === $json || null === $path ) {
+			return null;
+		}
+		$document = $this->json_decode_argument( $json, 1, 'json_extract' );
+		$result   = $this->json_find_path( $document, $path, 'json_extract' );
+		if ( ! $result[0] ) {
+			return null;
+		}
+		$value = $result[1];
+		if ( is_string( $value ) ) {
+			return $value;
+		}
+		if ( is_bool( $value ) ) {
+			return $value ? 'true' : 'false';
+		}
+		if ( null === $value ) {
+			return 'null';
+		}
+		if ( is_array( $value ) || is_object( $value ) ) {
+			return json_encode( $value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION );
+		}
+		return (string) $value;
 	}
 
 	/**

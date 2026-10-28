@@ -339,37 +339,126 @@ QUERY;
 		$this->assertEquals( 0, count( $actual ) );
 	}
 
-	public function testJsonUnquote() {
-		$query = <<<'QUERY'
-SELECT JSON_UNQUOTE('\"abc\"') AS plain,
-       JSON_UNQUOTE(JSON_EXTRACT('{"name":"abc","n":"12"}', '$.name')) AS extracted,
-       JSON_UNQUOTE(JSON_EXTRACT('{"name":"abc","n":"12"}', '$.n')) AS num_as_text
-QUERY;
-
-		$this->assertQuery( $query );
-		$actual = $this->last_result;
-		$this->assertEquals( 'abc', $actual[0]->plain );
-		$this->assertEquals( 'abc', $actual[0]->extracted );
-		$this->assertEquals( '12', $actual[0]->num_as_text );
+	/**
+	 * @return array<string, array{string, string|null}>
+	 */
+	public static function jsonUnquoteCases(): array {
+		return array(
+			'quoted string'                      => array( "SELECT JSON_UNQUOTE(CHAR(34) || 'abc' || CHAR(34)) AS result", 'abc' ),
+			'already unquoted string'            => array( "SELECT JSON_UNQUOTE('abc') AS result", 'abc' ),
+			'null input'                         => array( 'SELECT JSON_UNQUOTE(NULL) AS result', null ),
+			'string extraction'                  => array( "SELECT JSON_UNQUOTE(JSON_EXTRACT(JSON_OBJECT('a', 'abc'), '$.a')) AS result", 'abc' ),
+			'extracted string containing quotes' => array(
+				"SELECT JSON_UNQUOTE(JSON_EXTRACT(JSON_OBJECT('a', CONCAT(CHAR(34), 'quoted', CHAR(34))), '$.a')) AS result",
+				'"quoted"',
+			),
+			'numeric extraction'                 => array( "SELECT JSON_UNQUOTE(JSON_EXTRACT(JSON_OBJECT('a', 12), '$.a')) AS result", '12' ),
+			'boolean extraction'                 => array( "SELECT JSON_UNQUOTE(JSON_EXTRACT(JSON_OBJECT('a', json('true')), '$.a')) AS result", 'true' ),
+			'JSON null extraction'               => array( "SELECT JSON_UNQUOTE(JSON_EXTRACT(JSON_OBJECT('a', json('null')), '$.a')) AS result", 'null' ),
+			'missing extraction path'            => array( "SELECT JSON_UNQUOTE(JSON_EXTRACT(JSON_OBJECT('a', 12), '$.missing')) AS result", null ),
+		);
 	}
 
-	public function testJsonContains() {
-		$query = <<<'QUERY'
-SELECT JSON_CONTAINS('[3,5,9]', '5') AS in_array,
-       JSON_CONTAINS('[3,5,9]', '4') AS not_in_array,
-       JSON_CONTAINS('{"a": 1, "b": 2}', '1', '$.a') AS at_path
-QUERY;
-
+	/**
+	 * @dataProvider jsonUnquoteCases
+	 *
+	 * @param string      $query    The query to execute.
+	 * @param string|null $expected The expected result.
+	 */
+	public function testJsonUnquote( $query, $expected ) {
 		$this->assertQuery( $query );
-		$actual = $this->last_result;
-		$this->assertEquals( 1, (int) $actual[0]->in_array );
-		$this->assertEquals( 0, (int) $actual[0]->not_in_array );
-		$this->assertEquals( 1, (int) $actual[0]->at_path );
+		$actual = $this->last_result[0]->result;
+		if ( null === $expected ) {
+			$this->assertNull( $actual );
+			return;
+		}
+		$this->assertSame( $expected, $actual );
+	}
+
+	/**
+	 * @return array<string, array{string, string|null}>
+	 */
+	public static function jsonContainsCases(): array {
+		return array(
+			'scalar in array'         => array( "SELECT JSON_CONTAINS(JSON_ARRAY(3, 5, 9), '5') AS result", '1' ),
+			'scalar not in array'     => array( "SELECT JSON_CONTAINS(JSON_ARRAY(3, 5, 9), '4') AS result", '0' ),
+			'object candidate'        => array( "SELECT JSON_CONTAINS(JSON_OBJECT('a', 1, 'b', 2), JSON_OBJECT('a', 1)) AS result", '1' ),
+			'nested array candidate'  => array( 'SELECT JSON_CONTAINS(JSON_ARRAY(JSON_ARRAY(1, 2), JSON_ARRAY(3, 4)), JSON_ARRAY(JSON_ARRAY(1, 2))) AS result', '1' ),
+			'nested object candidate' => array(
+				"SELECT JSON_CONTAINS(JSON_OBJECT('a', JSON_OBJECT('b', 1, 'c', 2)), JSON_OBJECT('a', JSON_OBJECT('b', 1))) AS result",
+				'1',
+			),
+			'path match'              => array( "SELECT JSON_CONTAINS(JSON_OBJECT('a', 1), '1', '$.a') AS result", '1' ),
+			'missing path'            => array( "SELECT JSON_CONTAINS(JSON_OBJECT('a', 1), '1', '$.missing') AS result", null ),
+		);
+	}
+
+	/**
+	 * @dataProvider jsonContainsCases
+	 *
+	 * @param string      $query    The query to execute.
+	 * @param string|null $expected The expected result.
+	 */
+	public function testJsonContains( $query, $expected ) {
+		$this->assertQuery( $query );
+		$actual = $this->last_result[0]->result;
+		if ( null === $expected ) {
+			$this->assertNull( $actual );
+			return;
+		}
+		$this->assertSame( $expected, $actual );
+	}
+
+	/**
+	 * @return array<string, array{string, string}>
+	 */
+	public static function invalidJsonFunctionCases(): array {
+		return array(
+			'invalid quoted JSON string' => array(
+				"SELECT JSON_UNQUOTE(CHAR(34) || 'not-json' || CHAR(34) || 'suffix' || CHAR(34))",
+				'Invalid JSON text in argument 1 to function json_unquote.',
+			),
+			'invalid JSON target'        => array(
+				"SELECT JSON_CONTAINS('not-json', '1')",
+				'Invalid JSON text in argument 1 to function json_contains.',
+			),
+			'invalid JSON extraction'    => array(
+				"SELECT JSON_UNQUOTE(JSON_EXTRACT('not-json', '$.a'))",
+				'Invalid JSON text in argument 1 to function json_extract.',
+			),
+			'invalid JSON candidate'     => array(
+				"SELECT JSON_CONTAINS('[1]', 'not-json')",
+				'Invalid JSON text in argument 2 to function json_contains.',
+			),
+			'invalid path'               => array(
+				"SELECT JSON_CONTAINS(JSON_OBJECT('a', JSON_OBJECT('b', 1)), '1', '$.a.b[')",
+				'Invalid JSON path expression in function json_contains.',
+			),
+			'wildcard path'              => array(
+				"SELECT JSON_CONTAINS(JSON_ARRAY(1), '1', '$[*]')",
+				'Wildcards in a JSON path are not supported in function json_contains.',
+			),
+		);
+	}
+
+	/**
+	 * @dataProvider invalidJsonFunctionCases
+	 *
+	 * @param string $query           The query to execute.
+	 * @param string $expectedMessage The expected exception message.
+	 */
+	public function testJsonFunctionsRejectInvalidInput( $query, $expected_message ) {
+		$this->expectException( WP_MySQL_On_SQLite_Exception::class );
+		$this->expectExceptionMessage( $expected_message );
+		$this->assertQuery( $query );
 	}
 
 	public function testJsonFunctionsOverTableRows() {
 		$this->assertQuery(
 			"INSERT INTO wp_options (option_name, option_value, autoload) VALUES ('_json_probe_ids', '[3,5,9]', 'no');"
+		);
+		$this->assertQuery(
+			"INSERT INTO wp_options (option_name, option_value, autoload) VALUES ('_json_probe_quotes', JSON_OBJECT('source', CONCAT(CHAR(34), 'quoted', CHAR(34))), 'no');"
 		);
 		$query = <<<'QUERY'
 SELECT option_name FROM wp_options
@@ -380,6 +469,13 @@ QUERY;
 		$actual = $this->last_result;
 		$this->assertEquals( 1, count( $actual ) );
 		$this->assertEquals( '_json_probe_ids', $actual[0]->option_name );
+
+		$query = <<<'QUERY'
+SELECT JSON_UNQUOTE(JSON_EXTRACT(option_value, '$.source')) AS source
+FROM wp_options WHERE option_name = '_json_probe_quotes'
+QUERY;
+		$this->assertQuery( $query );
+		$this->assertSame( '"quoted"', $this->last_result[0]->source );
 	}
 
 	public function testCharLengthComplex() {
