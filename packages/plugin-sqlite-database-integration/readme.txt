@@ -4,7 +4,7 @@ Contributors:      wordpressdotorg, aristath, janjakes, zieladam, berislav.grgic
 Requires at least: 6.4
 Tested up to:      7.1
 Requires PHP:      7.2
-Stable tag:        3.1.1
+Stable tag:        3.1.2
 License:           GPLv2 or later
 License URI:       https://www.gnu.org/licenses/gpl-2.0.html
 Tags:              sqlite, database
@@ -90,6 +90,21 @@ Contributions are welcome through the [SQLite Database Integration repository on
 Yes. The plugin replaces the default MySQL-based database layer with an SQLite-backed implementation. WordPress continues to use the `wpdb` API, while queries are internally adapted to SQLite syntax and behavior.
 
 == Changelog ==
+
+= 3.1.2 =
+
+* Allow configuring the SQLite busy timeout with `SQLITE_BUSY_TIMEOUT` ([#558](https://github.com/WordPress/sqlite-database-integration/pull/558))
+* Keep the user transaction active after a failed statement ([#536](https://github.com/WordPress/sqlite-database-integration/pull/536))
+* Support odd-length `0x` hexadecimal literals ([#573](https://github.com/WordPress/sqlite-database-integration/pull/573))
+* Fix rebuilds of legacy text and binary columns ([#565](https://github.com/WordPress/sqlite-database-integration/pull/565))
+* Use `'0'` column defaults in non-strict `INSERT` statements ([#569](https://github.com/WordPress/sqlite-database-integration/pull/569))
+* Roll back failed `OPTIMIZE TABLE` and `REPAIR TABLE` rebuilds ([#567](https://github.com/WordPress/sqlite-database-integration/pull/567))
+* Remove the Rust parser extension ([#566](https://github.com/WordPress/sqlite-database-integration/pull/566))
+* Preserve `AUTO_INCREMENT` counters when rebuilding tables ([#561](https://github.com/WordPress/sqlite-database-integration/pull/561))
+* Fix `ALTER TABLE ... ADD (...)` for columns, indexes, and constraints ([#557](https://github.com/WordPress/sqlite-database-integration/pull/557))
+* Fix `ON UPDATE CURRENT_TIMESTAMP` for explicit values and unchanged rows ([#560](https://github.com/WordPress/sqlite-database-integration/pull/560))
+* Normalize zero defaults in date and time columns ([#542](https://github.com/WordPress/sqlite-database-integration/pull/542))
+* Add support for `ALTER COLUMN` with `SET DEFAULT` and `DROP DEFAULT` ([#555](https://github.com/WordPress/sqlite-database-integration/pull/555))
 
 = 3.1.1 =
 
