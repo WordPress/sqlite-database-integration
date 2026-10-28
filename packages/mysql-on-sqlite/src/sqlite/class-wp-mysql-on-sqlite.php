@@ -3005,6 +3005,8 @@ class WP_MySQL_On_SQLite extends PDO {
 			}
 		}
 
+		$this->validate_foreign_key_references( $node );
+
 		// Save information to information schema tables.
 		$this->information_schema_builder->record_create_table( $node );
 
@@ -3104,6 +3106,7 @@ class WP_MySQL_On_SQLite extends PDO {
 		 * change the schema, so the recreate would be a pointless full copy.
 		 */
 		if ( count( $node->get_descendant_nodes( 'alterListItem' ) ) > 0 ) {
+			$this->validate_foreign_key_references( $node );
 			$this->information_schema_builder->record_alter_table( $node );
 			$this->recreate_table_from_information_schema( $table_is_temporary, $table_name, $column_map );
 		}
@@ -4709,7 +4712,8 @@ class WP_MySQL_On_SQLite extends PDO {
 		$token = $node->get_first_child_token();
 		$value = $token->get_value();
 
-		if ( str_starts_with( $value, self::RESERVED_PREFIX ) ) {
+		// SQLite resolves ASCII identifiers case insensitively.
+		if ( 0 === strncasecmp( $value, self::RESERVED_PREFIX, strlen( self::RESERVED_PREFIX ) ) ) {
 			throw $this->new_driver_exception(
 				sprintf(
 					"Invalid identifier '%s', prefix '%s' is reserved",
@@ -6997,6 +7001,22 @@ class WP_MySQL_On_SQLite extends PDO {
 			}
 		}
 		return $table_map;
+	}
+
+	/**
+	 * Validate foreign key identifiers before recording their metadata.
+	 *
+	 * REFERENCES clauses are reconstructed from metadata rather than translated.
+	 *
+	 * @param WP_Parser_Node $node The CREATE TABLE or ALTER TABLE AST node.
+	 */
+	private function validate_foreign_key_references( WP_Parser_Node $node ): void {
+		foreach ( $node->get_descendant_nodes( 'references' ) as $reference ) {
+			foreach ( $reference->get_descendant_nodes( 'pureIdentifier' ) as $identifier ) {
+				// Translation validates the identifier, including the reserved prefix.
+				$this->translate( $identifier );
+			}
+		}
 	}
 
 	/**

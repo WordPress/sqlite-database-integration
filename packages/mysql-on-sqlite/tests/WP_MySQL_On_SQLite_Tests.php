@@ -8164,7 +8164,11 @@ QUERY
 	/**
 	 * @dataProvider getReservedPrefixTestData
 	 */
-	public function testReservedPrefix( string $query, string $error ): void {
+	public function testReservedPrefix( string $query, string $error, bool $ansi_quotes = false ): void {
+		if ( $ansi_quotes ) {
+			$this->assertQuery( "SET sql_mode = 'ANSI_QUOTES'" );
+		}
+
 		$this->expectException( WP_MySQL_On_SQLite_Exception::class );
 		$this->expectExceptionMessage( $error );
 		$this->assertQuery( $query );
@@ -8196,6 +8200,169 @@ QUERY
 				'DROP TABLE _wp_sqlite_t',
 				"Invalid identifier '_wp_sqlite_t', prefix '_wp_sqlite_' is reserved",
 			),
+			array(
+				'SELECT COUNT(*) FROM _WP_SQLITE_mysql_information_schema_tables',
+				"Invalid identifier '_WP_SQLITE_mysql_information_schema_tables', prefix '_wp_sqlite_' is reserved",
+			),
+			array(
+				'SELECT COUNT(*) FROM _Wp_SqLiTe_mysql_information_schema_tables',
+				"Invalid identifier '_Wp_SqLiTe_mysql_information_schema_tables', prefix '_wp_sqlite_' is reserved",
+			),
+			array(
+				'SELECT COUNT(*) FROM `wp`.`_Wp_SqLiTe_mysql_information_schema_tables`',
+				"Invalid identifier '_Wp_SqLiTe_mysql_information_schema_tables', prefix '_wp_sqlite_' is reserved",
+			),
+			array(
+				'SELECT COUNT(*) FROM "_WP_SQLITE_mysql_information_schema_tables"',
+				"Invalid identifier '_WP_SQLITE_mysql_information_schema_tables', prefix '_wp_sqlite_' is reserved",
+				true,
+			),
+			array(
+				"INSERT INTO _Wp_SqLiTe_global_variables (name, value) VALUES ('test', 'value')",
+				"Invalid identifier '_Wp_SqLiTe_global_variables', prefix '_wp_sqlite_' is reserved",
+			),
+			array(
+				'DELETE FROM _Wp_SqLiTe_mysql_information_schema_tables',
+				"Invalid identifier '_Wp_SqLiTe_mysql_information_schema_tables', prefix '_wp_sqlite_' is reserved",
+			),
+			array(
+				'DROP TABLE _Wp_SqLiTe_mysql_information_schema_tables',
+				"Invalid identifier '_Wp_SqLiTe_mysql_information_schema_tables', prefix '_wp_sqlite_' is reserved",
+			),
+			array(
+				'TRUNCATE TABLE _Wp_SqLiTe_mysql_information_schema_tables',
+				"Invalid identifier '_Wp_SqLiTe_mysql_information_schema_tables', prefix '_wp_sqlite_' is reserved",
+			),
+			array(
+				'CREATE TEMPORARY TABLE _Wp_SqLiTe_mysql_information_schema_tables (id INT)',
+				"Invalid identifier '_Wp_SqLiTe_mysql_information_schema_tables', prefix '_wp_sqlite_' is reserved",
+			),
+			array(
+				'CREATE TABLE _WP_SQLITE_ (id INT)',
+				"Invalid identifier '_WP_SQLITE_', prefix '_wp_sqlite_' is reserved",
+			),
+		);
+	}
+
+	public function testReservedPrefixInSavepoint(): void {
+		$this->assertQuery( 'START TRANSACTION' );
+		$this->assertQueryError(
+			'SAVEPOINT _Wp_SqLiTe_savepoint_wrapper',
+			"Invalid identifier '_Wp_SqLiTe_savepoint_wrapper', prefix '_wp_sqlite_' is reserved"
+		);
+		$this->assertTrue( $this->engine->inTransaction() );
+		$this->assertQuery( 'ROLLBACK' );
+	}
+
+	/**
+	 * @dataProvider getReservedForeignKeyIdentifiersTestData
+	 */
+	public function testReservedForeignKeyIdentifiers( string $query, string $identifier, bool $ansi_quotes = false ): void {
+		if ( $ansi_quotes ) {
+			$this->assertQuery( "SET sql_mode = 'ANSI_QUOTES'" );
+		}
+		$this->assertQuery( 'CREATE TABLE child (n VARCHAR(64))' );
+		$this->assertQuery( "INSERT INTO child VALUES ('kept')" );
+		$schema = $this->assertQuery( 'SHOW CREATE TABLE child' );
+
+		$this->assertQueryError( $query, "Invalid identifier '$identifier', prefix '_wp_sqlite_' is reserved" );
+
+		$this->assertEquals( $schema, $this->assertQuery( 'SHOW CREATE TABLE child' ) );
+		$this->assertEquals( array( (object) array( 'n' => 'kept' ) ), $this->assertQuery( 'SELECT * FROM child' ) );
+		$this->assertSame( 0, (int) $this->sqlite->query( "SELECT COUNT(*) FROM sqlite_temp_master WHERE name = 'new_child'" )->fetchColumn() );
+
+		// Rejected references must leave no metadata behind or block later drops.
+		$this->assertQuery( 'CREATE TABLE new_child (id INT)' );
+		$this->assertQuery( 'DROP TABLE new_child, child' );
+	}
+
+	public function getReservedForeignKeyIdentifiersTestData(): array {
+		return array(
+			array(
+				'CREATE TABLE new_child (n VARCHAR(64), FOREIGN KEY (n) REFERENCES _wp_sqlite_mysql_information_schema_tables (TABLE_NAME))',
+				'_wp_sqlite_mysql_information_schema_tables',
+			),
+			array(
+				'CREATE TABLE new_child (n VARCHAR(64), FOREIGN KEY (n) REFERENCES _WP_SQLITE_global_variables (name))',
+				'_WP_SQLITE_global_variables',
+			),
+			array(
+				'CREATE TABLE new_child (n VARCHAR(64), FOREIGN KEY (n) REFERENCES `wp`.`_Wp_SqLiTe_mysql_information_schema_tables` (`TABLE_NAME`))',
+				'_Wp_SqLiTe_mysql_information_schema_tables',
+			),
+			array(
+				'CREATE TABLE new_child (n VARCHAR(64), FOREIGN KEY (n) REFERENCES "_Wp_SqLiTe_global_variables" ("name"))',
+				'_Wp_SqLiTe_global_variables',
+				true,
+			),
+			array(
+				'CREATE TEMPORARY TABLE new_child (n VARCHAR(64), FOREIGN KEY (n) REFERENCES _Wp_SqLiTe_mysql_information_schema_tmp_tables (TABLE_NAME))',
+				'_Wp_SqLiTe_mysql_information_schema_tmp_tables',
+			),
+			array(
+				'ALTER TABLE child ADD FOREIGN KEY (n) REFERENCES _wp_sqlite_mysql_information_schema_tables (TABLE_NAME)',
+				'_wp_sqlite_mysql_information_schema_tables',
+			),
+			array(
+				'ALTER TABLE child ADD COLUMN extra INT, ADD CONSTRAINT fk FOREIGN KEY (n) REFERENCES _Wp_SqLiTe_global_variables (name)',
+				'_Wp_SqLiTe_global_variables',
+			),
+			array(
+				'CREATE TABLE new_child (n VARCHAR(64) REFERENCES _wp_sqlite_global_variables (name))',
+				'_wp_sqlite_global_variables',
+			),
+			array(
+				'CREATE TABLE new_child (n VARCHAR(64), FOREIGN KEY (n) REFERENCES _WP_SQLITE_db.parent (n))',
+				'_WP_SQLITE_db',
+			),
+			array(
+				'CREATE TABLE new_child (n VARCHAR(64), FOREIGN KEY (n) REFERENCES child (_Wp_SqLiTe_column))',
+				'_Wp_SqLiTe_column',
+			),
+		);
+	}
+
+	public function testForeignKeyWithSimilarPrefix(): void {
+		$this->assertQuery( 'CREATE TABLE `_WP_SQLITE` (n VARCHAR(64) PRIMARY KEY)' );
+		$this->assertQuery( "INSERT INTO `_WP_SQLITE` VALUES ('_wp_sqlite_t')" );
+		$this->assertQuery(
+			"CREATE TABLE child (
+				id INT,
+				n VARCHAR(64) DEFAULT '_wp_sqlite_t',
+				FOREIGN KEY (n) REFERENCES `wp`.`_WP_SQLITE` (n)
+			)"
+		);
+		$this->assertQuery( 'CREATE TABLE other_child (n VARCHAR(64))' );
+		$this->assertQuery( 'ALTER TABLE other_child ADD FOREIGN KEY (n) REFERENCES `_WP_SQLITE` (n)' );
+		$this->assertQuery( 'INSERT INTO child (id) VALUES (1)' );
+		$this->assertQuery( "INSERT INTO other_child VALUES ('_wp_sqlite_t')" );
+		$this->assertEquals( array( (object) array( 'n' => '_wp_sqlite_t' ) ), $this->assertQuery( 'SELECT n FROM child' ) );
+		$this->assertQueryError(
+			"INSERT INTO child (n) VALUES ('missing')",
+			'SQLSTATE[23000]: Integrity constraint violation: 19 FOREIGN KEY constraint failed'
+		);
+		$this->assertQueryError(
+			"INSERT INTO other_child VALUES ('missing')",
+			'SQLSTATE[23000]: Integrity constraint violation: 19 FOREIGN KEY constraint failed'
+		);
+	}
+
+	/**
+	 * @dataProvider getNamesWithoutReservedPrefixTestData
+	 */
+	public function testNamesWithoutReservedPrefix( string $identifier ): void {
+		$name = $this->engine->get_connection()->quote_identifier( $identifier );
+		$this->assertQuery( "CREATE TABLE $name ($name INT)" );
+		$this->assertQuery( "INSERT INTO $name ($name) VALUES (42)" );
+		$result = $this->assertQuery( "SELECT wp.$name.$name AS $name FROM wp.$name" );
+		$this->assertEquals( array( (object) array( $identifier => '42' ) ), $result );
+	}
+
+	public function getNamesWithoutReservedPrefixTestData(): array {
+		return array(
+			array( '_WP_SQLITE' ),
+			array( 'x_WP_SQLITE_t' ),
+			array( '_Wp_SqLiTeX_t' ),
 		);
 	}
 
