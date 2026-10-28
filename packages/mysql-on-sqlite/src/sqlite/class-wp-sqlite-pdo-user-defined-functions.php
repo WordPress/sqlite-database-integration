@@ -945,14 +945,19 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		/*
 		 * 1. Escape characters that have special meaning in GLOB patterns.
 		 *
-		 * We need to:
-		 *  1. Escape "]" as "[]]" to avoid interpreting "[...]" as a character class.
-		 *  2. Escape "*" as "[*]" (must be after 1 to avoid being escaped).
-		 *  3. Escape "?" as "[?]" (must be after 1 to avoid being escaped).
+		 * We need to escape "[" as "[[]", "]" as "[]]", "*" as "[*]", and "?" as "[?]".
+		 * This is done in a single pass, so the brackets that are added by the
+		 * escaping are not escaped again.
 		 */
-		$pattern = str_replace( ']', '[]]', $pattern );
-		$pattern = str_replace( '*', '[*]', $pattern );
-		$pattern = str_replace( '?', '[?]', $pattern );
+		$pattern = strtr(
+			$pattern,
+			array(
+				'[' => '[[]',
+				']' => '[]]',
+				'*' => '[*]',
+				'?' => '[?]',
+			)
+		);
 
 		/*
 		 * 2. Convert LIKE wildcards to GLOB wildcards ("%" -> "*", "_" -> "?").
