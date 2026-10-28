@@ -795,11 +795,13 @@ class WP_MySQL_On_SQLite extends PDO {
 	 *
 	 *     @type int             $mysql_version       Optional. MySQL version to emulate. Default 80038.
 	 *     @type PDO|null        $sqlite_pdo          Optional. Existing PDO SQLite connection.
+	 *     @type int|null        $sqlite_busy_timeout Optional. SQLite busy timeout in milliseconds.
+	 *                                                Default 10000.
 	 *     @type string|null     $sqlite_journal_mode Optional. SQLite journal mode. Default 'WAL'.
 	 *     @type string|int|null $sqlite_synchronous  Optional. SQLite synchronous setting.
 	 * }
 	 *
-	 * @throws InvalidArgumentException     When the MySQL version is invalid.
+	 * @throws InvalidArgumentException     When the MySQL version or an SQLite option is invalid.
 	 * @throws WP_MySQL_On_SQLite_Exception When the driver initialization fails.
 	 */
 	public function __construct(
@@ -876,6 +878,7 @@ class WP_MySQL_On_SQLite extends PDO {
 		}
 
 		$connection_options = array(
+			'busy_timeout' => $options['sqlite_busy_timeout'] ?? null,
 			'journal_mode' => $options['sqlite_journal_mode'] ?? null,
 			'synchronous'  => $options['sqlite_synchronous'] ?? null,
 			'pdo_options'  => $connection_pdo_options,

@@ -379,6 +379,43 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		}
 	}
 
+	public function test_busy_timeout_driver_option(): void {
+		$driver = new WP_MySQL_On_SQLite(
+			'mysql-on-sqlite:path=:memory:;dbname=wp',
+			null,
+			null,
+			array(
+				'sqlite_busy_timeout' => 2500,
+			)
+		);
+
+		$this->assertSame(
+			2500,
+			(int) $driver->get_sqlite_pdo()->query( 'PRAGMA busy_timeout' )->fetchColumn()
+		);
+	}
+
+	public function test_busy_timeout_defaults_to_the_connection_default(): void {
+		$driver = new WP_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname=wp' );
+
+		$this->assertSame(
+			WP_SQLite_Connection::DEFAULT_SQLITE_BUSY_TIMEOUT,
+			(int) $driver->get_sqlite_pdo()->query( 'PRAGMA busy_timeout' )->fetchColumn()
+		);
+	}
+
+	public function test_rejects_invalid_busy_timeout(): void {
+		$this->expectException( InvalidArgumentException::class );
+		$this->expectExceptionMessage( 'Invalid SQLite busy timeout. It must be an integer from 0 to 2147483647.' );
+
+		new WP_MySQL_On_SQLite(
+			'mysql-on-sqlite:path=:memory:;dbname=wp',
+			null,
+			null,
+			array( 'sqlite_busy_timeout' => '10000' )
+		);
+	}
+
 	public function test_query(): void {
 		$result = $this->driver->query( "SELECT 1, 'abc'" );
 		$this->assertInstanceOf( WP_MySQL_On_SQLite_Statement::class, $result );

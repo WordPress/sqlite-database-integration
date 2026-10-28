@@ -76,6 +76,7 @@ version and configuring the SQLite connection:
 | --- | --- | --- |
 | `mysql_version` | MySQL version to emulate, represented as an integer | `80038` |
 | `sqlite_pdo` | Existing PDO SQLite connection | A new connection for `path` |
+| `sqlite_busy_timeout` | SQLite busy timeout in milliseconds | `10000` |
 | `sqlite_journal_mode` | SQLite journal mode | `WAL` |
 | `sqlite_synchronous` | SQLite synchronous setting | `NORMAL` in WAL mode; otherwise the SQLite default |
 
