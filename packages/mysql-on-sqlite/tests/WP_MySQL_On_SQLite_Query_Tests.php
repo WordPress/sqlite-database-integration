@@ -344,20 +344,28 @@ QUERY;
 	 */
 	public static function jsonUnquoteCases(): array {
 		return array(
-			'quoted string'                      => array( "SELECT JSON_UNQUOTE(CHAR(34) || 'abc' || CHAR(34)) AS result", 'abc' ),
-			'already unquoted string'            => array( "SELECT JSON_UNQUOTE('abc') AS result", 'abc' ),
-			'null input'                         => array( 'SELECT JSON_UNQUOTE(NULL) AS result', null ),
-			'string extraction'                  => array( "SELECT JSON_UNQUOTE(JSON_EXTRACT(JSON_OBJECT('a', 'abc'), '$.a')) AS result", 'abc' ),
-			'extracted string containing quotes' => array(
+			'quoted string'                                => array( "SELECT JSON_UNQUOTE(CHAR(34) || 'abc' || CHAR(34)) AS result", 'abc' ),
+			'already unquoted string'                      => array( "SELECT JSON_UNQUOTE('abc') AS result", 'abc' ),
+			'null input'                                   => array( 'SELECT JSON_UNQUOTE(NULL) AS result', null ),
+			'string extraction'                            => array( "SELECT JSON_UNQUOTE(JSON_EXTRACT(JSON_OBJECT('a', 'abc'), '$.a')) AS result", 'abc' ),
+			'extracted string containing quotes'           => array(
 				"SELECT JSON_UNQUOTE(JSON_EXTRACT(JSON_OBJECT('a', CONCAT(CHAR(34), 'quoted', CHAR(34))), '$.a')) AS result",
 				'"quoted"',
 			),
-			'numeric extraction'                 => array( "SELECT JSON_UNQUOTE(JSON_EXTRACT(JSON_OBJECT('a', 12), '$.a')) AS result", '12' ),
-			'boolean extraction'                 => array( "SELECT JSON_UNQUOTE(JSON_EXTRACT(JSON_OBJECT('a', json('true')), '$.a')) AS result", 'true' ),
-			'JSON null extraction'               => array( "SELECT JSON_UNQUOTE(JSON_EXTRACT(JSON_OBJECT('a', json('null')), '$.a')) AS result", 'null' ),
-			'array extraction'                   => array( "SELECT JSON_UNQUOTE(JSON_EXTRACT(JSON_ARRAY(1, 2), '$')) AS result", '[1, 2]' ),
-			'object extraction'                  => array( "SELECT JSON_UNQUOTE(JSON_EXTRACT(JSON_OBJECT('bb', 1, 'a', 2), '$')) AS result", '{"a": 2, "bb": 1}' ),
-			'missing extraction path'            => array( "SELECT JSON_UNQUOTE(JSON_EXTRACT(JSON_OBJECT('a', 12), '$.missing')) AS result", null ),
+			'numeric extraction'                           => array( "SELECT JSON_UNQUOTE(JSON_EXTRACT(JSON_OBJECT('a', 12), '$.a')) AS result", '12' ),
+			'boolean extraction'                           => array( "SELECT JSON_UNQUOTE(JSON_EXTRACT(JSON_OBJECT('a', json('true')), '$.a')) AS result", 'true' ),
+			'JSON null extraction'                         => array( "SELECT JSON_UNQUOTE(JSON_EXTRACT(JSON_OBJECT('a', json('null')), '$.a')) AS result", 'null' ),
+			'array extraction'                             => array( "SELECT JSON_UNQUOTE(JSON_EXTRACT(JSON_ARRAY(1, 2), '$')) AS result", '[1, 2]' ),
+			'object extraction'                            => array( "SELECT JSON_UNQUOTE(JSON_EXTRACT(JSON_OBJECT('bb', 1, 'a', 2), '$')) AS result", '{"a": 2, "bb": 1}' ),
+			'multiple-path extraction'                     => array(
+				"SELECT JSON_UNQUOTE(JSON_EXTRACT(JSON_OBJECT('a', 1, 'b', 'two'), '$.a', '$.b')) AS result",
+				'[1, "two"]',
+			),
+			'multiple-path extraction skips missing paths' => array(
+				"SELECT JSON_UNQUOTE(JSON_EXTRACT(JSON_OBJECT('a', 1), '$.a', '$.missing')) AS result",
+				'[1]',
+			),
+			'missing extraction path'                      => array( "SELECT JSON_UNQUOTE(JSON_EXTRACT(JSON_OBJECT('a', 12), '$.missing')) AS result", null ),
 		);
 	}
 
@@ -506,7 +514,10 @@ SELECT JSON_MERGE_PATCH(
            '{"a":null,"nested":{"remove":null,"add":4}}'
        ) AS merged,
        JSON_MERGE_PATCH('{"items":[1,2]}', '{"items":[3]}', '{"extra":true}') AS multiple_patch,
-       JSON_MERGE_PATCH('{"a":1}', NULL) AS null_patch
+       JSON_MERGE_PATCH('{"a":1}', NULL) AS null_patch,
+       JSON_MERGE_PATCH(NULL, '{}') AS null_then_object,
+       JSON_MERGE_PATCH(NULL, '[1,2,3]') AS null_then_array,
+       JSON_MERGE_PATCH('{"a":"b"}', NULL, '[1,2,3]', '{"c":null,"d":"e"}') AS null_then_array_then_object
 QUERY;
 
 		$this->assertQuery( $query );
@@ -514,6 +525,9 @@ QUERY;
 		$this->assertSame( '{"nested": {"add": 4, "keep": 2}}', $actual->merged );
 		$this->assertSame( '{"extra": true, "items": [3]}', $actual->multiple_patch );
 		$this->assertNull( $actual->null_patch );
+		$this->assertNull( $actual->null_then_object );
+		$this->assertSame( '[1, 2, 3]', $actual->null_then_array );
+		$this->assertSame( '{"d": "e"}', $actual->null_then_array_then_object );
 	}
 
 	public function testNullSafeEqual() {

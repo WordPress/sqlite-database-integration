@@ -964,25 +964,46 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	}
 
 	/**
-	 * Emulate JSON_UNQUOTE(JSON_EXTRACT(document, path)) without losing quotes
+	 * Emulate JSON_UNQUOTE(JSON_EXTRACT(document, path...)) without losing quotes
 	 * that are part of an extracted JSON string.
 	 *
-	 * @param string|null $json The JSON document.
-	 * @param string|null $path The JSON path to extract.
+	 * @param string|null $json   The JSON document.
+	 * @param string|null ...$paths The JSON paths to extract.
 	 *
 	 * @throws Exception When the document or path is invalid or unsupported.
-	 * @return string|null The extracted value as text, or NULL when the path is absent.
+	 * @return string|null The extracted value, or NULL when no path matches or an argument is NULL.
 	 */
-	public function json_unquote_extract( $json, $path ) {
-		if ( null === $json || null === $path ) {
+	public function json_unquote_extract( $json ) {
+		$arguments = func_get_args();
+		if ( count( $arguments ) < 2 || null === $arguments[0] ) {
 			return null;
 		}
-		$document = $this->json_decode_argument( $json, 1, 'json_extract' );
-		$result   = $this->json_find_path( $document, $path, 'json_extract' );
-		if ( ! $result[0] ) {
-			return null;
+
+		$document = $this->json_decode_argument( $arguments[0], 1, 'json_extract' );
+		$paths    = array_slice( $arguments, 1 );
+		foreach ( $paths as $path ) {
+			if ( null === $path ) {
+				return null;
+			}
 		}
-		$value = $result[1];
+
+		if ( 1 === count( $paths ) ) {
+			$result = $this->json_find_path( $document, $paths[0], 'json_extract' );
+			if ( ! $result[0] ) {
+				return null;
+			}
+			$value = $result[1];
+		} else {
+			$values = array();
+			foreach ( $paths as $path ) {
+				$result = $this->json_find_path( $document, $path, 'json_extract' );
+				if ( $result[0] ) {
+					$values[] = $result[1];
+				}
+			}
+			return empty( $values ) ? null : $this->json_encode_value( $values );
+		}
+
 		if ( is_string( $value ) ) {
 			return $value;
 		}
@@ -1064,22 +1085,40 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * @param string|null ...$documents Two or more JSON documents; later ones patch earlier ones.
 	 *
 	 * @throws Exception When an argument is not valid JSON.
-	 * @return string|null The merged document, or NULL if any argument is NULL.
+	 * @return string|null The merged document, or NULL if a SQL NULL is followed only by object patches.
 	 */
 	public function json_merge_patch() {
 		$documents = func_get_args();
 		if ( count( $documents ) < 2 ) {
 			throw new Exception( 'Incorrect parameter count in the call to native function \'json_merge_patch\'.' );
 		}
-		$result = null;
+		$result     = null;
+		$has_result = false;
+		$is_unknown = false;
 		foreach ( $documents as $index => $document ) {
 			if ( null === $document ) {
-				return null;
+				$result     = null;
+				$has_result = true;
+				$is_unknown = true;
+				continue;
 			}
-			$value  = $this->json_decode_argument( $document, $index + 1, 'json_merge_patch' );
-			$result = 0 === $index ? $value : $this->json_apply_patch( $result, $value );
+
+			$value = $this->json_decode_argument( $document, $index + 1, 'json_merge_patch' );
+			if ( ! $has_result ) {
+				$result     = $value;
+				$has_result = true;
+				continue;
+			}
+			if ( ! is_object( $value ) ) {
+				$result     = $value;
+				$is_unknown = false;
+				continue;
+			}
+			if ( ! $is_unknown ) {
+				$result = $this->json_apply_patch( $result, $value );
+			}
 		}
-		return $this->json_encode_value( $result );
+		return $is_unknown ? null : $this->json_encode_value( $result );
 	}
 
 	/**

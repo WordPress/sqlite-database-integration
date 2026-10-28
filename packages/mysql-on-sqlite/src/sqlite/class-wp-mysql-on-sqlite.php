@@ -5367,7 +5367,7 @@ class WP_MySQL_On_SQLite extends PDO {
 				$argument_nodes = isset( $nodes[1] ) ? $nodes[1]->get_child_nodes() : array();
 				if ( 1 === count( $argument_nodes ) ) {
 					$json_extract_args = $this->get_direct_function_call_arguments( $argument_nodes[0], 'JSON_EXTRACT' );
-					if ( is_array( $json_extract_args ) && 2 === count( $json_extract_args ) ) {
+					if ( is_array( $json_extract_args ) && count( $json_extract_args ) >= 2 ) {
 						return sprintf( '_helper_json_unquote_extract(%s)', implode( ', ', $json_extract_args ) );
 					}
 				}
