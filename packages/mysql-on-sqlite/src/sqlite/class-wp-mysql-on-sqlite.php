@@ -4605,6 +4605,9 @@ class WP_MySQL_On_SQLite extends PDO {
 				return $value;
 			case WP_MySQL_Lexer::AUTO_INCREMENT_SYMBOL:
 				return 'AUTOINCREMENT';
+			case WP_MySQL_Lexer::NULL_SAFE_EQUAL_OPERATOR:
+				// The MySQL null-safe equality "<=>" is "IS" in SQLite.
+				return 'IS';
 			case WP_MySQL_Lexer::BINARY_SYMBOL:
 				/*
 				 * "BINARY expr" is translated in "translate_simple_expr_body()".
@@ -5364,6 +5367,15 @@ class WP_MySQL_On_SQLite extends PDO {
 					return sprintf( 'CAST(STRFTIME(%s, %s) AS FLOAT)', $format, $date );
 				}
 				return sprintf( 'STRFTIME(%s, %s)', $format, $date );
+			case 'JSON_UNQUOTE':
+				$argument_nodes = isset( $nodes[1] ) ? $nodes[1]->get_child_nodes() : array();
+				if ( 1 === count( $argument_nodes ) ) {
+					$json_extract_args = $this->get_direct_function_call_arguments( $argument_nodes[0], 'JSON_EXTRACT' );
+					if ( is_array( $json_extract_args ) && count( $json_extract_args ) >= 2 ) {
+						return sprintf( '_helper_json_unquote_extract(%s)', implode( ', ', $json_extract_args ) );
+					}
+				}
+				return $this->translate_sequence( $node->get_children() );
 			case 'CHAR_LENGTH':
 				// @TODO LENGTH and CHAR_LENGTH aren't always the same in MySQL for utf8 characters.
 				return 'LENGTH(' . $args[0] . ')';
@@ -5390,6 +5402,39 @@ class WP_MySQL_On_SQLite extends PDO {
 			default:
 				return $this->translate_sequence( $node->get_children() );
 		}
+	}
+
+	/**
+	 * Get the arguments to a function call when it is the entire expression.
+	 *
+	 * @param WP_Parser_Node $expression    The expression to inspect.
+	 * @param string         $function_name The expected function name.
+	 * @return array|null The translated arguments, or NULL when the expression differs.
+	 */
+	private function get_direct_function_call_arguments( WP_Parser_Node $expression, string $function_name ): ?array {
+		$node = $expression;
+		while ( 'functionCall' !== $node->rule_name ) {
+			$children = $node->get_children();
+			if ( 1 !== count( $children ) || ! $children[0] instanceof WP_Parser_Node ) {
+				return null;
+			}
+			$node = $children[0];
+		}
+
+		$function_nodes = $node->get_child_nodes();
+		if ( ! isset( $function_nodes[0] ) || ! isset( $function_nodes[1] ) ) {
+			return null;
+		}
+		$name = strtoupper( $this->unquote_sqlite_identifier( $this->translate( $function_nodes[0] ) ) );
+		if ( $function_name !== $name ) {
+			return null;
+		}
+
+		$args = array();
+		foreach ( $function_nodes[1]->get_child_nodes() as $argument ) {
+			$args[] = $this->translate( $argument );
+		}
+		return $args;
 	}
 
 	/**
