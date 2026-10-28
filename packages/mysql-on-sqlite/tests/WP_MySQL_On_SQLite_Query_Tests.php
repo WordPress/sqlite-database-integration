@@ -346,6 +346,10 @@ SELECT SUBSTRING_INDEX('www.mysql.com', '.', 2) AS two_from_left,
        SUBSTRING_INDEX('www.mysql.com', '.', 7) AS beyond_last,
        SUBSTRING_INDEX('nosuchdelim', '.', 3) AS no_match,
        SUBSTRING_INDEX('a--b--c', '--', -1) AS multi_char,
+       SUBSTRING_INDEX('a.b.c', '.', 1.6) AS fractional_positive,
+       SUBSTRING_INDEX('a.b.c', '.', -1.6) AS fractional_negative,
+       SUBSTRING_INDEX('aaaaa', 'aa', -2) AS overlapping_multibyte,
+       SUBSTRING_INDEX(BINARY 'aaaaa', 'aa', -2) AS overlapping_binary,
        SUBSTRING_INDEX(NULL, '.', 1) AS null_string,
        SUBSTRING_INDEX('a.b', NULL, 1) AS null_delimiter,
        SUBSTRING_INDEX('a.b', '.', NULL) AS null_count,
@@ -360,6 +364,10 @@ QUERY;
 		$this->assertEquals( 'www.mysql.com', $actual[0]->beyond_last );
 		$this->assertEquals( 'nosuchdelim', $actual[0]->no_match );
 		$this->assertEquals( 'c', $actual[0]->multi_char );
+		$this->assertSame( 'a.b', $actual[0]->fractional_positive );
+		$this->assertSame( 'b.c', $actual[0]->fractional_negative );
+		$this->assertSame( 'aaa', $actual[0]->overlapping_multibyte );
+		$this->assertSame( 'aa', $actual[0]->overlapping_binary );
 		$this->assertNull( $actual[0]->null_string );
 		$this->assertNull( $actual[0]->null_delimiter );
 		$this->assertNull( $actual[0]->null_count );

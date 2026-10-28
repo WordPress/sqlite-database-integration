@@ -84,6 +84,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'substring_index'              => 'substring_index',
 
 		// Internal helper functions.
+		'_helper_substr_index_binary'  => 'substring_index_binary',
 		'_helper_like_to_glob_pattern' => '_helper_like_to_glob_pattern',
 	);
 
@@ -945,12 +946,39 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * @return string|null The substring, or NULL on NULL input.
 	 */
 	public function substring_index( $str, $delim, $count ) {
+		return $this->substring_index_with_binary_semantics( $str, $delim, $count, false );
+	}
+
+	/**
+	 * Internal callback for SUBSTRING_INDEX() when its first argument is binary.
+	 *
+	 * @param string|null $str   The string to search.
+	 * @param string|null $delim The delimiter to search for.
+	 * @param mixed       $count How many delimiters to skip; negative counts from the right.
+	 *
+	 * @return string|null The substring, or NULL on NULL input.
+	 */
+	public function substring_index_binary( $str, $delim, $count ) {
+		return $this->substring_index_with_binary_semantics( $str, $delim, $count, true );
+	}
+
+	/**
+	 * Find a SUBSTRING_INDEX() result using the selected collation semantics.
+	 *
+	 * @param string|null $str    The string to search.
+	 * @param string|null $delim  The delimiter to search for.
+	 * @param mixed       $count  How many delimiters to skip; negative counts from the right.
+	 * @param bool        $binary Whether the first argument uses binary semantics.
+	 *
+	 * @return string|null The substring, or NULL on NULL input.
+	 */
+	private function substring_index_with_binary_semantics( $str, $delim, $count, bool $binary ): ?string {
 		if ( null === $str || null === $delim || null === $count ) {
 			return null;
 		}
 		$str   = (string) $str;
 		$delim = (string) $delim;
-		$count = (int) $count;
+		$count = (int) round( (float) $count );
 		if ( '' === $delim || 0 === $count ) {
 			return '';
 		}
@@ -966,19 +994,48 @@ class WP_SQLite_PDO_User_Defined_Functions {
 			}
 			return substr( $str, 0, $offset - $delim_len );
 		}
-		$count = -$count;
-		$end   = strlen( $str );
+
+		if ( $binary ) {
+			$length = strlen( $str );
+			$end    = $length;
+			$count  = -$count;
+			for ( $i = 0; $i < $count; $i++ ) {
+				if ( $end < $delim_len ) {
+					return $str;
+				}
+				$offset = $end - $delim_len - $length;
+				$pos    = strrpos( $str, $delim, $offset );
+				if ( false === $pos ) {
+					return $str;
+				}
+				if ( $i === $count - 1 ) {
+					return substr( $str, $pos + $delim_len );
+				}
+				$end = $pos;
+			}
+			return $str;
+		}
+
+		$delimiter_count = 0;
+		$offset          = 0;
+		while ( false !== ( $pos = strpos( $str, $delim, $offset ) ) ) {
+			++$delimiter_count;
+			$offset = $pos + $delim_len;
+		}
+		$count += $delimiter_count + 1;
+		if ( $count <= 0 ) {
+			return $str;
+		}
+
+		$offset = 0;
 		for ( $i = 0; $i < $count; $i++ ) {
-			$pos = strrpos( substr( $str, 0, $end ), $delim );
+			$pos = strpos( $str, $delim, $offset );
 			if ( false === $pos ) {
 				return $str;
 			}
-			if ( $i === $count - 1 ) {
-				return substr( $str, $pos + $delim_len );
-			}
-			$end = $pos;
+			$offset = $pos + $delim_len;
 		}
-		return $str;
+		return substr( $str, $offset );
 	}
 
 	/**
