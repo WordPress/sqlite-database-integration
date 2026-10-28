@@ -81,6 +81,8 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'utc_timestamp'                => 'utc_timestamp',
 		'version'                      => 'version',
 		'reverse'                      => 'reverse',
+		'json_unquote'                 => 'json_unquote',
+		'json_contains'                => 'json_contains',
 
 		// Internal helper functions.
 		'_helper_like_to_glob_pattern' => '_helper_like_to_glob_pattern',
@@ -925,6 +927,228 @@ class WP_SQLite_PDO_User_Defined_Functions {
 			return implode( '', array_reverse( $matches[0] ) );
 		}
 		return strrev( $str );
+	}
+
+	/**
+	 * Method to emulate MySQL JSON_UNQUOTE() function.
+	 *
+	 * A value that starts and ends with a double quote is decoded as a JSON string.
+	 * Any other value is returned unchanged, as MySQL does.
+	 *
+	 * SQLite's json_extract() already returns strings unquoted, whereas MySQL's
+	 * JSON_EXTRACT() returns them quoted. So JSON_UNQUOTE( JSON_EXTRACT( ... ) )
+	 * receives the plain string here. The one case this cannot tell apart is an
+	 * extracted string that itself begins and ends with a literal double quote.
+	 *
+	 * @param string|null $json The JSON string literal to unquote.
+	 *
+	 * @throws Exception When the value looks like a JSON string but is not valid JSON.
+	 * @return string|null The unquoted string, or NULL.
+	 */
+	public function json_unquote( $json ) {
+		if ( null === $json ) {
+			return null;
+		}
+		$json = (string) $json;
+		if ( strlen( $json ) < 2 || '"' !== $json[0] || '"' !== substr( $json, -1 ) ) {
+			return $json;
+		}
+		$decoded = json_decode( $json );
+		if ( JSON_ERROR_NONE !== json_last_error() || ! is_string( $decoded ) ) {
+			throw new Exception( 'Invalid JSON text in argument 1 to function json_unquote.' );
+		}
+		return $decoded;
+	}
+
+	/**
+	 * Method to emulate MySQL JSON_CONTAINS() function.
+	 *
+	 * @param string|null $target    The JSON document to search.
+	 * @param string|null $candidate The JSON value to look for.
+	 * @param string|null $path      Optional path to the part of the target to search.
+	 *
+	 * @throws Exception When an argument is not valid JSON or the path is not supported.
+	 * @return int|null 1 if the candidate is contained, 0 if not, NULL if an argument is NULL
+	 *                  or the path does not exist.
+	 */
+	public function json_contains( $target, $candidate, $path = null ) {
+		if ( null === $target || null === $candidate || ( func_num_args() > 2 && null === $path ) ) {
+			return null;
+		}
+		$target_value    = $this->json_decode_argument( $target, 1, 'json_contains' );
+		$candidate_value = $this->json_decode_argument( $candidate, 2, 'json_contains' );
+
+		if ( func_num_args() > 2 ) {
+			$target_value = $this->json_find_path( $target_value, $path, 'json_contains' );
+			if ( ! $target_value[0] ) {
+				return null;
+			}
+			$target_value = $target_value[1];
+		}
+		return $this->json_value_contains( $target_value, $candidate_value ) ? 1 : 0;
+	}
+
+	/**
+	 * Decode a JSON function argument, failing the way MySQL does on invalid input.
+	 *
+	 * @param string $json     The JSON text.
+	 * @param int    $position The 1-based argument position, for the error message.
+	 * @param string $function_name The function name, for the error message.
+	 *
+	 * @throws Exception When the text is not valid JSON.
+	 * @return mixed The decoded value.
+	 */
+	private function json_decode_argument( $json, int $position, string $function_name ) {
+		$value = json_decode( (string) $json );
+		if ( null === $value && JSON_ERROR_NONE !== json_last_error() ) {
+			throw new Exception(
+				sprintf( 'Invalid JSON text in argument %d to function %s.', $position, $function_name )
+			);
+		}
+		return $value;
+	}
+
+	/**
+	 * Whether a candidate JSON value is contained in a target value, per the MySQL rules:
+	 * a candidate array needs each of its elements contained in some target element;
+	 * a candidate object needs each key present with a contained value; a candidate scalar
+	 * must equal the target scalar, or be contained in some element of a target array.
+	 *
+	 * @param mixed $target    The decoded target value.
+	 * @param mixed $candidate The decoded candidate value.
+	 *
+	 * @return bool
+	 */
+	private function json_value_contains( $target, $candidate ): bool {
+		if ( is_array( $target ) ) {
+			if ( is_array( $candidate ) ) {
+				foreach ( $candidate as $candidate_element ) {
+					if ( ! $this->json_value_contains( $target, $candidate_element ) ) {
+						return false;
+					}
+				}
+				return true;
+			}
+			foreach ( $target as $target_element ) {
+				if ( $this->json_value_contains( $target_element, $candidate ) ) {
+					return true;
+				}
+			}
+			return false;
+		}
+		if ( is_object( $target ) ) {
+			if ( ! is_object( $candidate ) ) {
+				return false;
+			}
+			$target_members = get_object_vars( $target );
+			foreach ( get_object_vars( $candidate ) as $key => $candidate_member ) {
+				if ( ! array_key_exists( $key, $target_members )
+					|| ! $this->json_value_contains( $target_members[ $key ], $candidate_member ) ) {
+					return false;
+				}
+			}
+			return true;
+		}
+		if ( is_array( $candidate ) || is_object( $candidate ) ) {
+			return false;
+		}
+		return $this->json_scalars_equal( $target, $candidate );
+	}
+
+	/**
+	 * Compare two JSON scalars. Numbers compare by value, and a number never equals a
+	 * string or a boolean.
+	 *
+	 * @param mixed $a A decoded scalar.
+	 * @param mixed $b A decoded scalar.
+	 *
+	 * @return bool
+	 */
+	private function json_scalars_equal( $a, $b ): bool {
+		if ( is_bool( $a ) || is_bool( $b ) || is_string( $a ) || is_string( $b ) ) {
+			return $a === $b;
+		}
+		if ( null === $a || null === $b ) {
+			return $a === $b;
+		}
+		return $a == $b; // phpcs:ignore Universal.Operators.StrictComparisons.LooseEqual -- int and float compare by value.
+	}
+
+	/**
+	 * Resolve a JSON path against a decoded document.
+	 *
+	 * Supports "$", ".key", ".\"quoted key\"", "[n]", "[last]" and "[last-n]". As in MySQL,
+	 * an array index applied to a non-array treats the value as a one-element array.
+	 * Wildcards ("*", "**", "[*]") are not supported and raise an error rather than
+	 * silently returning a wrong answer.
+	 *
+	 * @param mixed  $document The decoded document.
+	 * @param string $path     The path expression.
+	 * @param string $function_name The function name, for error messages.
+	 *
+	 * @throws Exception When the path is invalid or uses an unsupported wildcard.
+	 * @return array{0: bool, 1: mixed} Whether the path exists, and the value found.
+	 */
+	private function json_find_path( $document, $path, string $function_name ): array {
+		$path   = (string) $path;
+		$length = strlen( $path );
+		if ( 0 === $length || '$' !== $path[0] ) {
+			throw new Exception( sprintf( 'Invalid JSON path expression in function %s.', $function_name ) );
+		}
+		$current  = $document;
+		$position = 1;
+		while ( $position < $length ) {
+			$char = $path[ $position ];
+			if ( '.' === $char ) {
+				++$position;
+				if ( $position < $length && '"' === $path[ $position ] ) {
+					if ( ! preg_match( '/\G"((?:[^"\\\\]|\\\\.)*)"/', $path, $match, 0, $position ) ) {
+						throw new Exception( sprintf( 'Invalid JSON path expression in function %s.', $function_name ) );
+					}
+					$key       = json_decode( '"' . $match[1] . '"' );
+					$position += strlen( $match[0] );
+				} elseif ( preg_match( '/\G[A-Za-z_$][A-Za-z0-9_$]*/', $path, $match, 0, $position ) ) {
+					$key       = $match[0];
+					$position += strlen( $match[0] );
+				} elseif ( $position < $length && '*' === $path[ $position ] ) {
+					throw new Exception( sprintf( 'Wildcards in a JSON path are not supported in function %s.', $function_name ) );
+				} else {
+					throw new Exception( sprintf( 'Invalid JSON path expression in function %s.', $function_name ) );
+				}
+				if ( ! is_object( $current ) ) {
+					return array( false, null );
+				}
+				$members = get_object_vars( $current );
+				if ( ! array_key_exists( $key, $members ) ) {
+					return array( false, null );
+				}
+				$current = $members[ $key ];
+			} elseif ( '[' === $char ) {
+				if ( ! preg_match( '/\G\[\s*(?:(\d+)|last(?:\s*-\s*(\d+))?)\s*\]/', $path, $match, 0, $position ) ) {
+					if ( preg_match( '/\G\[\s*\*\s*\]/', $path, $wildcard, 0, $position ) ) {
+						throw new Exception( sprintf( 'Wildcards in a JSON path are not supported in function %s.', $function_name ) );
+					}
+					throw new Exception( sprintf( 'Invalid JSON path expression in function %s.', $function_name ) );
+				}
+				$position += strlen( $match[0] );
+				$elements  = is_array( $current ) ? $current : array( $current );
+				if ( isset( $match[1] ) && '' !== $match[1] ) {
+					$index = (int) $match[1];
+				} else {
+					// "last" and "last-N": the groups after it are absent when not matched.
+					$index = count( $elements ) - 1 - ( isset( $match[2] ) ? (int) $match[2] : 0 );
+				}
+				if ( $index < 0 || $index >= count( $elements ) ) {
+					return array( false, null );
+				}
+				$current = $elements[ $index ];
+			} elseif ( '*' === $char ) {
+				throw new Exception( sprintf( 'Wildcards in a JSON path are not supported in function %s.', $function_name ) );
+			} else {
+				throw new Exception( sprintf( 'Invalid JSON path expression in function %s.', $function_name ) );
+			}
+		}
+		return array( true, $current );
 	}
 
 	/**

@@ -339,6 +339,49 @@ QUERY;
 		$this->assertEquals( 0, count( $actual ) );
 	}
 
+	public function testJsonUnquote() {
+		$query = <<<'QUERY'
+SELECT JSON_UNQUOTE('\"abc\"') AS plain,
+       JSON_UNQUOTE(JSON_EXTRACT('{"name":"abc","n":"12"}', '$.name')) AS extracted,
+       JSON_UNQUOTE(JSON_EXTRACT('{"name":"abc","n":"12"}', '$.n')) AS num_as_text
+QUERY;
+
+		$this->assertQuery( $query );
+		$actual = $this->last_result;
+		$this->assertEquals( 'abc', $actual[0]->plain );
+		$this->assertEquals( 'abc', $actual[0]->extracted );
+		$this->assertEquals( '12', $actual[0]->num_as_text );
+	}
+
+	public function testJsonContains() {
+		$query = <<<'QUERY'
+SELECT JSON_CONTAINS('[3,5,9]', '5') AS in_array,
+       JSON_CONTAINS('[3,5,9]', '4') AS not_in_array,
+       JSON_CONTAINS('{"a": 1, "b": 2}', '1', '$.a') AS at_path
+QUERY;
+
+		$this->assertQuery( $query );
+		$actual = $this->last_result;
+		$this->assertEquals( 1, (int) $actual[0]->in_array );
+		$this->assertEquals( 0, (int) $actual[0]->not_in_array );
+		$this->assertEquals( 1, (int) $actual[0]->at_path );
+	}
+
+	public function testJsonFunctionsOverTableRows() {
+		$this->assertQuery(
+			"INSERT INTO wp_options (option_name, option_value, autoload) VALUES ('_json_probe_ids', '[3,5,9]', 'no');"
+		);
+		$query = <<<'QUERY'
+SELECT option_name FROM wp_options
+WHERE JSON_CONTAINS(option_value, '5') AND option_name = '_json_probe_ids'
+QUERY;
+
+		$this->assertQuery( $query );
+		$actual = $this->last_result;
+		$this->assertEquals( 1, count( $actual ) );
+		$this->assertEquals( '_json_probe_ids', $actual[0]->option_name );
+	}
+
 	public function testCharLengthComplex() {
 		$query = <<<'QUERY'
 SELECT option_name,
