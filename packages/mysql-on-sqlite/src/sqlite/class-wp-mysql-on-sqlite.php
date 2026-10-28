@@ -4602,6 +4602,9 @@ class WP_MySQL_On_SQLite extends PDO {
 				return $value;
 			case WP_MySQL_Lexer::AUTO_INCREMENT_SYMBOL:
 				return 'AUTOINCREMENT';
+			case WP_MySQL_Lexer::NULL_SAFE_EQUAL_OPERATOR:
+				// The MySQL null-safe equality "<=>" is "IS" in SQLite.
+				return 'IS';
 			case WP_MySQL_Lexer::BINARY_SYMBOL:
 				/*
 				 * "BINARY expr" is translated in "translate_simple_expr_body()".

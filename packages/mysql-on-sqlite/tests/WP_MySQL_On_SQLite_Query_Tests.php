@@ -478,6 +478,61 @@ QUERY;
 		$this->assertSame( '"quoted"', $this->last_result[0]->source );
 	}
 
+	public function testJsonLengthAndMergePatch() {
+		$query = <<<'QUERY'
+SELECT JSON_LENGTH('[1,2,3]') AS array_length,
+       JSON_LENGTH('{"a":1,"bb":2}') AS object_length,
+       JSON_LENGTH('"scalar"') AS scalar_length,
+       JSON_LENGTH('{"items":[1,2]}', '$.items') AS nested_length,
+       JSON_LENGTH('{"items":[1]}', '$.missing') AS missing_length,
+       JSON_LENGTH(NULL) AS null_document
+QUERY;
+
+		$this->assertQuery( $query );
+		$actual = $this->last_result[0];
+		$this->assertSame( 3, (int) $actual->array_length );
+		$this->assertSame( 2, (int) $actual->object_length );
+		$this->assertSame( 1, (int) $actual->scalar_length );
+		$this->assertSame( 2, (int) $actual->nested_length );
+		$this->assertNull( $actual->missing_length );
+		$this->assertNull( $actual->null_document );
+
+		$query = <<<'QUERY'
+SELECT JSON_MERGE_PATCH(
+           '{"a":1,"nested":{"keep":2,"remove":3}}',
+           '{"a":null,"nested":{"remove":null,"add":4}}'
+       ) AS merged,
+       JSON_MERGE_PATCH('{"items":[1,2]}', '{"items":[3]}', '{"extra":true}') AS multiple_patch,
+       JSON_MERGE_PATCH('{"a":1}', NULL) AS null_patch
+QUERY;
+
+		$this->assertQuery( $query );
+		$actual = $this->last_result[0];
+		$this->assertSame( '{"nested": {"add": 4, "keep": 2}}', $actual->merged );
+		$this->assertSame( '{"extra": true, "items": [3]}', $actual->multiple_patch );
+		$this->assertNull( $actual->null_patch );
+	}
+
+	public function testNullSafeEqual() {
+		$query = <<<'QUERY'
+SELECT NULL <=> NULL AS null_null,
+       NULL <=> 1 AS null_value,
+       1 <=> NULL AS value_null,
+       1 <=> 1 AS equal_values,
+       1 <=> 2 AS different_values
+QUERY;
+
+		$this->assertQuery( $query );
+		$actual = $this->last_result[0];
+		$this->assertSame( 1, (int) $actual->null_null );
+		$this->assertNotNull( $actual->null_value );
+		$this->assertSame( 0, (int) $actual->null_value );
+		$this->assertNotNull( $actual->value_null );
+		$this->assertSame( 0, (int) $actual->value_null );
+		$this->assertSame( 1, (int) $actual->equal_values );
+		$this->assertSame( 0, (int) $actual->different_values );
+	}
+
 	public function testCharLengthComplex() {
 		$query = <<<'QUERY'
 SELECT option_name,

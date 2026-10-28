@@ -83,6 +83,8 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'reverse'                      => 'reverse',
 		'json_unquote'                 => 'json_unquote',
 		'json_contains'                => 'json_contains',
+		'json_length'                  => 'json_length',
+		'json_merge_patch'             => 'json_merge_patch',
 
 		// Internal helper functions.
 		'_helper_json_unquote_extract' => 'json_unquote_extract',
@@ -1025,6 +1027,62 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	}
 
 	/**
+	 * Method to emulate MySQL JSON_LENGTH() function.
+	 *
+	 * @param string|null $json The JSON document.
+	 * @param string|null $path Optional path to the part of the document to measure.
+	 *
+	 * @throws Exception When the document is not valid JSON or the path is not supported.
+	 * @return int|null The number of elements of an array or object, 1 for a scalar,
+	 *                  or NULL if an argument is NULL or the path does not exist.
+	 */
+	public function json_length( $json, $path = null ) {
+		if ( null === $json || ( func_num_args() > 1 && null === $path ) ) {
+			return null;
+		}
+		$value = $this->json_decode_argument( $json, 1, 'json_length' );
+
+		if ( func_num_args() > 1 ) {
+			$value = $this->json_find_path( $value, $path, 'json_length' );
+			if ( ! $value[0] ) {
+				return null;
+			}
+			$value = $value[1];
+		}
+		if ( is_array( $value ) ) {
+			return count( $value );
+		}
+		if ( is_object( $value ) ) {
+			return count( get_object_vars( $value ) );
+		}
+		return 1;
+	}
+
+	/**
+	 * Method to emulate MySQL JSON_MERGE_PATCH() function (RFC 7396).
+	 *
+	 * @param string|null ...$documents Two or more JSON documents; later ones patch earlier ones.
+	 *
+	 * @throws Exception When an argument is not valid JSON.
+	 * @return string|null The merged document, or NULL if any argument is NULL.
+	 */
+	public function json_merge_patch() {
+		$documents = func_get_args();
+		if ( count( $documents ) < 2 ) {
+			throw new Exception( 'Incorrect parameter count in the call to native function \'json_merge_patch\'.' );
+		}
+		$result = null;
+		foreach ( $documents as $index => $document ) {
+			if ( null === $document ) {
+				return null;
+			}
+			$value  = $this->json_decode_argument( $document, $index + 1, 'json_merge_patch' );
+			$result = 0 === $index ? $value : $this->json_apply_patch( $result, $value );
+		}
+		return $this->json_encode_value( $result );
+	}
+
+	/**
 	 * Decode a JSON function argument, failing the way MySQL does on invalid input.
 	 *
 	 * @param string $json     The JSON text.
@@ -1108,6 +1166,69 @@ class WP_SQLite_PDO_User_Defined_Functions {
 			return $a === $b;
 		}
 		return $a == $b; // phpcs:ignore Universal.Operators.StrictComparisons.LooseEqual -- int and float compare by value.
+	}
+
+	/**
+	 * Apply an RFC 7396 merge patch to a decoded value.
+	 *
+	 * @param mixed $target The decoded target.
+	 * @param mixed $patch  The decoded patch.
+	 *
+	 * @return mixed The patched value.
+	 */
+	private function json_apply_patch( $target, $patch ) {
+		if ( ! is_object( $patch ) ) {
+			return $patch;
+		}
+		$members = is_object( $target ) ? get_object_vars( $target ) : array();
+		foreach ( get_object_vars( $patch ) as $key => $patch_member ) {
+			if ( null === $patch_member ) {
+				unset( $members[ $key ] );
+			} else {
+				$members[ $key ] = $this->json_apply_patch(
+					array_key_exists( $key, $members ) ? $members[ $key ] : null,
+					$patch_member
+				);
+			}
+		}
+		return (object) $members;
+	}
+
+	/**
+	 * Encode a decoded value in MySQL's canonical JSON form: ", " and ": " separators,
+	 * object keys ordered by length and then by bytes, no escaping of Unicode or slashes.
+	 *
+	 * @param mixed $value The decoded value.
+	 *
+	 * @return string The JSON text.
+	 */
+	private function json_encode_value( $value ): string {
+		if ( is_array( $value ) ) {
+			$items = array();
+			foreach ( $value as $element ) {
+				$items[] = $this->json_encode_value( $element );
+			}
+			return '[' . implode( ', ', $items ) . ']';
+		}
+		if ( is_object( $value ) ) {
+			$members = array();
+			foreach ( get_object_vars( $value ) as $key => $member ) {
+				$members[ (string) $key ] = $member;
+			}
+			uksort(
+				$members,
+				function ( $a, $b ) {
+					$by_length = strlen( $a ) - strlen( $b );
+					return 0 !== $by_length ? $by_length : strcmp( $a, $b );
+				}
+			);
+			$items = array();
+			foreach ( $members as $key => $member ) {
+				$items[] = $this->json_encode_value( (string) $key ) . ': ' . $this->json_encode_value( $member );
+			}
+			return '{' . implode( ', ', $items ) . '}';
+		}
+		return json_encode( $value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION );
 	}
 
 	/**
