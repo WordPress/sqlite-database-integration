@@ -81,7 +81,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'utc_timestamp'                => 'utc_timestamp',
 		'version'                      => 'version',
 		'reverse'                      => 'reverse',
-		'substring_index'            => 'substring_index',
+		'substring_index'              => 'substring_index',
 
 		// Internal helper functions.
 		'_helper_like_to_glob_pattern' => '_helper_like_to_glob_pattern',
@@ -937,10 +937,6 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * empty delimiter, or fewer delimiters than requested (in the searched
 	 * direction) yields defined fallbacks matching MySQL. Any NULL input
 	 * yields NULL.
-	 *
-	 * This is a local addition to the vendored SQLite Database Integration
-	 * plugin so plugins relying on MySQL string functions keep working.
-	 * Propose it upstream rather than extending it here.
 	 *
 	 * @param string|null $str   The string to search.
 	 * @param string|null $delim The delimiter to search for.

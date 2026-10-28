@@ -345,7 +345,12 @@ SELECT SUBSTRING_INDEX('www.mysql.com', '.', 2) AS two_from_left,
        SUBSTRING_INDEX('www.mysql.com', '.', -2) AS two_from_right,
        SUBSTRING_INDEX('www.mysql.com', '.', 7) AS beyond_last,
        SUBSTRING_INDEX('nosuchdelim', '.', 3) AS no_match,
-       SUBSTRING_INDEX('a--b--c', '--', -1) AS multi_char
+       SUBSTRING_INDEX('a--b--c', '--', -1) AS multi_char,
+       SUBSTRING_INDEX(NULL, '.', 1) AS null_string,
+       SUBSTRING_INDEX('a.b', NULL, 1) AS null_delimiter,
+       SUBSTRING_INDEX('a.b', '.', NULL) AS null_count,
+       SUBSTRING_INDEX('a.b', '.', 0) AS zero_count,
+       SUBSTRING_INDEX('a.b', '', 1) AS empty_delimiter
 QUERY;
 
 		$this->assertQuery( $query );
@@ -355,6 +360,11 @@ QUERY;
 		$this->assertEquals( 'www.mysql.com', $actual[0]->beyond_last );
 		$this->assertEquals( 'nosuchdelim', $actual[0]->no_match );
 		$this->assertEquals( 'c', $actual[0]->multi_char );
+		$this->assertNull( $actual[0]->null_string );
+		$this->assertNull( $actual[0]->null_delimiter );
+		$this->assertNull( $actual[0]->null_count );
+		$this->assertSame( '', $actual[0]->zero_count );
+		$this->assertSame( '', $actual[0]->empty_delimiter );
 	}
 
 	public function testSubstringIndexDomainExtraction() {
