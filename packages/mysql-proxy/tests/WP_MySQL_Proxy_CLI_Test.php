@@ -1,6 +1,7 @@
 <?php
 
 use Symfony\Component\Process\Process;
+use WP_MySQL_Proxy\MySQL_Protocol;
 
 class WP_MySQL_Proxy_CLI_Test extends WP_MySQL_Proxy_Test {
 	public function test_auth_without_password_is_denied(): void {
@@ -84,5 +85,10 @@ class WP_MySQL_Proxy_CLI_Test extends WP_MySQL_Proxy_Test {
 			"id\tname\n123\tabc\n456\tdef\n",
 			$process->getOutput()
 		);
+	}
+
+	protected function get_auth_plugin(): string {
+		// The external CLI's authentication support is independent of PHP's mysqlnd.
+		return MySQL_Protocol::AUTH_PLUGIN_CACHING_SHA2_PASSWORD;
 	}
 }

@@ -21,7 +21,7 @@ abstract class WP_MySQL_Proxy_Test extends TestCase {
 				'port'        => $this->port,
 				'db_path'     => ':memory:',
 				'log_level'   => $this->log_level,
-				'auth_plugin' => MySQL_Test_Client::auth_plugin(),
+				'auth_plugin' => $this->get_auth_plugin(),
 			)
 		);
 	}
@@ -39,5 +39,9 @@ abstract class WP_MySQL_Proxy_Test extends TestCase {
 				$this->server->get_stderr()
 			);
 		}
+	}
+
+	protected function get_auth_plugin(): string {
+		return MySQL_Test_Client::auth_plugin();
 	}
 }
