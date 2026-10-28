@@ -993,7 +993,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 			return 'null';
 		}
 		if ( is_array( $value ) || is_object( $value ) ) {
-			return json_encode( $value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION );
+			return $this->json_encode_value( $value );
 		}
 		return (string) $value;
 	}
@@ -1117,7 +1117,14 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		if ( is_array( $target ) ) {
 			if ( is_array( $candidate ) ) {
 				foreach ( $candidate as $candidate_element ) {
-					if ( ! $this->json_value_contains( $target, $candidate_element ) ) {
+					$found = false;
+					foreach ( $target as $target_element ) {
+						if ( $this->json_value_contains( $target_element, $candidate_element ) ) {
+							$found = true;
+							break;
+						}
+					}
+					if ( ! $found ) {
 						return false;
 					}
 				}

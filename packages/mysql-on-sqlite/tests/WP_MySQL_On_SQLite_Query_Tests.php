@@ -355,6 +355,8 @@ QUERY;
 			'numeric extraction'                 => array( "SELECT JSON_UNQUOTE(JSON_EXTRACT(JSON_OBJECT('a', 12), '$.a')) AS result", '12' ),
 			'boolean extraction'                 => array( "SELECT JSON_UNQUOTE(JSON_EXTRACT(JSON_OBJECT('a', json('true')), '$.a')) AS result", 'true' ),
 			'JSON null extraction'               => array( "SELECT JSON_UNQUOTE(JSON_EXTRACT(JSON_OBJECT('a', json('null')), '$.a')) AS result", 'null' ),
+			'array extraction'                   => array( "SELECT JSON_UNQUOTE(JSON_EXTRACT(JSON_ARRAY(1, 2), '$')) AS result", '[1, 2]' ),
+			'object extraction'                  => array( "SELECT JSON_UNQUOTE(JSON_EXTRACT(JSON_OBJECT('bb', 1, 'a', 2), '$')) AS result", '{"a": 2, "bb": 1}' ),
 			'missing extraction path'            => array( "SELECT JSON_UNQUOTE(JSON_EXTRACT(JSON_OBJECT('a', 12), '$.missing')) AS result", null ),
 		);
 	}
@@ -384,6 +386,7 @@ QUERY;
 			'scalar not in array'     => array( "SELECT JSON_CONTAINS(JSON_ARRAY(3, 5, 9), '4') AS result", '0' ),
 			'object candidate'        => array( "SELECT JSON_CONTAINS(JSON_OBJECT('a', 1, 'b', 2), JSON_OBJECT('a', 1)) AS result", '1' ),
 			'nested array candidate'  => array( 'SELECT JSON_CONTAINS(JSON_ARRAY(JSON_ARRAY(1, 2), JSON_ARRAY(3, 4)), JSON_ARRAY(JSON_ARRAY(1, 2))) AS result', '1' ),
+			'nested candidate does not match across target elements' => array( 'SELECT JSON_CONTAINS(JSON_ARRAY(JSON_ARRAY(1, 3), JSON_ARRAY(2, 4)), JSON_ARRAY(JSON_ARRAY(1, 2))) AS result', '0' ),
 			'nested object candidate' => array(
 				"SELECT JSON_CONTAINS(JSON_OBJECT('a', JSON_OBJECT('b', 1, 'c', 2)), JSON_OBJECT('a', JSON_OBJECT('b', 1))) AS result",
 				'1',
