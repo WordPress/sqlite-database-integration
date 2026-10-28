@@ -4709,7 +4709,8 @@ class WP_MySQL_On_SQLite extends PDO {
 		$token = $node->get_first_child_token();
 		$value = $token->get_value();
 
-		if ( str_starts_with( $value, self::RESERVED_PREFIX ) ) {
+		// SQLite resolves ASCII identifiers case insensitively.
+		if ( 0 === strncasecmp( $value, self::RESERVED_PREFIX, strlen( self::RESERVED_PREFIX ) ) ) {
 			throw $this->new_driver_exception(
 				sprintf(
 					"Invalid identifier '%s', prefix '%s' is reserved",

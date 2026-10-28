@@ -8164,7 +8164,11 @@ QUERY
 	/**
 	 * @dataProvider getReservedPrefixTestData
 	 */
-	public function testReservedPrefix( string $query, string $error ): void {
+	public function testReservedPrefix( string $query, string $error, bool $ansi_quotes = false ): void {
+		if ( $ansi_quotes ) {
+			$this->assertQuery( "SET sql_mode = 'ANSI_QUOTES'" );
+		}
+
 		$this->expectException( WP_MySQL_On_SQLite_Exception::class );
 		$this->expectExceptionMessage( $error );
 		$this->assertQuery( $query );
@@ -8196,6 +8200,76 @@ QUERY
 				'DROP TABLE _wp_sqlite_t',
 				"Invalid identifier '_wp_sqlite_t', prefix '_wp_sqlite_' is reserved",
 			),
+			array(
+				'SELECT COUNT(*) FROM _WP_SQLITE_mysql_information_schema_tables',
+				"Invalid identifier '_WP_SQLITE_mysql_information_schema_tables', prefix '_wp_sqlite_' is reserved",
+			),
+			array(
+				'SELECT COUNT(*) FROM _Wp_SqLiTe_mysql_information_schema_tables',
+				"Invalid identifier '_Wp_SqLiTe_mysql_information_schema_tables', prefix '_wp_sqlite_' is reserved",
+			),
+			array(
+				'SELECT COUNT(*) FROM `wp`.`_Wp_SqLiTe_mysql_information_schema_tables`',
+				"Invalid identifier '_Wp_SqLiTe_mysql_information_schema_tables', prefix '_wp_sqlite_' is reserved",
+			),
+			array(
+				'SELECT COUNT(*) FROM "_WP_SQLITE_mysql_information_schema_tables"',
+				"Invalid identifier '_WP_SQLITE_mysql_information_schema_tables', prefix '_wp_sqlite_' is reserved",
+				true,
+			),
+			array(
+				"INSERT INTO _Wp_SqLiTe_global_variables (name, value) VALUES ('test', 'value')",
+				"Invalid identifier '_Wp_SqLiTe_global_variables', prefix '_wp_sqlite_' is reserved",
+			),
+			array(
+				'DELETE FROM _Wp_SqLiTe_mysql_information_schema_tables',
+				"Invalid identifier '_Wp_SqLiTe_mysql_information_schema_tables', prefix '_wp_sqlite_' is reserved",
+			),
+			array(
+				'DROP TABLE _Wp_SqLiTe_mysql_information_schema_tables',
+				"Invalid identifier '_Wp_SqLiTe_mysql_information_schema_tables', prefix '_wp_sqlite_' is reserved",
+			),
+			array(
+				'TRUNCATE TABLE _Wp_SqLiTe_mysql_information_schema_tables',
+				"Invalid identifier '_Wp_SqLiTe_mysql_information_schema_tables', prefix '_wp_sqlite_' is reserved",
+			),
+			array(
+				'CREATE TEMPORARY TABLE _Wp_SqLiTe_mysql_information_schema_tables (id INT)',
+				"Invalid identifier '_Wp_SqLiTe_mysql_information_schema_tables', prefix '_wp_sqlite_' is reserved",
+			),
+			array(
+				'CREATE TABLE _WP_SQLITE_ (id INT)',
+				"Invalid identifier '_WP_SQLITE_', prefix '_wp_sqlite_' is reserved",
+			),
+		);
+	}
+
+	public function testReservedPrefixInSavepoint(): void {
+		$this->assertQuery( 'START TRANSACTION' );
+		$this->assertQueryError(
+			'SAVEPOINT _Wp_SqLiTe_savepoint_wrapper',
+			"Invalid identifier '_Wp_SqLiTe_savepoint_wrapper', prefix '_wp_sqlite_' is reserved"
+		);
+		$this->assertTrue( $this->engine->inTransaction() );
+		$this->assertQuery( 'ROLLBACK' );
+	}
+
+	/**
+	 * @dataProvider getNamesWithoutReservedPrefixTestData
+	 */
+	public function testNamesWithoutReservedPrefix( string $identifier ): void {
+		$name = $this->engine->get_connection()->quote_identifier( $identifier );
+		$this->assertQuery( "CREATE TABLE $name ($name INT)" );
+		$this->assertQuery( "INSERT INTO $name ($name) VALUES (42)" );
+		$result = $this->assertQuery( "SELECT wp.$name.$name AS $name FROM wp.$name" );
+		$this->assertEquals( array( (object) array( $identifier => '42' ) ), $result );
+	}
+
+	public function getNamesWithoutReservedPrefixTestData(): array {
+		return array(
+			array( '_WP_SQLITE' ),
+			array( 'x_WP_SQLITE_t' ),
+			array( '_Wp_SqLiTeX_t' ),
 		);
 	}
 
