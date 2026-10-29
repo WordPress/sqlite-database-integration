@@ -805,47 +805,47 @@ class WP_MySQL_Lexer {
 				$type                      = self::DOT_SYMBOL;
 			}
 		} elseif ( ':' === $byte ) {
-			$this->bytes_already_read += 1; // Consume the ':'.
+			$this->bytes_already_read += 1;
 			if ( '=' === $next_byte ) {
-				$this->bytes_already_read += 1; // Consume the '='.
+				$this->bytes_already_read += 1;
 				$type                      = self::ASSIGN_OPERATOR;
 			} else {
 				$type = self::COLON_SYMBOL;
 			}
 		} elseif ( '<' === $byte ) {
-			$this->bytes_already_read += 1; // Consume the '<'.
+			$this->bytes_already_read += 1;
 			if ( '=' === $next_byte ) {
-				$this->bytes_already_read += 1; // Consume the '='.
+				$this->bytes_already_read += 1;
 				if ( '>' === ( $this->sql[ $this->bytes_already_read ] ?? null ) ) {
-					$this->bytes_already_read += 1; // Consume the '>'.
+					$this->bytes_already_read += 1;
 					$type                      = self::NULL_SAFE_EQUAL_OPERATOR;
 				} else {
 					$type = self::LESS_OR_EQUAL_OPERATOR;
 				}
 			} elseif ( '>' === $next_byte ) {
-				$this->bytes_already_read += 1; // Consume the '>'.
+				$this->bytes_already_read += 1;
 				$type                      = self::NOT_EQUAL_OPERATOR;
 			} elseif ( '<' === $next_byte ) {
-				$this->bytes_already_read += 1; // Consume the '<'.
+				$this->bytes_already_read += 1;
 				$type                      = self::SHIFT_LEFT_OPERATOR;
 			} else {
 				$type = self::LESS_THAN_OPERATOR;
 			}
 		} elseif ( '>' === $byte ) {
-			$this->bytes_already_read += 1; // Consume the '>'.
+			$this->bytes_already_read += 1;
 			if ( '=' === $next_byte ) {
-				$this->bytes_already_read += 1; // Consume the '='.
+				$this->bytes_already_read += 1;
 				$type                      = self::GREATER_OR_EQUAL_OPERATOR;
 			} elseif ( '>' === $next_byte ) {
-				$this->bytes_already_read += 1; // Consume the '>'.
+				$this->bytes_already_read += 1;
 				$type                      = self::SHIFT_RIGHT_OPERATOR;
 			} else {
 				$type = self::GREATER_THAN_OPERATOR;
 			}
 		} elseif ( '!' === $byte ) {
-			$this->bytes_already_read += 1; // Consume the '!'.
+			$this->bytes_already_read += 1;
 			if ( '=' === $next_byte ) {
-				$this->bytes_already_read += 1; // Consume the '='.
+				$this->bytes_already_read += 1;
 				$type                      = self::NOT_EQUAL_OPERATOR;
 			} else {
 				$type = self::LOGICAL_NOT_OPERATOR;
@@ -858,9 +858,9 @@ class WP_MySQL_Lexer {
 			) {
 				$type = $this->read_line_comment();
 			} elseif ( '>' === $next_byte ) {
-				$this->bytes_already_read += 2; // Consume the '->'.
+				$this->bytes_already_read += 2;
 				if ( '>' === ( $this->sql[ $this->bytes_already_read ] ?? null ) ) {
-					$this->bytes_already_read += 1; // Consume the '>'.
+					$this->bytes_already_read += 1;
 					if ( $this->mysql_version >= 50713 ) {
 						$type = self::JSON_UNQUOTED_SEPARATOR_SYMBOL;
 					} else {
@@ -874,13 +874,13 @@ class WP_MySQL_Lexer {
 					}
 				}
 			} else {
-				$this->bytes_already_read += 1; // Consume the '-'.
+				$this->bytes_already_read += 1;
 				$type                      = self::MINUS_OPERATOR;
 			}
 		} elseif ( '*' === $byte ) {
 			$this->bytes_already_read += 1;
 			if ( '/' === $next_byte && $this->in_mysql_comment ) {
-				$this->bytes_already_read += 1; // Consume the '/'.
+				$this->bytes_already_read += 1;
 				$type                      = self::MYSQL_COMMENT_END;
 				$this->in_mysql_comment    = false;
 			} else {
@@ -891,7 +891,7 @@ class WP_MySQL_Lexer {
 				if ( '!' === ( $this->sql[ $this->bytes_already_read + 2 ] ?? null ) ) {
 					$type = $this->read_mysql_comment();
 				} else {
-					$this->bytes_already_read += 2; // Consume the '/*'.
+					$this->bytes_already_read += 2;
 					$this->read_comment_content();
 					$type = self::COMMENT;
 				}
@@ -900,17 +900,17 @@ class WP_MySQL_Lexer {
 				$type                      = self::DIV_OPERATOR;
 			}
 		} elseif ( '&' === $byte ) {
-			$this->bytes_already_read += 1; // Consume the '&'.
+			$this->bytes_already_read += 1;
 			if ( '&' === $next_byte ) {
-				$this->bytes_already_read += 1; // Consume the '&'.
+				$this->bytes_already_read += 1;
 				$type                      = self::LOGICAL_AND_OPERATOR;
 			} else {
 				$type = self::BITWISE_AND_OPERATOR;
 			}
 		} elseif ( '|' === $byte ) {
-			$this->bytes_already_read += 1; // Consume the '|'.
+			$this->bytes_already_read += 1;
 			if ( '|' === $next_byte ) {
-				$this->bytes_already_read += 1; // Consume the '|'.
+				$this->bytes_already_read += 1;
 				$type                      = $this->is_sql_mode_active( self::SQL_MODE_PIPES_AS_CONCAT )
 					? self::CONCAT_PIPES_SYMBOL
 					: self::LOGICAL_OR_OPERATOR;
@@ -920,12 +920,12 @@ class WP_MySQL_Lexer {
 		} elseif ( '@' === $byte ) {
 			// MySQL treats "@" as a standalone terminal; the variable name that
 			// follows is emitted as its own token (see produce_at_variable()).
-			$this->bytes_already_read += 1; // Consume the '@'.
+			$this->bytes_already_read += 1;
 			$type                      = self::AT_SIGN_SYMBOL;
 		} elseif ( '\\' === $byte ) {
-			$this->bytes_already_read += 1; // Consume the '\'.
+			$this->bytes_already_read += 1;
 			if ( 'N' === $next_byte ) {
-				$this->bytes_already_read += 1; // Consume the 'N'.
+				$this->bytes_already_read += 1;
 				$type                      = self::NULL2_SYMBOL;
 			} else {
 				return null; // Invalid input.
@@ -938,7 +938,7 @@ class WP_MySQL_Lexer {
 		} elseif ( ( 'x' === $byte || 'X' === $byte || 'b' === $byte || 'B' === $byte ) && "'" === $next_byte ) {
 			$type = $this->read_number();
 		} elseif ( ( 'n' === $byte || 'N' === $byte ) && "'" === $next_byte ) {
-			$this->bytes_already_read += 1; // n/N
+			$this->bytes_already_read += 1;
 			$type                      = $this->read_quoted_text( "'" );
 			if ( self::SINGLE_QUOTED_TEXT === $type ) {
 				$type = self::NCHAR_TEXT;
