@@ -3,8 +3,10 @@
 require_once ABSPATH . 'wp-admin/includes/plugin.php';
 require_once ABSPATH . WPINC . '/class-wp-admin-bar.php';
 require_once WP_CONTENT_DIR . '/plugins/sqlite-database-integration/load.php';
+require_once __DIR__ . '/WP_SQLite_Dropin_Test_Helpers.php';
 
 class WP_SQLite_Database_Integration_Authorization_Test extends WP_UnitTestCase {
+	use WP_SQLite_Dropin_Test_Helpers;
 
 	/**
 	 * @var array|null
@@ -770,7 +772,7 @@ class WP_SQLite_Database_Integration_Authorization_Test extends WP_UnitTestCase 
 		sqlite_integration_admin_screen();
 		$output = ob_get_clean();
 
-		$this->assertStringContainsString( 'SQLite is enabled.', $output );
+		$this->assertStringContainsString( 'SQLite is active', $output );
 		$this->assertStringContainsString( esc_url( self_admin_url( 'plugins.php' ) ), $output );
 	}
 
@@ -782,43 +784,6 @@ class WP_SQLite_Database_Integration_Authorization_Test extends WP_UnitTestCase 
 				return ob_get_clean();
 			}
 		);
-	}
-
-	private function run_without_dropin( $callback ) {
-		$dropin_path        = WP_CONTENT_DIR . '/db.php';
-		$dropin_backup_path = tempnam( WP_CONTENT_DIR, 'db.php.' );
-
-		$this->assertNotFalse( $dropin_backup_path );
-		$this->assertTrue( unlink( $dropin_backup_path ) );
-		$this->assertTrue( rename( $dropin_path, $dropin_backup_path ) );
-
-		$restore_dropin      = function () use ( $dropin_path, $dropin_backup_path ) {
-			if ( ! file_exists( $dropin_backup_path ) ) {
-				return file_exists( $dropin_path );
-			}
-
-			return rename( $dropin_backup_path, $dropin_path );
-		};
-		$restore_on_shutdown = true;
-		register_shutdown_function(
-			function () use ( &$restore_on_shutdown, $restore_dropin ) {
-				if ( $restore_on_shutdown ) {
-					call_user_func( $restore_dropin );
-				}
-			}
-		);
-
-		try {
-			$result = call_user_func( $callback );
-		} finally {
-			$dropin_restored     = call_user_func( $restore_dropin );
-			$restore_on_shutdown = false;
-		}
-
-		$this->assertTrue( $dropin_restored );
-		$this->assertFileExists( $dropin_path );
-
-		return $result;
 	}
 
 	private function assert_valid_nonce_reaches_install_redirect() {
