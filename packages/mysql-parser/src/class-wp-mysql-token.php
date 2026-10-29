@@ -176,8 +176,7 @@ final class WP_MySQL_Token extends WP_Parser_Token {
 			 * Legacy multi-byte charsets like big5 or gbk, where a trail byte can be
 			 * a backslash, are not supported.
 			 */
-			$preg_quoted_backslash = preg_quote( $backslash );
-			$value                 = preg_replace( "/$preg_quoted_backslash(.)/s", '$1', $value );
+			$value = preg_replace( '/\\\\(.)/s', '$1', $value );
 		}
 		return $value;
 	}
