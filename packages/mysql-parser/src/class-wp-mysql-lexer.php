@@ -444,7 +444,7 @@ class WP_MySQL_Lexer {
 				list( $type, $start, $length ) = $this->lookahead;
 				$this->lookahead               = null;
 			} else {
-				// Inlined scan_lexeme(): skip whitespace and comments, then scan.
+				// Inline scan_lexeme() for performance.
 				$this->bytes_already_read += strspn( $sql, self::WHITESPACE_MASK, $this->bytes_already_read );
 				do {
 					$this->token_starts_at = $this->bytes_already_read;
