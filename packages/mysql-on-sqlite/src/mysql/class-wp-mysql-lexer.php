@@ -45,6 +45,7 @@ class WP_MySQL_Lexer {
 	const WHITESPACE_MASK = " \t\n\r\f\v";
 	const DIGIT_MASK      = '0123456789';
 	const HEX_DIGIT_MASK  = '0123456789abcdefABCDEF';
+	const IDENTIFIER_MASK = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_$';
 
 	/**
 	 * Tokens from the MySQL Workbench "predefined.tokens" list.
@@ -2612,7 +2613,7 @@ class WP_MySQL_Lexer {
 				 *   1. Starts with a '@'.
 				 *   2. Allowed following characters are ASCII a-z, A-Z, 0-9, _, ., $.
 				 */
-				$length = strspn( $this->sql, 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.$', $this->bytes_already_read );
+				$length = strspn( $this->sql, self::IDENTIFIER_MASK . '.', $this->bytes_already_read );
 				if ( $length > 0 ) {
 					$this->bytes_already_read += $length;
 					$type                      = self::AT_TEXT_SUFFIX;
@@ -2689,7 +2690,7 @@ class WP_MySQL_Lexer {
 			// First, let's try to parse an ASCII sequence.
 			$this->bytes_already_read += strspn(
 				$this->sql,
-				'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_$',
+				self::IDENTIFIER_MASK,
 				$this->bytes_already_read
 			);
 

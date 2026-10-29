@@ -125,6 +125,7 @@ class WP_MySQL_Lexer {
 	private const WHITESPACE_MASK = " \t\n\r\f\v";
 	private const DIGIT_MASK      = '0123456789';
 	private const HEX_DIGIT_MASK  = '0123456789abcdefABCDEF';
+	private const IDENTIFIER_MASK = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_$';
 
 	/**
 	 * Internal scanner sentinels.
@@ -672,7 +673,7 @@ class WP_MySQL_Lexer {
 
 		$name_length = strspn(
 			$this->sql,
-			'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.$',
+			self::IDENTIFIER_MASK . '.',
 			$position
 		);
 		if ( $name_length > 0 ) {
@@ -991,7 +992,7 @@ class WP_MySQL_Lexer {
 			// First, let's try to parse an ASCII sequence.
 			$this->bytes_already_read += strspn(
 				$this->sql,
-				'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_$',
+				self::IDENTIFIER_MASK,
 				$this->bytes_already_read
 			);
 
