@@ -14520,6 +14520,33 @@ END;
 		);
 	}
 
+	public function testCheckConstraintsWithQualifiedNames(): void {
+		// The stored check clauses are parsed again to create the SQLite table.
+		$this->assertQuery( 'CREATE TABLE `order` (id INT, `1` INT, CHECK (order.id > 0), CHECK (wp.order.1 < 10))' );
+
+		$result = $this->assertQuery( 'SHOW CREATE TABLE `order`' );
+		$this->assertEquals(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `order` (',
+					'  `id` int DEFAULT NULL,',
+					'  `1` int DEFAULT NULL,',
+					'  CONSTRAINT `order_chk_1` CHECK (order.id > 0),',
+					'  CONSTRAINT `order_chk_2` CHECK (wp.order.1 < 10)',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$result[0]->{'Create Table'}
+		);
+
+		$this->assertQuery( 'INSERT INTO `order` VALUES (1, 9)' );
+
+		$this->expectException( WP_MySQL_On_SQLite_Exception::class );
+		$this->expectExceptionMessage( 'SQLSTATE[23000]: Integrity constraint violation: 19 CHECK constraint failed: order_chk_2' );
+		$this->assertQuery( 'INSERT INTO `order` VALUES (1, 10)' );
+	}
+
 	public function testWriteWithUsageOfInformationSchemaTables(): void {
 		// Ensure "information_schema.tables" is empty.
 		$this->assertQuery( 'DROP TABLE _options, _dates' );

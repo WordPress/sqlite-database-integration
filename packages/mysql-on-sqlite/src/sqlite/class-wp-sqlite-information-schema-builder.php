@@ -3352,12 +3352,16 @@ class WP_SQLite_Information_Schema_Builder {
 			// Do not insert whitespace around parentheses. This is primarily to
 			// avoid inserting whitespace before '(', which may break function
 			// calls, depending on the value of the "IGNORE_SPACE" SQL mode.
+			// Around '.', whitespace changes how qualified names are lexed:
+			// "t . 1" has a number, and "order . id" has a keyword.
 			if (
 				0 === $i
 				|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $token->id
 				|| WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $token->id
+				|| WP_MySQL_Lexer::DOT_SYMBOL === $token->id
 				|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $last_token_id
 				|| WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $last_token_id
+				|| WP_MySQL_Lexer::DOT_SYMBOL === $last_token_id
 			) {
 				$value .= $token->get_bytes();
 			} else {
