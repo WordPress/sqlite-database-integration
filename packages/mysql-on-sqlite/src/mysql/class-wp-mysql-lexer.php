@@ -945,6 +945,22 @@ class WP_MySQL_Lexer {
 	const EOF        = -1;
 
 	/**
+	 * Lexer states that a token sets for the next one (see "next_state").
+	 *
+	 * They match MySQL's lexer states in sql/sql_lex.cc, with full words
+	 * instead of MySQL's abbreviations:
+	 *
+	 *   - STATE_START:                 MY_LEX_START
+	 *   - STATE_IDENTIFIER_SEPARATOR:  MY_LEX_IDENT_SEP
+	 *   - STATE_IDENTIFIER_START:      MY_LEX_IDENT_START
+	 *   - STATE_IDENTIFIER_OR_KEYWORD: MY_LEX_IDENT_OR_KEYWORD
+	 */
+	private const STATE_START                 = -2;
+	private const STATE_IDENTIFIER_SEPARATOR  = -3;
+	private const STATE_IDENTIFIER_START      = -4;
+	private const STATE_IDENTIFIER_OR_KEYWORD = -5;
+
+	/**
 	 * A map of SQL keyword string values to their corresponding token types.
 	 *
 	 * This is used for a fast lookup of MySQL keywords during tokenization.
@@ -2177,6 +2193,26 @@ class WP_MySQL_Lexer {
 	private $token_type;
 
 	/**
+	 * The lexer state that the previous token set for the next one.
+	 *
+	 * Like MySQL's "next_state", each token reads and resets it:
+	 *
+	 *   - STATE_IDENTIFIER_SEPARATOR: Set by a name before "." and a name
+	 *     character. The "." is then a separator, even before digits ("t.1"),
+	 *     and the name is an identifier, even if it's a keyword ("order.id").
+	 *   - STATE_IDENTIFIER_START: Set by a "." before a name character. The
+	 *     name is then always an identifier ("t.order", "t.1", "t.x'41'").
+	 *   - STATE_IDENTIFIER_OR_KEYWORD: Set by "@@" before a name character.
+	 *     The name then stays a keyword, even before a "." ("@@session.x").
+	 *
+	 * A "." that ends a number sets no state, so "1.FROM" is a number and
+	 * a keyword.
+	 *
+	 * @var int
+	 */
+	private $next_state = self::STATE_START;
+
+	/**
 	 * Whether the tokenizer is inside an active MySQL-specific comment.
 	 *
 	 * MySQL supports a special comment syntax whose content is recognized as
@@ -2420,6 +2456,10 @@ class WP_MySQL_Lexer {
 	}
 
 	private function read_next_token(): ?int {
+		// Read and reset the state that the previous token set.
+		$state            = $this->next_state;
+		$this->next_state = self::STATE_START;
+
 		$byte      = $this->sql[ $this->bytes_already_read ] ?? null;
 		$next_byte = $this->sql[ $this->bytes_already_read + 1 ] ?? null;
 
@@ -2455,18 +2495,26 @@ class WP_MySQL_Lexer {
 		) {
 			$started_at = $this->bytes_already_read;
 			$type       = $this->read_identifier();
-			if (
-				self::IDENTIFIER === $type
-				// When preceded by a dot, it is always an identifier.
-				&& ! ( $started_at > 0 && '.' === $this->sql[ $started_at - 1 ] )
-			) {
+
+			// After a "." separator, it is always an identifier. Invalid input
+			// needs no check: the type is then null, and no keyword is empty.
+			if ( self::STATE_IDENTIFIER_START !== $state ) {
 				// Inline the keyword lookup on the hot identifier path: most
 				// identifiers are not keywords, so this avoids two method calls
 				// (token-bytes extraction + keyword determination) per token.
 				$keyword = self::TOKENS[ strtoupper(
 					substr( $this->sql, $started_at, $this->bytes_already_read - $started_at )
 				) ] ?? self::IDENTIFIER;
-				if ( self::IDENTIFIER !== $keyword ) {
+				// Before "." and a name, a keyword is an identifier ("order.id"),
+				// except after "@@" ("session" in "@@session.x"). read_identifier()
+				// has just set STATE_IDENTIFIER_SEPARATOR if "." and a name follow.
+				if (
+					self::IDENTIFIER !== $keyword
+					&& (
+						self::STATE_IDENTIFIER_SEPARATOR !== $this->next_state
+						|| self::STATE_IDENTIFIER_OR_KEYWORD === $state
+					)
+				) {
 					$type = $this->resolve_keyword_type( $keyword );
 				}
 			}
@@ -2477,13 +2525,28 @@ class WP_MySQL_Lexer {
 		} elseif ( "'" === $byte || '"' === $byte || '`' === $byte ) {
 			$type = $this->read_quoted_text();
 		} elseif ( null !== $byte && strspn( $byte, self::DIGIT_MASK ) > 0 ) {
-			$type = $this->read_number();
+			// After a "." separator, it is a qualified name part ("1" in "t.1").
+			if ( self::STATE_IDENTIFIER_START === $state ) {
+				$type = $this->read_identifier();
+			} else {
+				$type = $this->read_number();
+			}
 		} elseif ( '.' === $byte ) {
-			if ( null !== $next_byte && strspn( $next_byte, self::DIGIT_MASK ) > 0 ) {
+			if (
+				null !== $next_byte
+				&& strspn( $next_byte, self::DIGIT_MASK ) > 0
+				// Right after a name, it is a qualified name separator.
+				&& self::STATE_IDENTIFIER_SEPARATOR !== $state
+			) {
 				$type = $this->read_number();
 			} else {
 				$this->bytes_already_read += 1;
 				$type                      = self::DOT_SYMBOL;
+
+				// A name character right after it starts a qualified name part.
+				if ( null !== $next_byte && ( strspn( $next_byte, self::IDENTIFIER_MASK ) > 0 || $next_byte > "\x7F" ) ) {
+					$this->next_state = self::STATE_IDENTIFIER_START;
+				}
 			}
 		} elseif ( ':' === $byte ) {
 			$this->bytes_already_read += 1; // Consume the ':'.
@@ -2604,6 +2667,14 @@ class WP_MySQL_Lexer {
 			if ( '@' === $next_byte ) {
 				$this->bytes_already_read += 1; // Consume the second '@'.
 				$type                      = self::AT_AT_SIGN_SYMBOL;
+
+				// The name after it may be a keyword ("session" in "@@session.x").
+				if (
+					strspn( $this->sql, self::IDENTIFIER_MASK, $this->bytes_already_read, 1 ) > 0
+					|| ( $this->sql[ $this->bytes_already_read ] ?? '' ) > "\x7F"
+				) {
+					$this->next_state = self::STATE_IDENTIFIER_OR_KEYWORD;
+				}
 			} else {
 				/**
 				 * Check whether the '@' marks an unquoted user-defined variable:
@@ -2634,24 +2705,29 @@ class WP_MySQL_Lexer {
 		} elseif ( null !== $byte && strspn( $byte, self::WHITESPACE_MASK ) > 0 ) {
 			$this->bytes_already_read += strspn( $this->sql, self::WHITESPACE_MASK, $this->bytes_already_read );
 			$type                      = self::WHITESPACE;
-		} elseif ( ( 'x' === $byte || 'X' === $byte || 'b' === $byte || 'B' === $byte ) && "'" === $next_byte ) {
-			$type = $this->read_number();
-		} elseif ( ( 'n' === $byte || 'N' === $byte ) && "'" === $next_byte ) {
-			$this->bytes_already_read += 1; // n/N
-			$type                      = $this->read_quoted_text( "'" );
-			if ( self::SINGLE_QUOTED_TEXT === $type ) {
-				$type = self::NCHAR_TEXT;
+		} elseif (
+			"'" === $next_byte
+			// Not after a "." separator, where the letter is a name ("x" in "t.x'41'").
+			&& self::STATE_IDENTIFIER_START !== $state
+			&& strspn( $byte, 'xXbBnN' ) > 0
+		) {
+			if ( 'n' === $byte || 'N' === $byte ) {
+				$this->bytes_already_read += 1; // n/N
+				$type                      = $this->read_quoted_text( "'" );
+				if ( self::SINGLE_QUOTED_TEXT === $type ) {
+					$type = self::NCHAR_TEXT;
+				}
+			} else {
+				$type = $this->read_number();
 			}
 		} elseif ( null === $byte ) {
 			$type = self::EOF;
 		} else {
-			$started_at = $this->bytes_already_read;
-			$type       = $this->read_identifier();
-			if ( self::IDENTIFIER === $type ) {
-				// When preceded by a dot, it is always an identifier.
-				if ( $started_at > 0 && '.' === $this->sql[ $started_at - 1 ] ) {
-					$type = self::IDENTIFIER;
-				} elseif ( '_' === $byte && isset( self::UNDERSCORE_CHARSETS[ strtolower( $this->get_current_token_bytes() ) ] ) ) {
+			$type = $this->read_identifier();
+
+			// After a "." separator, it is always an identifier.
+			if ( self::IDENTIFIER === $type && self::STATE_IDENTIFIER_START !== $state ) {
+				if ( '_' === $byte && isset( self::UNDERSCORE_CHARSETS[ strtolower( $this->get_current_token_bytes() ) ] ) ) {
 					$type = self::UNDERSCORE_CHARSET;
 				} else {
 					$type = $this->determine_identifier_or_keyword_type( $this->get_current_token_bytes() );
@@ -2673,13 +2749,13 @@ class WP_MySQL_Lexer {
 	 * Read an unquoted identifier.
 	 *
 	 * This function reads characters that are allowed in an unquoted identifier.
-	 * An identifier cannot consist solely of digits, but this function doesn't
-	 * ensure that explicitly, as numbers are processed before identifiers in
-	 * the tokenization process, recognizing all digit-only sequences as numbers.
+	 * It accepts digit-only sequences too; callers scan those as numbers, except
+	 * for qualified name parts.
 	 *
 	 * Rules:
 	 *   1. Allowed characters are ASCII a-z, A-Z, 0-9, _, $, and Unicode U+0080-U+FFFF.
 	 *   2. Unquoted identifiers may begin with a digit but may not consist solely of digits.
+	 *      An exception is a part of a qualified name, such as "1" in "t.1".
 	 *
 	 *  See:
 	 *    https://dev.mysql.com/doc/refman/8.4/en/identifiers.html
@@ -2738,17 +2814,25 @@ class WP_MySQL_Lexer {
 			break;
 		}
 
-		// An identifier cannot consist solely of digits, but we don't need to
-		// ensure that explicitly, as numbers are processed before identifiers.
+		if ( $this->bytes_already_read === $started_at ) {
+			return null; // Invalid input.
+		}
 
-		return $this->bytes_already_read - $started_at > 0
-			? self::IDENTIFIER
-			: null; // Invalid input.
+		// When "." and a name character follow, the "." is a separator.
+		// "$byte_1" already holds the byte after the name.
+		if (
+			0x2E === $byte_1
+			&& (
+				strspn( $this->sql, self::IDENTIFIER_MASK, $this->bytes_already_read + 1, 1 ) > 0
+				|| ( $this->sql[ $this->bytes_already_read + 1 ] ?? '' ) > "\x7F"
+			)
+		) {
+			$this->next_state = self::STATE_IDENTIFIER_SEPARATOR;
+		}
+		return self::IDENTIFIER;
 	}
 
 	private function read_number(): ?int {
-		// @TODO: Support numeric-only identifier parts after "." (e.g., 1ea10.1).
-
 		$byte       = $this->sql[ $this->bytes_already_read ] ?? null;
 		$next_byte  = $this->sql[ $this->bytes_already_read + 1 ] ?? null;
 		$third_byte = $this->sql[ $this->bytes_already_read + 2 ] ?? null;

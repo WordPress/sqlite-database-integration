@@ -422,6 +422,72 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 		);
 	}
 
+	/**
+	 * Qualified names are lexed as in MySQL. A "." right after a name is
+	 * a separator, even before digits, and a keyword before it is an
+	 * identifier, except after "@@". A name right after a "." separator is
+	 * always an identifier. Elsewhere, ".N" is a number. All cases are
+	 * verified against MySQL 8.4.
+	 *
+	 * @dataProvider data_qualified_name_tokens
+	 */
+	public function test_qualified_name_tokens( string $sql, array $expected ): void {
+		$names = array();
+		foreach ( ( new WP_MySQL_Lexer( $sql ) )->remaining_tokens() as $token ) {
+			$names[] = $token->get_name();
+		}
+		$this->assertSame( array_merge( $expected, array( 'EOF' ) ), $names );
+	}
+
+	/**
+	 * @return array<string,array{0:string,1:string[]}>
+	 */
+	public function data_qualified_name_tokens(): array {
+		$qualified = array( 'IDENTIFIER', 'DOT_SYMBOL', 'IDENTIFIER' );
+		return array(
+			// Digits after a dot are a qualified name part.
+			'digits only'                 => array( 't.1', $qualified ),
+			'digit-led identifier'        => array( 't.1st', $qualified ),
+			'float-like identifier'       => array( 't.1e5', $qualified ),
+			'part ends before a sign'     => array( 't.1e+5', array_merge( $qualified, array( 'PLUS_OPERATOR', 'INT_NUMBER' ) ) ),
+			'after a digit-led qualifier' => array( '1ea10.1', $qualified ),
+			'three parts'                 => array( 'd.1.2', array_merge( $qualified, array( 'DOT_SYMBOL', 'IDENTIFIER' ) ) ),
+
+			// Elsewhere, ".N" is a number.
+			'after a quoted identifier'   => array( '`t`.1', array( 'BACK_TICK_QUOTED_ID', 'DECIMAL_NUMBER' ) ),
+			'after whitespace'            => array( 't .1', array( 'IDENTIFIER', 'DECIMAL_NUMBER' ) ),
+			'after a separator dot'       => array( 't..1', array( 'IDENTIFIER', 'DOT_SYMBOL', 'DECIMAL_NUMBER' ) ),
+			'after a decimal'             => array( '1.5.6', array( 'DECIMAL_NUMBER', 'DECIMAL_NUMBER' ) ),
+			'after a float'               => array( '1e5.1', array( 'FLOAT_NUMBER', 'DECIMAL_NUMBER' ) ),
+			'after a hex number'          => array( '0x1F.1', array( 'HEX_NUMBER', 'DECIMAL_NUMBER' ) ),
+			'after a binary number'       => array( '0b1.1', array( 'BIN_NUMBER', 'DECIMAL_NUMBER' ) ),
+			'after "\N"'                  => array( '\N.1', array( 'NULL2_SYMBOL', 'DECIMAL_NUMBER' ) ),
+			'after a version comment'     => array( '/*!50000.5*/', array( 'DECIMAL_NUMBER' ) ),
+
+			// A user variable name includes the dot.
+			'in a user variable'          => array( '@a.1', array( 'AT_TEXT_SUFFIX' ) ),
+
+			// A keyword before a dot and a name is an identifier.
+			'keyword before a name'       => array( 'order.id', $qualified ),
+			'keyword before digits'       => array( 'select.1', $qualified ),
+			'keyword before non-ASCII'    => array( 'order.ñ', $qualified ),
+			'keyword before "$"'          => array( 'order.$x', $qualified ),
+			'keyword in three parts'      => array( 'order.t.id', array_merge( $qualified, array( 'DOT_SYMBOL', 'IDENTIFIER' ) ) ),
+
+			// A name after a separator dot is an identifier.
+			'keyword after a dot'         => array( '`t`.order', array( 'BACK_TICK_QUOTED_ID', 'DOT_SYMBOL', 'IDENTIFIER' ) ),
+			'literal prefix after a dot'  => array( "t.x'41'", array_merge( $qualified, array( 'SINGLE_QUOTED_TEXT' ) ) ),
+
+			// Otherwise, it stays a keyword or a charset.
+			'keyword after a decimal'     => array( '1.FROM', array( 'DECIMAL_NUMBER', 'FROM_SYMBOL' ) ),
+			'keyword before a backtick'   => array( 'order.`id`', array( 'ORDER_SYMBOL', 'DOT_SYMBOL', 'BACK_TICK_QUOTED_ID' ) ),
+			'keyword before an asterisk'  => array( 'order.*', array( 'ORDER_SYMBOL', 'DOT_SYMBOL', 'MULT_OPERATOR' ) ),
+			'keyword before whitespace'   => array( 'order .id', array( 'ORDER_SYMBOL', 'DOT_SYMBOL', 'IDENTIFIER' ) ),
+			'system variable scope'       => array( '@@session.sql_mode', array( 'AT_AT_SIGN_SYMBOL', 'SESSION_SYMBOL', 'DOT_SYMBOL', 'IDENTIFIER' ) ),
+			'charset introducer'          => array( '_utf8mb4.x', array( 'UNDERSCORE_CHARSET', 'DOT_SYMBOL', 'IDENTIFIER' ) ),
+		);
+	}
+
 	public function test_ignore_space_preserves_function_name_ranges(): void {
 		// Without "(", COUNT is an identifier whose range excludes trailing whitespace.
 		$sql    = 'SELECT COUNT FROM t';

@@ -14475,6 +14475,51 @@ END;
 		$this->assertCount( 0, $result );
 	}
 
+	public function testQualifiedNamePartsStartingWithDigits(): void {
+		$this->assertQuery( 'CREATE TABLE 1t (`1` INT, `1st` INT, `1e5` INT)' );
+		$this->assertQuery( 'INSERT INTO 1t VALUES (1, 2, 3), (4, 5, 6)' );
+
+		$result = $this->assertQuery( 'SELECT 1t.1, 1t.1st, 1t.1e5 FROM 1t WHERE 1t.1 = 4' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'1'   => '4',
+					'1st' => '5',
+					'1e5' => '6',
+				),
+			),
+			$result
+		);
+
+		$result = $this->assertQuery( 'SELECT wp.1t.1st FROM wp.1t ORDER BY wp.1t.1 DESC' );
+		$this->assertEquals(
+			array( (object) array( '1st' => '5' ), (object) array( '1st' => '2' ) ),
+			$result
+		);
+	}
+
+	public function testReservedWordsAsQualifiers(): void {
+		$this->assertQuery( 'CREATE TABLE `order` (id INT, `1` INT)' );
+		$this->assertQuery( 'INSERT INTO `order` VALUES (7, 8), (9, 10)' );
+
+		$result = $this->assertQuery( 'SELECT order.id, order.1 FROM `order` WHERE order.id = 7' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id' => '7',
+					'1'  => '8',
+				),
+			),
+			$result
+		);
+
+		$result = $this->assertQuery( 'SELECT wp.order.1 FROM wp.`order` ORDER BY order.id DESC' );
+		$this->assertEquals(
+			array( (object) array( '1' => '10' ), (object) array( '1' => '8' ) ),
+			$result
+		);
+	}
+
 	public function testWriteWithUsageOfInformationSchemaTables(): void {
 		// Ensure "information_schema.tables" is empty.
 		$this->assertQuery( 'DROP TABLE _options, _dates' );
