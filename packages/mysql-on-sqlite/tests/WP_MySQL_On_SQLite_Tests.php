@@ -14547,6 +14547,29 @@ END;
 		$this->assertQuery( 'INSERT INTO `order` VALUES (1, 10)' );
 	}
 
+	public function testCheckConstraintsAndDefaultsWithSystemVariables(): void {
+		// MySQL rejects variables in CHECK and DEFAULT expressions, but the driver
+		// accepts them. ALTER TABLE parses the stored expressions again.
+		$this->assertQuery( 'CREATE TABLE t (a INT DEFAULT (@@auto_increment_increment), b INT, CHECK (b < @@max_connections))' );
+		$this->assertQuery( 'ALTER TABLE t ADD COLUMN c INT' );
+
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertEquals(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `t` (',
+					'  `a` int DEFAULT (@@auto_increment_increment),',
+					'  `b` int DEFAULT NULL,',
+					'  `c` int DEFAULT NULL,',
+					'  CONSTRAINT `t_chk_1` CHECK (b < @@max_connections)',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$result[0]->{'Create Table'}
+		);
+	}
+
 	public function testWriteWithUsageOfInformationSchemaTables(): void {
 		// Ensure "information_schema.tables" is empty.
 		$this->assertQuery( 'DROP TABLE _options, _dates' );

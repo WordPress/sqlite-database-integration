@@ -3324,8 +3324,9 @@ class WP_SQLite_Information_Schema_Builder {
 	 * This is used for storing DEFAULT and CHECK expressions in the database.
 	 *
 	 * The current implementation is using a naive approach based on directly
-	 * joining the original expression token bytes. This is safe, beacuase the
-	 * original tokens must comprise a valid expression. While functionally
+	 * joining the original expression token bytes. This is safe, because the
+	 * original tokens must comprise a valid expression, and they are joined so
+	 * that they are lexed the same way when parsed again. While functionally
 	 * equivalent, it is not strictly identical to what MySQL stores, because
 	 * MySQL normalizes and prints the expression in a specific format.
 	 *
@@ -3349,10 +3350,11 @@ class WP_SQLite_Information_Schema_Builder {
 		$value         = '';
 		$last_no_space = true;
 		foreach ( $node->get_descendant_tokens() as $token ) {
-			// Do not insert whitespace around parentheses and dots. Before '(',
-			// whitespace may break function calls, depending on the value of the
-			// "IGNORE_SPACE" SQL mode. Around '.', it changes how qualified names
-			// are lexed: "t . 1" has a number, and "order . id" has a keyword.
+			// Do not insert whitespace around parentheses and dots, and after "@@".
+			// Before '(', whitespace may break function calls, depending on the
+			// value of the "IGNORE_SPACE" SQL mode. Around '.', it changes how
+			// qualified names are lexed: "t . 1" has a number, and "order . id"
+			// has a keyword. After "@@", it leaves the variable name empty.
 			$no_space = WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $token->id
 				|| WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $token->id
 				|| WP_MySQL_Lexer::DOT_SYMBOL === $token->id;
@@ -3361,7 +3363,7 @@ class WP_SQLite_Information_Schema_Builder {
 				$value .= ' ';
 			}
 			$value        .= $token->get_bytes();
-			$last_no_space = $no_space;
+			$last_no_space = $no_space || WP_MySQL_Lexer::AT_AT_SIGN_SYMBOL === $token->id;
 		}
 		return $value;
 	}

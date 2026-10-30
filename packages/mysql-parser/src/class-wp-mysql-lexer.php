@@ -688,8 +688,9 @@ class WP_MySQL_Lexer {
 	 * unquoted user-variable name (always an identifier, never a keyword; it may
 	 * contain "." and "$"), by an empty name (MySQL's empty LEX_HOSTNAME, which
 	 * makes "SELECT @" and "user1@" valid), or by a quoted name supplied by the
-	 * following token. A "@@" prefix is two "@" terminals, with the system
-	 * variable name scanned afterwards in the STATE_IDENTIFIER_OR_KEYWORD state.
+	 * following token. A "@@" prefix is two "@" terminals, followed by the system
+	 * variable name. As in MySQL, that name can't be empty, and only backticks
+	 * can quote it.
 	 *
 	 * @param int $at_start Byte offset of the "@" token.
 	 */
@@ -709,6 +710,8 @@ class WP_MySQL_Lexer {
 				|| ( $this->sql[ $this->bytes_already_read ] ?? '' ) > "\x7F"
 			) {
 				$this->next_state = self::STATE_IDENTIFIER_OR_KEYWORD;
+			} elseif ( '`' !== ( $this->sql[ $this->bytes_already_read ] ?? '' ) ) {
+				$this->stream_ended = true; // Invalid input.
 			}
 			return;
 		}

@@ -106,6 +106,7 @@ class WP_MySQL_Parser_Tests extends TestCase {
 			'DROP TABLE IF EXISTS t',
 			'SET @v = 1',
 			'SET @@SESSION.sql_mode = \'\'',
+			'SELECT @@`version`',
 			'SHOW TABLES',
 			'EXPLAIN SELECT 1',
 		);
@@ -124,6 +125,8 @@ class WP_MySQL_Parser_Tests extends TestCase {
 			'SELECT.1',                            // "SELECT" before ".1" is a name.
 			'SELECT order.* FROM t AS `order`',    // A reserved word before ".*".
 			'SELECT 0.select',                     // "SELECT" after "0." is a keyword.
+			'SELECT @@ version',                   // An empty name after "@@".
+			"SELECT @@'version'",                  // A single-quoted name after "@@".
 		);
 		foreach ( $statements as $sql ) {
 			$this->assertNull( self::parse( $sql ), "Should not parse: $sql" );

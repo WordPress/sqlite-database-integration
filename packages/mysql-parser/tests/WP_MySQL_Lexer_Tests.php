@@ -267,6 +267,21 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 		$this->assertSame( array( 'SELECT', 'INT_NUMBER', 'WITH' ), $names );
 	}
 
+	public function test_system_variable_name_must_not_be_empty(): void {
+		// As in MySQL, the name after "@@" can't be empty, and only backticks
+		// can quote it. Otherwise, the stream ends after the "@@".
+		$at_at = array( 'AT_SIGN_SYMBOL', 'AT_SIGN_SYMBOL' );
+		$this->assertSame( $at_at, self::token_names( '@@' ) );
+		$this->assertSame( $at_at, self::token_names( '@@ version' ) );
+		$this->assertSame( $at_at, self::token_names( "@@'version'" ) );
+		$this->assertSame( $at_at, self::token_names( '@@"version"' ) );
+		$this->assertSame( $at_at, self::token_names( '@@"version"', array( 'ANSI_QUOTES' ) ) );
+		$this->assertSame(
+			array_merge( $at_at, array( 'BACK_TICK_QUOTED_ID', 'END_OF_INPUT', 'END_MARKER' ) ),
+			self::token_names( '@@`version`' )
+		);
+	}
+
 	public function test_high_not_precedence_emits_not2(): void {
 		$names = self::token_names( 'SELECT NOT 1', array( 'HIGH_NOT_PRECEDENCE' ) );
 		$this->assertContains( 'NOT2_SYMBOL', $names );

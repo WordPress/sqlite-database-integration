@@ -55,6 +55,29 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 		$this->assertNull( $lexer->get_token() );
 	}
 
+	public function test_system_variable_name_must_not_be_empty(): void {
+		// As in MySQL, the name after "@@" can't be empty, and only backticks
+		// can quote it. Otherwise, the tokens end before the "@@", with no EOF.
+		$invalid = array(
+			array( 'SELECT @@', array() ),
+			array( 'SELECT @@ version', array() ),
+			array( "SELECT @@'version'", array() ),
+			array( 'SELECT @@"version"', array() ),
+			array( 'SELECT @@"version"', array( 'ANSI_QUOTES' ) ),
+		);
+		foreach ( $invalid as list( $sql, $sql_modes ) ) {
+			$tokens = ( new WP_MySQL_Lexer( $sql, 80038, $sql_modes ) )->remaining_tokens();
+			$this->assertCount( 1, $tokens, $sql );
+			$this->assertSame( WP_MySQL_Lexer::SELECT_SYMBOL, $tokens[0]->id, $sql );
+		}
+
+		$names = array();
+		foreach ( ( new WP_MySQL_Lexer( 'SELECT @@`version`' ) )->remaining_tokens() as $token ) {
+			$names[] = $token->get_name();
+		}
+		$this->assertSame( array( 'SELECT_SYMBOL', 'AT_AT_SIGN_SYMBOL', 'BACK_TICK_QUOTED_ID', 'EOF' ), $names );
+	}
+
 	/**
 	 * Test that the whole U+0080 to U+FFFF UTF-8 range is valid in an identifier.
 	 * The validity is checked against PCRE with the "u" (PCRE_UTF8) modifier set.
