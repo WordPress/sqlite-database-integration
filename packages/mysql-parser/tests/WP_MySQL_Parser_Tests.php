@@ -90,6 +90,11 @@ class WP_MySQL_Parser_Tests extends TestCase {
 		$statements = array(
 			'SELECT 1',
 			'SELECT * FROM t1 JOIN t2 ON t1.id = t2.id',
+			'SELECT t.1, t.1st, t.1e5 FROM t',
+			'SELECT d.1.2 FROM d.1',
+			'SELECT order.id, key.1, order.t.id FROM t AS `order`',
+			"SELECT t.x'41' FROM t",
+			'SELECT 1.FROM dual',
 			'SELECT COUNT(*), MAX(a) FROM t GROUP BY b HAVING COUNT(*) > 1 ORDER BY 1 LIMIT 10',
 			'SELECT a FROM t GROUP BY a WITH ROLLUP',
 			'WITH c AS (SELECT 1 AS x) SELECT x FROM c',
@@ -115,6 +120,10 @@ class WP_MySQL_Parser_Tests extends TestCase {
 			'SHOW SLAVE STATUS',     // Removed in MySQL 8.4.
 			'SELECT 1; SELECT 2',    // Multi-statement input.
 			'CREATE TABLE current_date (a INT)',   // Reserved word as a table name.
+			'SELECT `t`.1 FROM t',                 // A quoted name followed by ".1".
+			'SELECT.1',                            // "SELECT" before ".1" is a name.
+			'SELECT order.* FROM t AS `order`',    // A reserved word before ".*".
+			'SELECT 0.select',                     // "SELECT" after "0." is a keyword.
 		);
 		foreach ( $statements as $sql ) {
 			$this->assertNull( self::parse( $sql ), "Should not parse: $sql" );
