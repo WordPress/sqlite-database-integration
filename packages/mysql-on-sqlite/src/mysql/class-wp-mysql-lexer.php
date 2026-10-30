@@ -2203,7 +2203,8 @@ class WP_MySQL_Lexer {
 	 *   - STATE_IDENTIFIER_START: Set by a "." before a name character. The
 	 *     name is then always an identifier ("t.order", "t.1", "t.x'41'").
 	 *   - STATE_IDENTIFIER_OR_KEYWORD: Set by "@@" before a name character.
-	 *     The name then stays a keyword, even before a "." ("@@session.x").
+	 *     The name is then an identifier or a keyword, even before a "."
+	 *     ("@@session.x").
 	 *
 	 * A "." that ends a number sets no state, so "1.FROM" is a number and
 	 * a keyword.
@@ -2460,6 +2461,22 @@ class WP_MySQL_Lexer {
 		$state            = $this->next_state;
 		$this->next_state = self::STATE_START;
 
+		// After "." or "@@", read a name, never a number or a literal, as in
+		// MySQL's MY_LEX_IDENT_START and MY_LEX_IDENT_OR_KEYWORD states. After
+		// ".", it is always an identifier ("t.order", "t.1", "t.x'41'"). After
+		// "@@", it may be a keyword, even before a "." ("@@session.x").
+		if ( self::STATE_START !== $state ) {
+			if ( self::STATE_IDENTIFIER_START === $state ) {
+				return $this->read_identifier();
+			}
+			if ( self::STATE_IDENTIFIER_OR_KEYWORD === $state ) {
+				$type = $this->read_identifier();
+				return self::IDENTIFIER === $type
+					? $this->determine_identifier_or_keyword_type( $this->get_current_token_bytes() )
+					: $type;
+			}
+		}
+
 		$byte      = $this->sql[ $this->bytes_already_read ] ?? null;
 		$next_byte = $this->sql[ $this->bytes_already_read + 1 ] ?? null;
 
@@ -2495,25 +2512,18 @@ class WP_MySQL_Lexer {
 		) {
 			$started_at = $this->bytes_already_read;
 			$type       = $this->read_identifier();
-
-			// After a "." separator, it is always an identifier. Invalid input
-			// needs no check: the type is then null, and no keyword is empty.
-			if ( self::STATE_IDENTIFIER_START !== $state ) {
+			if ( self::IDENTIFIER === $type ) {
 				// Inline the keyword lookup on the hot identifier path: most
 				// identifiers are not keywords, so this avoids two method calls
 				// (token-bytes extraction + keyword determination) per token.
 				$keyword = self::TOKENS[ strtoupper(
 					substr( $this->sql, $started_at, $this->bytes_already_read - $started_at )
 				) ] ?? self::IDENTIFIER;
-				// Before "." and a name, a keyword is an identifier ("order.id"),
-				// except after "@@" ("session" in "@@session.x"). read_identifier()
-				// has just set STATE_IDENTIFIER_SEPARATOR if "." and a name follow.
+				// Before "." and a name, a keyword is an identifier ("order.id").
+				// read_identifier() has just set STATE_IDENTIFIER_SEPARATOR then.
 				if (
 					self::IDENTIFIER !== $keyword
-					&& (
-						self::STATE_IDENTIFIER_SEPARATOR !== $this->next_state
-						|| self::STATE_IDENTIFIER_OR_KEYWORD === $state
-					)
+					&& self::STATE_IDENTIFIER_SEPARATOR !== $this->next_state
 				) {
 					$type = $this->resolve_keyword_type( $keyword );
 				}
@@ -2525,12 +2535,7 @@ class WP_MySQL_Lexer {
 		} elseif ( "'" === $byte || '"' === $byte || '`' === $byte ) {
 			$type = $this->read_quoted_text();
 		} elseif ( null !== $byte && strspn( $byte, self::DIGIT_MASK ) > 0 ) {
-			// After a "." separator, it is a qualified name part ("1" in "t.1").
-			if ( self::STATE_IDENTIFIER_START === $state ) {
-				$type = $this->read_identifier();
-			} else {
-				$type = $this->read_number();
-			}
+			$type = $this->read_number();
 		} elseif ( '.' === $byte ) {
 			if (
 				null !== $next_byte
@@ -2708,28 +2713,19 @@ class WP_MySQL_Lexer {
 		} elseif ( null !== $byte && strspn( $byte, self::WHITESPACE_MASK ) > 0 ) {
 			$this->bytes_already_read += strspn( $this->sql, self::WHITESPACE_MASK, $this->bytes_already_read );
 			$type                      = self::WHITESPACE;
-		} elseif (
-			"'" === $next_byte
-			// Not after a "." separator, where the letter is a name ("x" in "t.x'41'").
-			&& self::STATE_IDENTIFIER_START !== $state
-			&& strspn( $byte, 'xXbBnN' ) > 0
-		) {
-			if ( 'n' === $byte || 'N' === $byte ) {
-				$this->bytes_already_read += 1; // n/N
-				$type                      = $this->read_quoted_text( "'" );
-				if ( self::SINGLE_QUOTED_TEXT === $type ) {
-					$type = self::NCHAR_TEXT;
-				}
-			} else {
-				$type = $this->read_number();
+		} elseif ( ( 'x' === $byte || 'X' === $byte || 'b' === $byte || 'B' === $byte ) && "'" === $next_byte ) {
+			$type = $this->read_number();
+		} elseif ( ( 'n' === $byte || 'N' === $byte ) && "'" === $next_byte ) {
+			$this->bytes_already_read += 1; // n/N
+			$type                      = $this->read_quoted_text( "'" );
+			if ( self::SINGLE_QUOTED_TEXT === $type ) {
+				$type = self::NCHAR_TEXT;
 			}
 		} elseif ( null === $byte ) {
 			$type = self::EOF;
 		} else {
 			$type = $this->read_identifier();
-
-			// After a "." separator, it is always an identifier.
-			if ( self::IDENTIFIER === $type && self::STATE_IDENTIFIER_START !== $state ) {
+			if ( self::IDENTIFIER === $type ) {
 				if ( '_' === $byte && isset( self::UNDERSCORE_CHARSETS[ strtolower( $this->get_current_token_bytes() ) ] ) ) {
 					$type = self::UNDERSCORE_CHARSET;
 				} else {

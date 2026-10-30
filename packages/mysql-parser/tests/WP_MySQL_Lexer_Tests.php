@@ -502,6 +502,12 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 			'keyword before whitespace'   => array( 'order .id', array( 'ORDER', 'DOT_SYMBOL', 'IDENTIFIER' ) ),
 			'system variable scope'       => array( '@@session.sql_mode', array( 'AT_SIGN_SYMBOL', 'AT_SIGN_SYMBOL', 'SESSION', 'DOT_SYMBOL', 'IDENTIFIER' ) ),
 			'charset introducer'          => array( '_utf8mb4.x', array( 'UNDERSCORE_CHARSET', 'DOT_SYMBOL', 'IDENTIFIER' ) ),
+
+			// After "@@", it is a name, never a number, a literal, or a charset.
+			'system variable digits'      => array( '@@123', array( 'AT_SIGN_SYMBOL', 'AT_SIGN_SYMBOL', 'IDENTIFIER' ) ),
+			'system variable float-like'  => array( '@@1e5', array( 'AT_SIGN_SYMBOL', 'AT_SIGN_SYMBOL', 'IDENTIFIER' ) ),
+			'system variable before text' => array( "@@b'01'", array( 'AT_SIGN_SYMBOL', 'AT_SIGN_SYMBOL', 'IDENTIFIER', 'SINGLE_QUOTED_TEXT' ) ),
+			'system variable charset'     => array( '@@_utf8mb4', array( 'AT_SIGN_SYMBOL', 'AT_SIGN_SYMBOL', 'IDENTIFIER' ) ),
 		);
 	}
 
