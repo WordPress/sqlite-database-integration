@@ -2669,11 +2669,14 @@ class WP_MySQL_Lexer {
 				$type                      = self::AT_AT_SIGN_SYMBOL;
 
 				// The name after it may be a keyword ("session" in "@@session.x").
+				// As in MySQL, it can't be empty, and only backticks can quote it.
 				if (
 					strspn( $this->sql, self::IDENTIFIER_MASK, $this->bytes_already_read, 1 ) > 0
 					|| ( $this->sql[ $this->bytes_already_read ] ?? '' ) > "\x7F"
 				) {
 					$this->next_state = self::STATE_IDENTIFIER_OR_KEYWORD;
+				} elseif ( '`' !== ( $this->sql[ $this->bytes_already_read ] ?? '' ) ) {
+					return null; // Invalid input.
 				}
 			} else {
 				/**
