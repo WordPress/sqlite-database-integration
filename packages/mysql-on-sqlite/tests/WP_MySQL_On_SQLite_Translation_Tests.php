@@ -1778,6 +1778,142 @@ class WP_MySQL_On_SQLite_Translation_Tests extends TestCase {
 		);
 	}
 
+	public function testTruncateFunction(): void {
+		// TRUNCATE() delegates to a UDF: SQLite's TRUNC() takes one argument
+		// and POW() is missing from older supported SQLite builds.
+		$this->assertQuery(
+			'SELECT truncate(123.456, 1) AS `TRUNCATE(123.456, 1)`',
+			'SELECT TRUNCATE(123.456, 1)'
+		);
+
+		$this->assertQuery(
+			'SELECT truncate(123.456, 0) AS `TRUNCATE(123.456)`',
+			'SELECT TRUNCATE(123.456)'
+		);
+	}
+
+	public function testRightFunctionTranslation(): void {
+		// RIGHT is a join keyword in newer SQLite versions, so it cannot be
+		// called as a function; it maps to a non-reserved UDF name.
+		$this->assertQuery(
+			"SELECT right_str('abc', 1) AS `RIGHT('abc', 1)`",
+			"SELECT RIGHT('abc', 1)"
+		);
+	}
+
+	public function testLcaseUcaseFunctions(): void {
+		// LCASE() and UCASE() map to SQLite LOWER() and UPPER(). They used
+		// to resolve to UDFs returning the literal strings "lower(...)"
+		// and "upper(...)" instead of computing a value.
+		$this->assertQuery(
+			"SELECT LOWER('AbC') AS `LCASE('AbC')`",
+			"SELECT LCASE('AbC')"
+		);
+
+		$this->assertQuery(
+			"SELECT UPPER('AbC') AS `UCASE('AbC')`",
+			"SELECT UCASE('AbC')"
+		);
+	}
+
+	public function testPositionFunction(): void {
+		$this->assertQuery(
+			"SELECT locate('b', 'abc') AS `POSITION('b' IN 'abc')`",
+			"SELECT POSITION('b' IN 'abc')"
+		);
+	}
+
+	public function testExtractFunction(): void {
+		$this->assertQuery(
+			"SELECT year('2024-05-06') AS `EXTRACT(YEAR FROM '2024-05-06')`",
+			"SELECT EXTRACT(YEAR FROM '2024-05-06')"
+		);
+
+		$this->assertQuery(
+			"SELECT CAST(((CAST(STRFTIME('%m', '2024-05-06') AS INTEGER) + 2) / 3) AS INTEGER) AS `EXTRACT(QUARTER FROM '2024-05-06')`",
+			"SELECT EXTRACT(QUARTER FROM '2024-05-06')"
+		);
+
+		$this->assertQuery(
+			"SELECT month('2024-05-06') AS `EXTRACT(MONTH FROM '2024-05-06')`",
+			"SELECT EXTRACT(MONTH FROM '2024-05-06')"
+		);
+
+		$this->assertQuery(
+			"SELECT week('2024-05-06', 0) AS `EXTRACT(WEEK FROM '2024-05-06')`",
+			"SELECT EXTRACT(WEEK FROM '2024-05-06')"
+		);
+
+		$this->assertQuery(
+			"SELECT day('2024-05-06') AS `EXTRACT(DAY FROM '2024-05-06')`",
+			"SELECT EXTRACT(DAY FROM '2024-05-06')"
+		);
+
+		$this->assertQuery(
+			"SELECT hour('2024-05-06 10:11:12') AS `EXTRACT(HOUR FROM '2024-05-06 10:11:12')`",
+			"SELECT EXTRACT(HOUR FROM '2024-05-06 10:11:12')"
+		);
+
+		$this->assertQuery(
+			"SELECT minute('2024-05-06 10:11:12') AS `EXTRACT(MINUTE FROM '2024-05-06 10:11:12')`",
+			"SELECT EXTRACT(MINUTE FROM '2024-05-06 10:11:12')"
+		);
+
+		$this->assertQuery(
+			"SELECT second('2024-05-06 10:11:12') AS `EXTRACT(SECOND FROM '2024-05-06 10:11:12')`",
+			"SELECT EXTRACT(SECOND FROM '2024-05-06 10:11:12')"
+		);
+
+		$this->assertQuery(
+			"SELECT CASE WHEN ('2024-05-06 10:00:00.5') IS NULL THEN NULL WHEN INSTR(('2024-05-06 10:00:00.5'), '.') > 0 THEN CAST(SUBSTR(('2024-05-06 10:00:00.5') || '000000', INSTR(('2024-05-06 10:00:00.5'), '.') + 1, 6) AS INTEGER) ELSE 0 END AS `EXTRACT(MICROSECOND FROM '2024-05-06 10:00:00.5')`",
+			"SELECT EXTRACT(MICROSECOND FROM '2024-05-06 10:00:00.5')"
+		);
+	}
+
+	public function testTrimExtendedForms(): void {
+		$this->assertQuery(
+			"SELECT TRIM(' a ')",
+			"SELECT TRIM(' a ')"
+		);
+
+		$this->assertQuery(
+			"SELECT TRIM(' a ', ' ') AS `TRIM(BOTH ' ' FROM ' a ')`",
+			"SELECT TRIM(BOTH ' ' FROM ' a ')"
+		);
+
+		$this->assertQuery(
+			"SELECT TRIM('xxabxx', 'x') AS `TRIM('x' FROM 'xxabxx')`",
+			"SELECT TRIM('x' FROM 'xxabxx')"
+		);
+
+		$this->assertQuery(
+			"SELECT LTRIM(' a ') AS `TRIM(LEADING FROM ' a ')`",
+			"SELECT TRIM(LEADING FROM ' a ')"
+		);
+
+		$this->assertQuery(
+			"SELECT LTRIM('xxabx', 'x') AS `TRIM(LEADING 'x' FROM 'xxabx')`",
+			"SELECT TRIM(LEADING 'x' FROM 'xxabx')"
+		);
+
+		$this->assertQuery(
+			"SELECT RTRIM(' a ') AS `TRIM(TRAILING FROM ' a ')`",
+			"SELECT TRIM(TRAILING FROM ' a ')"
+		);
+
+		$this->assertQuery(
+			"SELECT RTRIM('xabxx', 'x') AS `TRIM(TRAILING 'x' FROM 'xabxx')`",
+			"SELECT TRIM(TRAILING 'x' FROM 'xabxx')"
+		);
+	}
+
+	public function testStringInsertFunction(): void {
+		$this->assertQuery(
+			"SELECT insert_str('Quadratic', 3, 4, 'What') AS `INSERT('Quadratic', 3, 4, 'What')`",
+			"SELECT INSERT('Quadratic', 3, 4, 'What')"
+		);
+	}
+
 	public function testIntervalArithmeticInParentheses(): void {
 		// TODO: With LALR(1), also test these expressions without parentheses.
 		// Parentheses prevent the parser from treating this as a prefix interval.

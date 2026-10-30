@@ -16291,4 +16291,539 @@ END;
 		$result = $this->assertQuery( 'SELECT REVERSE(NULL) AS reversed' );
 		$this->assertNull( $result[0]->reversed );
 	}
+
+	public function testTruncateFunction(): void {
+		$result = $this->assertQuery( 'SELECT TRUNCATE(123.456, 1) AS t' );
+		$this->assertSame( '123.4', $result[0]->t );
+
+		$result = $this->assertQuery( 'SELECT TRUNCATE(123.456, 2) AS t' );
+		$this->assertSame( '123.45', $result[0]->t );
+
+		// Truncation is toward zero, like MySQL.
+		$result = $this->assertQuery( 'SELECT TRUNCATE(-1.29, 1) AS t' );
+		$this->assertSame( '-1.2', $result[0]->t );
+
+		// Negative decimals truncate left of the decimal point.
+		$result = $this->assertQuery( 'SELECT TRUNCATE(123.456, -1) AS t' );
+		$this->assertSame( '120', $result[0]->t );
+
+		$result = $this->assertQuery( 'SELECT TRUNCATE(123.456, 0) AS t' );
+		$this->assertSame( '123', $result[0]->t );
+
+		// No rounding up, unlike ROUND().
+		$result = $this->assertQuery( 'SELECT TRUNCATE(1.99, 1) AS t' );
+		$this->assertSame( '1.9', $result[0]->t );
+
+		// NULL input returns NULL.
+		$result = $this->assertQuery( 'SELECT TRUNCATE(NULL, 1) AS t' );
+		$this->assertNull( $result[0]->t );
+
+		$result = $this->assertQuery( 'SELECT TRUNCATE(123.456, NULL) AS t' );
+		$this->assertNull( $result[0]->t );
+	}
+
+	public function testLcaseUcaseFunctions(): void {
+		// Regression test: these used to return the literal strings
+		// "lower(...)" and "upper(...)" instead of computing a value.
+		$result = $this->assertQuery( "SELECT LCASE('AbC') AS s" );
+		$this->assertSame( 'abc', $result[0]->s );
+
+		$result = $this->assertQuery( "SELECT UCASE('AbC') AS s" );
+		$this->assertSame( 'ABC', $result[0]->s );
+
+		$result = $this->assertQuery( "SELECT LOWER('AbC') AS s" );
+		$this->assertSame( 'abc', $result[0]->s );
+
+		$result = $this->assertQuery( "SELECT UPPER('AbC') AS s" );
+		$this->assertSame( 'ABC', $result[0]->s );
+
+		$result = $this->assertQuery( 'SELECT LCASE(NULL) AS s' );
+		$this->assertNull( $result[0]->s );
+
+		$result = $this->assertQuery( 'SELECT UCASE(NULL) AS s' );
+		$this->assertNull( $result[0]->s );
+	}
+
+	public function testPositionFunction(): void {
+		$result = $this->assertQuery( "SELECT POSITION('b' IN 'abc') AS p" );
+		$this->assertSame( '2', $result[0]->p );
+
+		// Not found returns 0.
+		$result = $this->assertQuery( "SELECT POSITION('z' IN 'abc') AS p" );
+		$this->assertSame( '0', $result[0]->p );
+
+		// NULL input returns NULL.
+		$result = $this->assertQuery( "SELECT POSITION(NULL IN 'abc') AS p" );
+		$this->assertNull( $result[0]->p );
+
+		$result = $this->assertQuery( "SELECT POSITION('b' IN NULL) AS p" );
+		$this->assertNull( $result[0]->p );
+
+		// Multi-byte needle.
+		$result = $this->assertQuery( "SELECT POSITION('é' IN 'héllo') AS p" );
+		$this->assertSame( '2', $result[0]->p );
+	}
+
+	public function testLocateFunctionPositions(): void {
+		$result = $this->assertQuery( "SELECT LOCATE('b', 'abc') AS p" );
+		$this->assertSame( '2', $result[0]->p );
+
+		// The start position is 1-based.
+		$result = $this->assertQuery( "SELECT LOCATE('b', 'abc', 1) AS p" );
+		$this->assertSame( '2', $result[0]->p );
+
+		$result = $this->assertQuery( "SELECT LOCATE('b', 'abc', 2) AS p" );
+		$this->assertSame( '2', $result[0]->p );
+
+		$result = $this->assertQuery( "SELECT LOCATE('b', 'abc', 3) AS p" );
+		$this->assertSame( '0', $result[0]->p );
+
+		$result = $this->assertQuery( "SELECT LOCATE('bar', 'foobarbar', 6) AS p" );
+		$this->assertSame( '7', $result[0]->p );
+
+		// NULL input returns NULL.
+		$result = $this->assertQuery( "SELECT LOCATE(NULL, 'abc') AS p" );
+		$this->assertNull( $result[0]->p );
+
+		$result = $this->assertQuery( "SELECT LOCATE('b', NULL) AS p" );
+		$this->assertNull( $result[0]->p );
+
+		$result = $this->assertQuery( "SELECT LOCATE('b', 'abc', NULL) AS p" );
+		$this->assertNull( $result[0]->p );
+	}
+
+	public function testExtractFunction(): void {
+		$result = $this->assertQuery( "SELECT EXTRACT(YEAR FROM '2024-05-06 10:11:12') AS e" );
+		$this->assertSame( '2024', $result[0]->e );
+
+		$result = $this->assertQuery( "SELECT EXTRACT(QUARTER FROM '2024-05-06') AS e" );
+		$this->assertSame( '2', $result[0]->e );
+
+		$result = $this->assertQuery( "SELECT EXTRACT(QUARTER FROM '2024-01-01') AS e" );
+		$this->assertSame( '1', $result[0]->e );
+
+		$result = $this->assertQuery( "SELECT EXTRACT(QUARTER FROM '2024-12-31') AS e" );
+		$this->assertSame( '4', $result[0]->e );
+
+		$result = $this->assertQuery( "SELECT EXTRACT(MONTH FROM '2024-05-06') AS e" );
+		$this->assertSame( '5', $result[0]->e );
+
+		$result = $this->assertQuery( "SELECT EXTRACT(WEEK FROM '2024-05-06') AS e" );
+		$this->assertSame( '19', $result[0]->e );
+
+		$result = $this->assertQuery( "SELECT EXTRACT(DAY FROM '2024-05-06 10:11:12') AS e" );
+		$this->assertSame( '6', $result[0]->e );
+
+		$result = $this->assertQuery( "SELECT EXTRACT(HOUR FROM '2024-05-06 10:11:12') AS e" );
+		$this->assertSame( '10', $result[0]->e );
+
+		$result = $this->assertQuery( "SELECT EXTRACT(MINUTE FROM '2024-05-06 10:11:12') AS e" );
+		$this->assertSame( '11', $result[0]->e );
+
+		$result = $this->assertQuery( "SELECT EXTRACT(SECOND FROM '2024-05-06 10:11:12') AS e" );
+		$this->assertSame( '12', $result[0]->e );
+
+		$result = $this->assertQuery( "SELECT EXTRACT(MICROSECOND FROM '2024-05-06 10:00:00.123456') AS e" );
+		$this->assertSame( '123456', $result[0]->e );
+
+		$result = $this->assertQuery( "SELECT EXTRACT(MICROSECOND FROM '2024-05-06 10:00:00.5') AS e" );
+		$this->assertSame( '500000', $result[0]->e );
+
+		// No fractional seconds means zero microseconds.
+		$result = $this->assertQuery( "SELECT EXTRACT(MICROSECOND FROM '2024-05-06 10:00:00') AS e" );
+		$this->assertSame( '0', $result[0]->e );
+
+		// NULL input returns NULL.
+		$result = $this->assertQuery( 'SELECT EXTRACT(MICROSECOND FROM NULL) AS e' );
+		$this->assertNull( $result[0]->e );
+	}
+
+	public function testTrimExtendedForms(): void {
+		// The plain form keeps working.
+		$result = $this->assertQuery( "SELECT TRIM(' a ') AS s" );
+		$this->assertSame( 'a', $result[0]->s );
+
+		$result = $this->assertQuery( "SELECT TRIM(BOTH ' ' FROM ' a ') AS s" );
+		$this->assertSame( 'a', $result[0]->s );
+
+		$result = $this->assertQuery( "SELECT TRIM(BOTH 'x' FROM 'xxabxx') AS s" );
+		$this->assertSame( 'ab', $result[0]->s );
+
+		$result = $this->assertQuery( "SELECT TRIM(BOTH FROM ' a ') AS s" );
+		$this->assertSame( 'a', $result[0]->s );
+
+		$result = $this->assertQuery( "SELECT TRIM(LEADING FROM ' a ') AS s" );
+		$this->assertSame( 'a ', $result[0]->s );
+
+		$result = $this->assertQuery( "SELECT TRIM(LEADING 'x' FROM 'xxabx') AS s" );
+		$this->assertSame( 'abx', $result[0]->s );
+
+		$result = $this->assertQuery( "SELECT TRIM(TRAILING FROM ' a ') AS s" );
+		$this->assertSame( ' a', $result[0]->s );
+
+		$result = $this->assertQuery( "SELECT TRIM(TRAILING 'x' FROM 'xabxx') AS s" );
+		$this->assertSame( 'xab', $result[0]->s );
+
+		// A custom trim string without an explicit specifier.
+		$result = $this->assertQuery( "SELECT TRIM('x' FROM 'xxabxx') AS s" );
+		$this->assertSame( 'ab', $result[0]->s );
+	}
+
+	public function testStringInsertFunction(): void {
+		$result = $this->assertQuery( "SELECT INSERT('Quadratic', 3, 4, 'What') AS s" );
+		$this->assertSame( 'QuWhattic', $result[0]->s );
+
+		// A length beyond the rest of the string replaces everything after pos.
+		$result = $this->assertQuery( "SELECT INSERT('abc', 2, 99, 'X') AS s" );
+		$this->assertSame( 'aX', $result[0]->s );
+
+		// A position outside the string returns the original string.
+		$result = $this->assertQuery( "SELECT INSERT('abc', 0, 1, 'X') AS s" );
+		$this->assertSame( 'abc', $result[0]->s );
+
+		$result = $this->assertQuery( "SELECT INSERT('abc', 9, 1, 'X') AS s" );
+		$this->assertSame( 'abc', $result[0]->s );
+
+		// Multi-byte positions count characters.
+		$result = $this->assertQuery( "SELECT INSERT('héllo', 2, 2, 'X') AS s" );
+		$this->assertSame( 'hXlo', $result[0]->s );
+
+		// NULL input returns NULL.
+		$result = $this->assertQuery( "SELECT INSERT(NULL, 1, 1, 'X') AS s" );
+		$this->assertNull( $result[0]->s );
+
+		$result = $this->assertQuery( "SELECT INSERT('abc', NULL, 1, 'X') AS s" );
+		$this->assertNull( $result[0]->s );
+
+		$result = $this->assertQuery( "SELECT INSERT('abc', 1, NULL, 'X') AS s" );
+		$this->assertNull( $result[0]->s );
+
+		$result = $this->assertQuery( "SELECT INSERT('abc', 1, 1, NULL) AS s" );
+		$this->assertNull( $result[0]->s );
+	}
+
+	public function testRepeatFunction(): void {
+		$result = $this->assertQuery( "SELECT REPEAT('ab', 3) AS s" );
+		$this->assertSame( 'ababab', $result[0]->s );
+
+		// A count below 1 returns an empty string.
+		$result = $this->assertQuery( "SELECT REPEAT('ab', 0) AS s" );
+		$this->assertSame( '', $result[0]->s );
+
+		$result = $this->assertQuery( "SELECT REPEAT('ab', -2) AS s" );
+		$this->assertSame( '', $result[0]->s );
+
+		// NULL input returns NULL.
+		$result = $this->assertQuery( 'SELECT REPEAT(NULL, 3) AS s' );
+		$this->assertNull( $result[0]->s );
+
+		$result = $this->assertQuery( "SELECT REPEAT('ab', NULL) AS s" );
+		$this->assertNull( $result[0]->s );
+	}
+
+	public function testRightFunction(): void {
+		$result = $this->assertQuery( "SELECT RIGHT('abcde', 2) AS s" );
+		$this->assertSame( 'de', $result[0]->s );
+
+		// A length beyond the string returns the whole string.
+		$result = $this->assertQuery( "SELECT RIGHT('abc', 9) AS s" );
+		$this->assertSame( 'abc', $result[0]->s );
+
+		// Multi-byte characters are not split.
+		$result = $this->assertQuery( "SELECT RIGHT('héllo', 2) AS s" );
+		$this->assertSame( 'lo', $result[0]->s );
+
+		// A length below 1 returns an empty string.
+		$result = $this->assertQuery( "SELECT RIGHT('abc', 0) AS s" );
+		$this->assertSame( '', $result[0]->s );
+
+		// NULL input returns NULL.
+		$result = $this->assertQuery( 'SELECT RIGHT(NULL, 1) AS s' );
+		$this->assertNull( $result[0]->s );
+
+		$result = $this->assertQuery( "SELECT RIGHT('abc', NULL) AS s" );
+		$this->assertNull( $result[0]->s );
+	}
+
+	public function testPadFunctions(): void {
+		$result = $this->assertQuery( "SELECT LPAD('hi', 5, 'xy') AS s" );
+		$this->assertSame( 'xyxhi', $result[0]->s );
+
+		$result = $this->assertQuery( "SELECT RPAD('hi', 5, 'xy') AS s" );
+		$this->assertSame( 'hixyx', $result[0]->s );
+
+		// Longer strings are truncated.
+		$result = $this->assertQuery( "SELECT LPAD('hello', 3, 'xy') AS s" );
+		$this->assertSame( 'hel', $result[0]->s );
+
+		$result = $this->assertQuery( "SELECT RPAD('hello', 3, 'xy') AS s" );
+		$this->assertSame( 'hel', $result[0]->s );
+
+		// Padding counts characters, not bytes.
+		$result = $this->assertQuery( "SELECT LPAD('é', 3, 'ab') AS s" );
+		$this->assertSame( 'abé', $result[0]->s );
+
+		$result = $this->assertQuery( "SELECT RPAD('é', 3, 'ab') AS s" );
+		$this->assertSame( 'éab', $result[0]->s );
+
+		// A zero length returns an empty string.
+		$result = $this->assertQuery( "SELECT LPAD('hi', 0, 'x') AS s" );
+		$this->assertSame( '', $result[0]->s );
+
+		// A negative length returns NULL.
+		$result = $this->assertQuery( "SELECT LPAD('hi', -1, 'x') AS s" );
+		$this->assertNull( $result[0]->s );
+
+		$result = $this->assertQuery( "SELECT RPAD('hi', -1, 'x') AS s" );
+		$this->assertNull( $result[0]->s );
+
+		// NULL input returns NULL.
+		$result = $this->assertQuery( "SELECT LPAD(NULL, 3, 'x') AS s" );
+		$this->assertNull( $result[0]->s );
+
+		$result = $this->assertQuery( "SELECT RPAD('hi', NULL, 'x') AS s" );
+		$this->assertNull( $result[0]->s );
+
+		$result = $this->assertQuery( "SELECT RPAD('hi', 5, NULL) AS s" );
+		$this->assertNull( $result[0]->s );
+	}
+
+	public function testSpaceFunction(): void {
+		$result = $this->assertQuery( 'SELECT SPACE(3) AS s' );
+		$this->assertSame( '   ', $result[0]->s );
+
+		$result = $this->assertQuery( 'SELECT SPACE(0) AS s' );
+		$this->assertSame( '', $result[0]->s );
+
+		// NULL input returns NULL.
+		$result = $this->assertQuery( 'SELECT SPACE(NULL) AS s' );
+		$this->assertNull( $result[0]->s );
+	}
+
+	public function testAsciiFunction(): void {
+		$result = $this->assertQuery( "SELECT ASCII('A') AS n" );
+		$this->assertSame( '65', $result[0]->n );
+
+		// An empty string returns 0.
+		$result = $this->assertQuery( "SELECT ASCII('') AS n" );
+		$this->assertSame( '0', $result[0]->n );
+
+		// NULL input returns NULL.
+		$result = $this->assertQuery( 'SELECT ASCII(NULL) AS n' );
+		$this->assertNull( $result[0]->n );
+	}
+
+	public function testOrdFunction(): void {
+		$result = $this->assertQuery( "SELECT ORD('A') AS n" );
+		$this->assertSame( '65', $result[0]->n );
+
+		// Multi-byte characters are composed from their bytes, as MySQL
+		// does: ORD('©') in utf8mb4 is (0xC2 * 256) + 0xA9 = 49833.
+		$result = $this->assertQuery( "SELECT ORD('©') AS n" );
+		$this->assertSame( '49833', $result[0]->n );
+
+		$result = $this->assertQuery( "SELECT ORD('é') AS n" );
+		$this->assertSame( '50089', $result[0]->n );
+
+		// An empty string returns 0.
+		$result = $this->assertQuery( "SELECT ORD('') AS n" );
+		$this->assertSame( '0', $result[0]->n );
+
+		// NULL input returns NULL.
+		$result = $this->assertQuery( 'SELECT ORD(NULL) AS n' );
+		$this->assertNull( $result[0]->n );
+	}
+
+	public function testLocateEdgeCases(): void {
+		// A start position past the end returns 0 instead of throwing.
+		$result = $this->assertQuery( "SELECT LOCATE('b', 'abc', 10) AS n" );
+		$this->assertSame( '0', $result[0]->n );
+
+		// An empty needle returns the start position.
+		$result = $this->assertQuery( "SELECT LOCATE('', 'abc') AS n" );
+		$this->assertSame( '1', $result[0]->n );
+
+		$result = $this->assertQuery( "SELECT LOCATE('', 'abc', 3) AS n" );
+		$this->assertSame( '3', $result[0]->n );
+	}
+
+	public function testFindInSetCollation(): void {
+		// Default column collations are case-insensitive in MySQL.
+		$result = $this->assertQuery( "SELECT FIND_IN_SET('B', 'a,b,c') AS n" );
+		$this->assertSame( '2', $result[0]->n );
+
+		$result = $this->assertQuery( "SELECT FIND_IN_SET('', '') AS n" );
+		$this->assertSame( '0', $result[0]->n );
+	}
+
+	public function testExportSetBitLimit(): void {
+		// MySQL clips number_of_bits at 64.
+		$result = $this->assertQuery( "SELECT EXPORT_SET(5, 'Y', 'N', ',', 100) AS e" );
+		$this->assertSame( 64, substr_count( $result[0]->e, ',' ) + 1 );
+	}
+
+	public function testRepeatSizeLimit(): void {
+		/*
+		 * Results above 64 MiB return NULL instead of exhausting the PHP
+		 * memory limit. Arguments above the 32-bit range are not usable for
+		 * this: the PDO UDF bridge truncates integer arguments to 32 bits,
+		 * so REPEAT('a', 4000000000) arrives as a negative count and yields
+		 * an empty string, as MySQL does for any negative count.
+		 */
+		$result = $this->assertQuery( 'SELECT REPEAT(\'a\', 67108865) AS r' );
+		$this->assertNull( $result[0]->r );
+
+		$result = $this->assertQuery( 'SELECT SPACE(67108865) AS r' );
+		$this->assertNull( $result[0]->r );
+
+		$result = $this->assertQuery( "SELECT LPAD('a', 67108865, 'x') AS r" );
+		$this->assertNull( $result[0]->r );
+
+		$result = $this->assertQuery( "SELECT RPAD('a', 67108865, 'x') AS r" );
+		$this->assertNull( $result[0]->r );
+
+		// Small results are unaffected.
+		$result = $this->assertQuery( "SELECT REPEAT('ab', 2) AS r" );
+		$this->assertSame( 'abab', $result[0]->r );
+	}
+
+	public function testStrcmpFunction(): void {
+		$result = $this->assertQuery( "SELECT STRCMP('a', 'b') AS n" );
+		$this->assertSame( '-1', $result[0]->n );
+
+		$result = $this->assertQuery( "SELECT STRCMP('b', 'a') AS n" );
+		$this->assertSame( '1', $result[0]->n );
+
+		$result = $this->assertQuery( "SELECT STRCMP('a', 'a') AS n" );
+		$this->assertSame( '0', $result[0]->n );
+
+		// NULL input returns NULL.
+		$result = $this->assertQuery( "SELECT STRCMP(NULL, 'a') AS n" );
+		$this->assertNull( $result[0]->n );
+
+		$result = $this->assertQuery( "SELECT STRCMP('a', NULL) AS n" );
+		$this->assertNull( $result[0]->n );
+	}
+
+	public function testFindInSetFunction(): void {
+		$result = $this->assertQuery( "SELECT FIND_IN_SET('b', 'a,b,c') AS p" );
+		$this->assertSame( '2', $result[0]->p );
+
+		// Missing values return 0.
+		$result = $this->assertQuery( "SELECT FIND_IN_SET('d', 'a,b,c') AS p" );
+		$this->assertSame( '0', $result[0]->p );
+
+		// The needle must match a whole element.
+		$result = $this->assertQuery( "SELECT FIND_IN_SET('b', 'abc') AS p" );
+		$this->assertSame( '0', $result[0]->p );
+
+		// NULL input returns NULL.
+		$result = $this->assertQuery( "SELECT FIND_IN_SET(NULL, 'a,b') AS p" );
+		$this->assertNull( $result[0]->p );
+
+		$result = $this->assertQuery( "SELECT FIND_IN_SET('a', NULL) AS p" );
+		$this->assertNull( $result[0]->p );
+	}
+
+	public function testFindInSetFunctionWithUserVariable(): void {
+		$this->assertQuery( "SET @csv = 'a,b,c'" );
+
+		$result = $this->assertQuery( "SELECT FIND_IN_SET('b', @csv) AS p" );
+		$this->assertSame( '2', $result[0]->p );
+
+		$result = $this->assertQuery( "SELECT FIND_IN_SET('d', @csv) AS p" );
+		$this->assertSame( '0', $result[0]->p );
+	}
+
+	public function testEltFunction(): void {
+		$result = $this->assertQuery( "SELECT ELT(2, 'a', 'b', 'c') AS s" );
+		$this->assertSame( 'b', $result[0]->s );
+
+		// Out-of-range positions return NULL.
+		$result = $this->assertQuery( "SELECT ELT(0, 'a', 'b') AS s" );
+		$this->assertNull( $result[0]->s );
+
+		$result = $this->assertQuery( "SELECT ELT(3, 'a', 'b') AS s" );
+		$this->assertNull( $result[0]->s );
+
+		// NULL input returns NULL.
+		$result = $this->assertQuery( "SELECT ELT(NULL, 'a', 'b') AS s" );
+		$this->assertNull( $result[0]->s );
+	}
+
+	public function testMakeSetFunction(): void {
+		$result = $this->assertQuery( "SELECT MAKE_SET(1 | 4, 'a', 'b', 'c') AS s" );
+		$this->assertSame( 'a,c', $result[0]->s );
+
+		// No bits set returns an empty string.
+		$result = $this->assertQuery( "SELECT MAKE_SET(0, 'a', 'b') AS s" );
+		$this->assertSame( '', $result[0]->s );
+
+		// NULL strings are skipped.
+		$result = $this->assertQuery( "SELECT MAKE_SET(7, 'a', NULL, 'c') AS s" );
+		$this->assertSame( 'a,c', $result[0]->s );
+
+		// NULL input returns NULL.
+		$result = $this->assertQuery( "SELECT MAKE_SET(NULL, 'a', 'b') AS s" );
+		$this->assertNull( $result[0]->s );
+	}
+
+	public function testExportSetFunction(): void {
+		$result = $this->assertQuery( "SELECT EXPORT_SET(5, 'Y', 'N', ',', 4) AS s" );
+		$this->assertSame( 'Y,N,Y,N', $result[0]->s );
+
+		$result = $this->assertQuery( "SELECT EXPORT_SET(5, 'Y', 'N', '|', 2) AS s" );
+		$this->assertSame( 'Y|N', $result[0]->s );
+
+		// The default separator is a comma and the default bit count is 64.
+		$result = $this->assertQuery( "SELECT EXPORT_SET(1, 'Y', 'N', ',', 1) AS s" );
+		$this->assertSame( 'Y', $result[0]->s );
+
+		// NULL input returns NULL.
+		$result = $this->assertQuery( "SELECT EXPORT_SET(NULL, 'Y', 'N') AS s" );
+		$this->assertNull( $result[0]->s );
+
+		$result = $this->assertQuery( "SELECT EXPORT_SET(5, NULL, 'N') AS s" );
+		$this->assertNull( $result[0]->s );
+	}
+
+	public function testSoundexFunction(): void {
+		$result = $this->assertQuery( "SELECT SOUNDEX('Euler') AS s" );
+		$this->assertSame( 'E460', $result[0]->s );
+
+		$result = $this->assertQuery( "SELECT SOUNDEX('Ellery') AS s" );
+		$this->assertSame( 'E460', $result[0]->s );
+
+		$result = $this->assertQuery( "SELECT SOUNDEX('Tymczak') AS s" );
+		$this->assertSame( 'T522', $result[0]->s );
+
+		// NULL input returns NULL.
+		$result = $this->assertQuery( 'SELECT SOUNDEX(NULL) AS s' );
+		$this->assertNull( $result[0]->s );
+	}
+
+	public function testFormatFunction(): void {
+		// Regression test: this used to return "1234567.89" without the
+		// thousands separators, because SQLite's printf-style format()
+		// was used instead of MySQL's FORMAT().
+		$result = $this->assertQuery( 'SELECT FORMAT(1234567.89, 2) AS s' );
+		$this->assertSame( '1,234,567.89', $result[0]->s );
+
+		$result = $this->assertQuery( 'SELECT FORMAT(1234.5, 0) AS s' );
+		$this->assertSame( '1,235', $result[0]->s );
+
+		// Rounding is half away from zero, like MySQL.
+		$result = $this->assertQuery( 'SELECT FORMAT(-2.5, 0) AS s' );
+		$this->assertSame( '-3', $result[0]->s );
+
+		$result = $this->assertQuery( 'SELECT FORMAT(123456789.123, 2) AS s' );
+		$this->assertSame( '123,456,789.12', $result[0]->s );
+
+		// NULL input returns NULL.
+		$result = $this->assertQuery( 'SELECT FORMAT(NULL, 2) AS s' );
+		$this->assertNull( $result[0]->s );
+
+		$result = $this->assertQuery( 'SELECT FORMAT(1234.5, NULL) AS s' );
+		$this->assertNull( $result[0]->s );
+	}
 }
