@@ -4723,6 +4723,22 @@ class WP_MySQL_On_SQLite extends PDO {
 			);
 		}
 
+		/*
+		 * MySQL accepts CURRENT_DATE and CURRENT_TIME as bare keywords with
+		 * the same meaning as the parenthesized forms. SQLite understands
+		 * the same keywords, so pass them through unquoted. Only intercept
+		 * unquoted identifiers; an explicitly quoted `current_date` is still
+		 * a regular column reference.
+		 */
+		if ( WP_MySQL_Lexer::BACK_TICK_QUOTED_ID !== $token->id ) {
+			if ( 0 === strcasecmp( $value, 'CURRENT_DATE' ) ) {
+				return 'CURRENT_DATE';
+			}
+			if ( 0 === strcasecmp( $value, 'CURRENT_TIME' ) ) {
+				return 'CURRENT_TIME';
+			}
+		}
+
 		return '`' . str_replace( '`', '``', $value ) . '`';
 	}
 
@@ -5210,11 +5226,42 @@ class WP_MySQL_On_SQLite extends PDO {
 				return 'CURRENT_TIMESTAMP';
 			case WP_MySQL_Lexer::DATE_ADD_SYMBOL:
 			case WP_MySQL_Lexer::DATE_SUB_SYMBOL:
+			case WP_MySQL_Lexer::ADDDATE_SYMBOL:
+			case WP_MySQL_Lexer::SUBDATE_SYMBOL:
 				$nodes = $node->get_child_nodes();
 				return $this->translate_interval_arithmetic(
 					$this->translate( $nodes[0] ),
-					array( array( WP_MySQL_Lexer::DATE_SUB_SYMBOL === $child->id, $nodes[1], $nodes[2] ) )
+					array(
+						array(
+							(
+								WP_MySQL_Lexer::DATE_SUB_SYMBOL === $child->id ||
+								WP_MySQL_Lexer::SUBDATE_SYMBOL === $child->id
+							),
+							$nodes[1],
+							$nodes[2],
+						),
+					)
 				);
+			case WP_MySQL_Lexer::CURDATE_SYMBOL:
+				/*
+				 * The lexer normalizes CURRENT_DATE to the CURDATE token but
+				 * keeps the original spelling in the token value. SQLite
+				 * accepts the bare CURRENT_DATE keyword with UTC semantics.
+				 */
+				if ( 0 === strcasecmp( $child->get_value(), 'CURRENT_DATE' ) ) {
+					return 'CURRENT_DATE';
+				}
+				return $this->translate_sequence( $node->get_children() );
+			case WP_MySQL_Lexer::CURTIME_SYMBOL:
+				/*
+				 * The lexer normalizes CURRENT_TIME to the CURTIME token but
+				 * keeps the original spelling in the token value. SQLite
+				 * accepts the bare CURRENT_TIME keyword with UTC semantics.
+				 */
+				if ( 0 === strcasecmp( $child->get_value(), 'CURRENT_TIME' ) ) {
+					return 'CURRENT_TIME';
+				}
+				return $this->translate_sequence( $node->get_children() );
 			case WP_MySQL_Lexer::LEFT_SYMBOL:
 				$nodes = $node->get_child_nodes();
 				return sprintf(
@@ -5367,6 +5414,71 @@ class WP_MySQL_On_SQLite extends PDO {
 			case 'CHAR_LENGTH':
 				// @TODO LENGTH and CHAR_LENGTH aren't always the same in MySQL for utf8 characters.
 				return 'LENGTH(' . $args[0] . ')';
+			case 'ADDDATE':
+			case 'SUBDATE':
+				/*
+				 * The two-argument form adds or subtracts a number of days:
+				 * ADDDATE(date, days) is DATE_ADD(date, INTERVAL days DAY).
+				 * The three-argument INTERVAL form parses as a
+				 * runtimeFunctionCall and is handled in
+				 * translate_runtime_function_call().
+				 */
+				if ( 2 === count( $args ) ) {
+					/*
+					 * MySQL treats the two-argument day count as an integer,
+					 * so a fractional value must not become a partial-day
+					 * time modifier.
+					 */
+					$value_sql = sprintf( 'CAST((%s) AS INTEGER)', $args[1] );
+					if ( 'SUBDATE' === $name ) {
+						$value_sql = '-' . $value_sql;
+					}
+					$modifiers_sql = sprintf( "%s || ' DAY'", $value_sql );
+					return sprintf(
+						'CASE WHEN LENGTH(%1$s) = 10 THEN DATE(%1$s, %2$s) ELSE DATETIME(%1$s, %2$s) END',
+						$args[0],
+						$modifiers_sql
+					);
+				}
+				return $this->translate_sequence( $node->get_children() );
+			case 'TIMESTAMPADD':
+			case 'TIMESTAMPDIFF':
+				/*
+				 * The unit arrives as a bare identifier (e.g. SECOND) which
+				 * would otherwise translate to a quoted column reference.
+				 * Pass it to the UDF as a string literal instead. An already
+				 * quoted unit such as TIMESTAMPADD('SECOND', ...) is left as is.
+				 */
+				if ( isset( $nodes[1] ) ) {
+					$unit_args = $nodes[1]->get_child_nodes();
+					if ( 3 === count( $unit_args ) ) {
+						return sprintf(
+							'%s(%s, %s, %s)',
+							$name,
+							$this->translate_keyword_arg( $unit_args[0] ),
+							$this->translate( $unit_args[1] ),
+							$this->translate( $unit_args[2] )
+						);
+					}
+				}
+				return $this->translate_sequence( $node->get_children() );
+			case 'GET_FORMAT':
+				/*
+				 * The first argument is a keyword (DATE, TIME, or DATETIME)
+				 * which would otherwise translate to a quoted column
+				 * reference. Pass bare keywords to the UDF as strings.
+				 */
+				if ( isset( $nodes[1] ) ) {
+					$format_args = $nodes[1]->get_child_nodes();
+					if ( 2 === count( $format_args ) ) {
+						return sprintf(
+							'GET_FORMAT(%s, %s)',
+							$this->translate_keyword_arg( $format_args[0] ),
+							$this->translate_keyword_arg( $format_args[1] )
+						);
+					}
+				}
+				return $this->translate_sequence( $node->get_children() );
 			case 'CONCAT':
 				return '(' . implode( ' || ', $args ) . ')';
 			case 'FOUND_ROWS':
@@ -5390,6 +5502,31 @@ class WP_MySQL_On_SQLite extends PDO {
 			default:
 				return $this->translate_sequence( $node->get_children() );
 		}
+	}
+
+	/**
+	 * Translate a bare keyword argument to a string literal.
+	 *
+	 * Some functions take bare keywords where an expression would normally
+	 * go, e.g. the unit in TIMESTAMPADD(SECOND, ...) or the type in
+	 * GET_FORMAT(DATE, ...). The parser represents those as column
+	 * references, which would translate to quoted identifiers and fail in
+	 * SQLite. Pass them to the UDF as string literals instead. Arguments
+	 * that are not bare keywords are translated normally, so already quoted
+	 * values such as TIMESTAMPADD('SECOND', ...) keep working.
+	 *
+	 * @param  WP_Parser_Node $node The argument AST node.
+	 * @return string               The translated value.
+	 */
+	private function translate_keyword_arg( WP_Parser_Node $node ): string {
+		$column_ref = $node->get_first_descendant_node( 'columnRef' );
+		if ( null !== $column_ref ) {
+			$token = $column_ref->get_first_descendant_token();
+			if ( null !== $token ) {
+				return $this->quote_sqlite_value( strtoupper( $token->get_value() ) );
+			}
+		}
+		return $this->translate( $node );
 	}
 
 	/**

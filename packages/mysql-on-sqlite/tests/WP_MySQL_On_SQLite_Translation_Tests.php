@@ -1806,6 +1806,78 @@ class WP_MySQL_On_SQLite_Translation_Tests extends TestCase {
 		);
 	}
 
+	public function testAddSubDateTranslation(): void {
+		// The three-argument INTERVAL form translates like DATE_ADD/DATE_SUB.
+		$this->assertQuery(
+			"SELECT CASE WHEN LENGTH('2024-01-01') = 10 THEN DATE('2024-01-01', (1) || ' DAY') ELSE DATETIME('2024-01-01', (1) || ' DAY') END AS `a`",
+			'SELECT ADDDATE(\'2024-01-01\', INTERVAL 1 DAY) AS a'
+		);
+
+		$this->assertQuery(
+			"SELECT CASE WHEN LENGTH('2024-01-05') = 10 THEN DATE('2024-01-05', -(2) || ' DAY') ELSE DATETIME('2024-01-05', -(2) || ' DAY') END AS `a`",
+			'SELECT SUBDATE(\'2024-01-05\', INTERVAL 2 DAY) AS a'
+		);
+
+		// The two-argument form adds or subtracts a number of days. MySQL
+		// treats that count as an integer, so it is cast before it becomes a
+		// time modifier.
+		$this->assertQuery(
+			"SELECT CASE WHEN LENGTH('2024-01-01') = 10 THEN DATE('2024-01-01', CAST((1) AS INTEGER) || ' DAY') ELSE DATETIME('2024-01-01', CAST((1) AS INTEGER) || ' DAY') END AS `a`",
+			'SELECT ADDDATE(\'2024-01-01\', 1) AS a'
+		);
+
+		$this->assertQuery(
+			"SELECT CASE WHEN LENGTH('2024-01-01') = 10 THEN DATE('2024-01-01', -CAST((1) AS INTEGER) || ' DAY') ELSE DATETIME('2024-01-01', -CAST((1) AS INTEGER) || ' DAY') END AS `a`",
+			'SELECT SUBDATE(\'2024-01-01\', 1) AS a'
+		);
+	}
+
+	public function testCurrentDateAndTimeTranslation(): void {
+		// SQLite accepts the bare CURRENT_DATE and CURRENT_TIME keywords.
+		$this->assertQuery(
+			'SELECT CURRENT_DATE AS `a`',
+			'SELECT CURRENT_DATE() AS a'
+		);
+
+		$this->assertQuery(
+			'SELECT CURRENT_TIME AS `a`',
+			'SELECT CURRENT_TIME() AS a'
+		);
+
+		$this->assertQuery(
+			'SELECT CURRENT_DATE AS `a`',
+			'SELECT CURRENT_DATE AS a'
+		);
+
+		$this->assertQuery(
+			'SELECT CURRENT_TIME AS `a`',
+			'SELECT CURRENT_TIME AS a'
+		);
+	}
+
+	public function testTimestampAddDiffTranslation(): void {
+		// Bare units would translate to quoted column references, so they
+		// are passed to the UDFs as string literals instead.
+		$this->assertQuery(
+			"SELECT TIMESTAMPDIFF('SECOND', '2024-01-01', '2024-01-02') AS `a`",
+			'SELECT TIMESTAMPDIFF(SECOND, \'2024-01-01\', \'2024-01-02\') AS a'
+		);
+
+		$this->assertQuery(
+			"SELECT TIMESTAMPADD('MINUTE', 1, '2003-01-02') AS `a`",
+			'SELECT TIMESTAMPADD(MINUTE, 1, \'2003-01-02\') AS a'
+		);
+	}
+
+	public function testGetFormatTranslation(): void {
+		// The DATE keyword would translate to a quoted column reference,
+		// so it is passed to the UDF as a string literal instead.
+		$this->assertQuery(
+			"SELECT GET_FORMAT('DATE', 'USA') AS `a`",
+			'SELECT GET_FORMAT(DATE, \'USA\') AS a'
+		);
+	}
+
 	public function testIndexHints(): void {
 		// USE INDEX
 		$this->assertQuery(

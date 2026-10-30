@@ -1066,6 +1066,1122 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$this->assertEquals( '2024-01-08 10:00:00', $result[0]->output );
 	}
 
+	public function testAddDateSubDateFunctions() {
+		// Expected values were taken from MySQL 8.4.
+		// Three-argument INTERVAL form behaves like DATE_ADD/DATE_SUB.
+		$result = $this->assertQuery(
+			"SELECT ADDDATE('2024-01-01', INTERVAL 1 DAY) as output"
+		);
+		$this->assertEquals( '2024-01-02', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT SUBDATE('2024-01-05 10:00:00', INTERVAL 1 DAY) as output"
+		);
+		$this->assertEquals( '2024-01-04 10:00:00', $result[0]->output );
+
+		// Two-argument form adds or subtracts a number of days.
+		$result = $this->assertQuery(
+			"SELECT ADDDATE('2024-01-01', 1) as output"
+		);
+		$this->assertEquals( '2024-01-02', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT SUBDATE('2024-01-05', 2) as output"
+		);
+		$this->assertEquals( '2024-01-03', $result[0]->output );
+
+		// A datetime input stays a datetime, a date input stays a date.
+		$result = $this->assertQuery(
+			"SELECT ADDDATE('2024-01-01 10:00:00', 1) as output"
+		);
+		$this->assertEquals( '2024-01-02 10:00:00', $result[0]->output );
+
+		// Negative day counts work in both directions.
+		$result = $this->assertQuery(
+			"SELECT ADDDATE('2024-01-01', -1) as output"
+		);
+		$this->assertEquals( '2023-12-31', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT SUBDATE('2024-01-01', -1) as output"
+		);
+		$this->assertEquals( '2024-01-02', $result[0]->output );
+
+		// NULL on either side yields NULL.
+		$result = $this->assertQuery( 'SELECT ADDDATE(NULL, 1) as output' );
+		$this->assertNull( $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT ADDDATE('2024-01-01', NULL) as output"
+		);
+		$this->assertNull( $result[0]->output );
+
+		// Invalid dates yield NULL.
+		$result = $this->assertQuery(
+			"SELECT ADDDATE('not a date', 1) as output"
+		);
+		$this->assertNull( $result[0]->output );
+	}
+
+	public function testCurrentDateAndCurrentTime() {
+		// The parenthesized forms agree with CURDATE() and CURTIME().
+		$result = $this->assertQuery( 'SELECT CURRENT_DATE() = CURDATE() as output' );
+		$this->assertEquals( 1, $result[0]->output );
+
+		$result = $this->assertQuery( 'SELECT CURRENT_TIME() = CURTIME() as output' );
+		$this->assertEquals( 1, $result[0]->output );
+
+		// The bare keywords work as well, in any letter casing.
+		$result = $this->assertQuery( 'SELECT CURRENT_DATE = CURDATE() as output' );
+		$this->assertEquals( 1, $result[0]->output );
+
+		$result = $this->assertQuery( 'SELECT CURRENT_TIME = CURTIME() as output' );
+		$this->assertEquals( 1, $result[0]->output );
+
+		$result = $this->assertQuery( 'SELECT current_date() = curdate() as output' );
+		$this->assertEquals( 1, $result[0]->output );
+
+		// Both forms produce well-formed values.
+		$result = $this->assertQuery( "SELECT CURRENT_DATE LIKE '____-__-__' as output" );
+		$this->assertEquals( 1, $result[0]->output );
+
+		$result = $this->assertQuery( "SELECT CURTIME() LIKE '__:__:__' as output" );
+		$this->assertEquals( 1, $result[0]->output );
+
+		// An explicitly quoted `current_date` is still a column reference.
+		$this->assertQuery( 'CREATE TABLE _events (id INT, `current_date` TEXT)' );
+		$this->assertQuery( "INSERT INTO _events VALUES (1, 'hello')" );
+		$result = $this->assertQuery( 'SELECT `current_date` as output FROM _events' );
+		$this->assertEquals( 'hello', $result[0]->output );
+	}
+
+	public function testTimestampDiffFunction() {
+		// Expected values were taken from MySQL 8.4.
+		// The learnomy migration use: whole days in seconds (24 * 3600).
+		$result = $this->assertQuery(
+			"SELECT TIMESTAMPDIFF(SECOND, '2024-01-01 00:00:00', '2024-01-02 00:00:00') as output"
+		);
+		$this->assertEquals( 86400, $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT TIMESTAMPDIFF(MINUTE, '2024-01-01 00:00:00', '2024-01-01 01:30:00') as output"
+		);
+		$this->assertEquals( 90, $result[0]->output );
+
+		// DAY counts calendar days, HOUR counts exact hours: the two
+		// datetimes below are 2 hours apart but on different days.
+		$result = $this->assertQuery(
+			"SELECT TIMESTAMPDIFF(DAY, '2024-01-01 23:00:00', '2024-01-02 01:00:00') as output"
+		);
+		$this->assertEquals( 1, $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT TIMESTAMPDIFF(HOUR, '2024-01-01 23:00:00', '2024-01-02 01:00:00') as output"
+		);
+		$this->assertEquals( 2, $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT TIMESTAMPDIFF(WEEK, '2024-01-01', '2024-01-08') as output"
+		);
+		$this->assertEquals( 1, $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT TIMESTAMPDIFF(MICROSECOND, '2024-01-01 00:00:00', '2024-01-01 00:00:01') as output"
+		);
+		$this->assertEquals( 1000000, $result[0]->output );
+
+		// FRAC_SECOND is a synonym of MICROSECOND.
+		$result = $this->assertQuery(
+			"SELECT TIMESTAMPDIFF(FRAC_SECOND, '2024-01-01 00:00:00', '2024-01-01 00:00:01') as output"
+		);
+		$this->assertEquals( 1000000, $result[0]->output );
+
+		// The ODBC SQL_TSI_ prefixed units work as well.
+		$result = $this->assertQuery(
+			"SELECT TIMESTAMPDIFF(SQL_TSI_DAY, '2024-01-01', '2024-01-03') as output"
+		);
+		$this->assertEquals( 2, $result[0]->output );
+
+		// MONTH counts complete months without clamping end-of-month dates:
+		// Feb 29 is a day short of a month after Jan 31, so this is 0, as in
+		// MySQL.
+		$result = $this->assertQuery(
+			"SELECT TIMESTAMPDIFF(MONTH, '2024-01-31', '2024-02-29') as output"
+		);
+		$this->assertEquals( 0, $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT TIMESTAMPDIFF(MONTH, '2024-01-31', '2024-02-28') as output"
+		);
+		$this->assertEquals( 0, $result[0]->output );
+
+		// QUARTER counts complete 3-month periods.
+		$result = $this->assertQuery(
+			"SELECT TIMESTAMPDIFF(QUARTER, '2024-01-15', '2024-07-15') as output"
+		);
+		$this->assertEquals( 2, $result[0]->output );
+
+		// YEAR counts complete years: Feb 29 plus 4 years clamps to
+		// Feb 29, which is past Feb 28, so only 3 complete years fit.
+		$result = $this->assertQuery(
+			"SELECT TIMESTAMPDIFF(YEAR, '2020-02-29', '2024-02-28') as output"
+		);
+		$this->assertEquals( 3, $result[0]->output );
+
+		// Differences truncate toward zero: -5400 seconds is -1 hour.
+		$result = $this->assertQuery(
+			"SELECT TIMESTAMPDIFF(HOUR, '2024-01-01 01:30:00', '2024-01-01 00:00:00') as output"
+		);
+		$this->assertEquals( -1, $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT TIMESTAMPDIFF(WEEK, '2024-01-08', '2024-01-01') as output"
+		);
+		$this->assertEquals( -1, $result[0]->output );
+
+		// NULL on either side yields NULL.
+		$result = $this->assertQuery(
+			"SELECT TIMESTAMPDIFF(SECOND, NULL, '2024-01-02') as output"
+		);
+		$this->assertNull( $result[0]->output );
+
+		// Unknown units and invalid datetimes yield NULL.
+		$result = $this->assertQuery(
+			"SELECT TIMESTAMPDIFF(BOGUS, '2024-01-01', '2024-01-02') as output"
+		);
+		$this->assertNull( $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT TIMESTAMPDIFF(SECOND, 'not a date', '2024-01-02') as output"
+		);
+		$this->assertNull( $result[0]->output );
+	}
+
+	public function testTimestampDiffAcrossDst() {
+		// Wall-clock differences ignore time zones: the driver parses in
+		// UTC, so the US spring forward on 2024-03-10 (47 elapsed hours
+		// in America/New_York) still reports the MySQL value of 48 hours.
+		$previous_timezone = date_default_timezone_get();
+		// phpcs:ignore WordPress.DateTime.RestrictedFunctions.timezone_change_date_default_timezone_set -- Test needs a non-UTC PHP default timezone; restored in finally.
+		date_default_timezone_set( 'America/New_York' );
+		try {
+			$result = $this->assertQuery(
+				"SELECT TIMESTAMPDIFF(HOUR, '2024-03-09 12:00:00', '2024-03-11 12:00:00') as output"
+			);
+			$this->assertEquals( 48, $result[0]->output );
+
+			$result = $this->assertQuery(
+				"SELECT TIMESTAMPADD(HOUR, 48, '2024-03-09 12:00:00') as output"
+			);
+			$this->assertEquals( '2024-03-11 12:00:00', $result[0]->output );
+		} finally {
+			// phpcs:ignore WordPress.DateTime.RestrictedFunctions.timezone_change_date_default_timezone_set -- Restore the original default timezone.
+			date_default_timezone_set( $previous_timezone );
+		}
+	}
+
+	public function testTimestampAddFunction() {
+		// Expected values were taken from MySQL 8.4.
+		$result = $this->assertQuery(
+			"SELECT TIMESTAMPADD(SECOND, 90, '2024-01-01 00:00:00') as output"
+		);
+		$this->assertEquals( '2024-01-01 00:01:30', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT TIMESTAMPADD(MINUTE, -90, '2024-01-01 01:00:00') as output"
+		);
+		$this->assertEquals( '2023-12-31 23:30:00', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT TIMESTAMPADD(WEEK, 2, '2024-01-01') as output"
+		);
+		$this->assertEquals( '2024-01-15 00:00:00', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT TIMESTAMPADD(DAY, -1, '2024-01-01') as output"
+		);
+		$this->assertEquals( '2023-12-31 00:00:00', $result[0]->output );
+
+		// Month-based units clamp end-of-month starts like MySQL:
+		// Jan 31 plus one month is Feb 29 in the 2024 leap year.
+		$result = $this->assertQuery(
+			"SELECT TIMESTAMPADD(MONTH, 1, '2024-01-31') as output"
+		);
+		$this->assertEquals( '2024-02-29 00:00:00', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT TIMESTAMPADD(QUARTER, 1, '2024-01-15') as output"
+		);
+		$this->assertEquals( '2024-04-15 00:00:00', $result[0]->output );
+
+		// Feb 29 plus one year clamps to Feb 28 in non-leap 2025.
+		$result = $this->assertQuery(
+			"SELECT TIMESTAMPADD(YEAR, 1, '2024-02-29') as output"
+		);
+		$this->assertEquals( '2025-02-28 00:00:00', $result[0]->output );
+
+		// Fractional month counts truncate toward zero.
+		$result = $this->assertQuery(
+			"SELECT TIMESTAMPADD(MONTH, 1.9, '2024-01-15') as output"
+		);
+		$this->assertEquals( '2024-02-15 00:00:00', $result[0]->output );
+
+		// Sub-second results keep a trimmed fractional part.
+		$result = $this->assertQuery(
+			"SELECT TIMESTAMPADD(MICROSECOND, 1500000, '2024-01-01') as output"
+		);
+		$this->assertEquals( '2024-01-01 00:00:01.5', $result[0]->output );
+
+		// Quoted units work as well as bare ones.
+		$result = $this->assertQuery(
+			"SELECT TIMESTAMPADD('SECOND', 1, '2024-01-01') as output"
+		);
+		$this->assertEquals( '2024-01-01 00:00:01', $result[0]->output );
+
+		// NULL and invalid arguments yield NULL.
+		$result = $this->assertQuery(
+			"SELECT TIMESTAMPADD(SECOND, NULL, '2024-01-01') as output"
+		);
+		$this->assertNull( $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT TIMESTAMPADD(BOGUS, 1, '2024-01-01') as output"
+		);
+		$this->assertNull( $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT TIMESTAMPADD(SECOND, 'abc', '2024-01-01') as output"
+		);
+		$this->assertNull( $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT TIMESTAMPADD(SECOND, 1, 'not a date') as output"
+		);
+		$this->assertNull( $result[0]->output );
+	}
+
+	public function testTimestampFunction() {
+		// Expected values were taken from MySQL 8.4.
+		$result = $this->assertQuery(
+			"SELECT TIMESTAMP('2024-05-10') as output"
+		);
+		$this->assertEquals( '2024-05-10 00:00:00', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT TIMESTAMP('2024-05-10 14:30:00') as output"
+		);
+		$this->assertEquals( '2024-05-10 14:30:00', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT TIMESTAMP('2024-01-01', '02:00:00') as output"
+		);
+		$this->assertEquals( '2024-01-01 02:00:00', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT TIMESTAMP('2024-01-01 10:00:00', '02:30:00') as output"
+		);
+		$this->assertEquals( '2024-01-01 12:30:00', $result[0]->output );
+
+		// A time past 24 hours rolls into the next day.
+		$result = $this->assertQuery(
+			"SELECT TIMESTAMP('2024-01-01', '25:00:00') as output"
+		);
+		$this->assertEquals( '2024-01-02 01:00:00', $result[0]->output );
+
+		// NULL and invalid arguments yield NULL.
+		$result = $this->assertQuery( 'SELECT TIMESTAMP(NULL) as output' );
+		$this->assertNull( $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT TIMESTAMP('2024-05-10', NULL) as output"
+		);
+		$this->assertNull( $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT TIMESTAMP('not a date') as output"
+		);
+		$this->assertNull( $result[0]->output );
+	}
+
+	public function testCurrentTimeAliases() {
+		// CURTIME() and SYSDATE() produce well-formed UTC values.
+		$result = $this->assertQuery( "SELECT CURTIME() LIKE '__:__:__' as output" );
+		$this->assertEquals( 1, $result[0]->output );
+
+		$result = $this->assertQuery( "SELECT SYSDATE() LIKE '____-__-__ __:__:__' as output" );
+		$this->assertEquals( 1, $result[0]->output );
+
+		$result = $this->assertQuery( 'SELECT SYSDATE() = NOW() as output' );
+		$this->assertEquals( 1, $result[0]->output );
+
+		// The driver has no authenticated user, so CURRENT_USER() is empty.
+		$result = $this->assertQuery( 'SELECT CURRENT_USER() as output' );
+		$this->assertEquals( '', $result[0]->output );
+	}
+
+	public function testWeekModes() {
+		/*
+		 * WEEK() currently ignores its mode argument and always returns the
+		 * ISO-8601 week. All eight modes therefore agree, which is a documented
+		 * approximation: matching MySQL's eight schemes needs a faithful port of
+		 * its calc_week(), including the WEEK_YEAR flag. The assertions below
+		 * pin the approximation so a future fix has to update them.
+		 */
+		$expected = array(
+			'2024-01-01' => 1,  // ISO 2024-W01.
+			'2021-01-01' => 53, // ISO 2020-W53.
+			'2024-05-10' => 19,
+			'2009-06-11' => 24, // MySQL mode 0 gives 23; this is ISO.
+		);
+		foreach ( $expected as $date => $week ) {
+			for ( $mode = 0; $mode <= 7; $mode++ ) {
+				$result = $this->assertQuery(
+					"SELECT WEEK('$date', $mode) as output"
+				);
+				$this->assertEquals( $week, $result[0]->output, "WEEK('$date', $mode)" );
+			}
+		}
+
+		// The default form behaves the same.
+		$result = $this->assertQuery( "SELECT WEEK('2024-05-10') as output" );
+		$this->assertEquals( 19, $result[0]->output );
+
+		// NULL date and NULL mode yield NULL.
+		$result = $this->assertQuery( 'SELECT WEEK(NULL, 1) as output' );
+		$this->assertNull( $result[0]->output );
+
+		$result = $this->assertQuery( "SELECT WEEK('2024-01-01', NULL) as output" );
+		$this->assertNull( $result[0]->output );
+	}
+
+	public function testYearWeekFunction() {
+		// Expected values were taken from MySQL 8.4.
+		// The buddynext aggregation use with ISO mode 1.
+		$result = $this->assertQuery(
+			"SELECT YEARWEEK('2024-05-10', 1) as output"
+		);
+		$this->assertEquals( 202419, $result[0]->output );
+
+		// The mode defaults to 0, where May 10 2024 is in week 18.
+		$result = $this->assertQuery(
+			"SELECT YEARWEEK('2024-05-10') as output"
+		);
+		$this->assertEquals( 202419, $result[0]->output );
+
+		// YEARWEEK() uses the same ISO approximation as WEEK(), including the
+		// ISO week-year: 2021-01-01 is in ISO week 53 of 2020, so this is
+		// 202053 regardless of the mode argument.
+		$result = $this->assertQuery(
+			"SELECT YEARWEEK('2021-01-01', 1) as output"
+		);
+		$this->assertEquals( 202053, $result[0]->output );
+
+		// WEEK() uses the ISO approximation too.
+		$result = $this->assertQuery(
+			"SELECT WEEK('2021-01-01', 1) as output"
+		);
+		$this->assertEquals( 53, $result[0]->output );
+
+		// ISO week-year: 1987-01-01 is a Thursday, so it is ISO week 1 of
+		// 1987. MySQL's documented mode-0 example returns 198652 for this
+		// date; the ISO approximation does not reproduce it.
+		$result = $this->assertQuery(
+			"SELECT YEARWEEK('1987-01-01') as output"
+		);
+		$this->assertEquals( 198701, $result[0]->output );
+
+		// 2024-12-30 is ISO week 1 of 2025.
+		$result = $this->assertQuery(
+			"SELECT WEEK('2024-12-30', 1) as output"
+		);
+		$this->assertEquals( 1, $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT YEARWEEK('2021-01-01', 3) as output"
+		);
+		$this->assertEquals( 202053, $result[0]->output );
+
+		// The single-argument form behaves like every other mode: 2021-01-01
+		// is ISO week 53 of 2020.
+		$result = $this->assertQuery(
+			"SELECT YEARWEEK('2021-01-01') as output"
+		);
+		$this->assertEquals( 202053, $result[0]->output );
+
+		// NULL and invalid input yield NULL.
+		$result = $this->assertQuery( 'SELECT YEARWEEK(NULL) as output' );
+		$this->assertNull( $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT YEARWEEK('not a date', 1) as output"
+		);
+		$this->assertNull( $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT YEARWEEK('2024-05-10', 8) as output"
+		);
+		$this->assertNull( $result[0]->output );
+	}
+
+	public function testWeekOfYearDayOfYearNamesAndQuarter() {
+		// Expected values were taken from MySQL 8.4.
+		// WEEKOFYEAR() is WEEK() with mode 3.
+		$result = $this->assertQuery(
+			"SELECT WEEKOFYEAR('2024-05-10') as output"
+		);
+		$this->assertEquals( 19, $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT WEEKOFYEAR('2021-01-01') as output"
+		);
+		$this->assertEquals( 53, $result[0]->output );
+
+		// 2024 is a leap year: Feb 29 is the 60th day (31 + 29).
+		$result = $this->assertQuery(
+			"SELECT DAYOFYEAR('2024-02-29') as output"
+		);
+		$this->assertEquals( 60, $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT DAYOFYEAR('2023-12-31') as output"
+		);
+		$this->assertEquals( 365, $result[0]->output );
+
+		// May 10 2024 is a Friday in the second quarter.
+		$result = $this->assertQuery(
+			"SELECT DAYNAME('2024-05-10') as output"
+		);
+		$this->assertEquals( 'Friday', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT MONTHNAME('2024-05-10') as output"
+		);
+		$this->assertEquals( 'May', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT QUARTER('2024-05-10') as output"
+		);
+		$this->assertEquals( 2, $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT QUARTER('2024-01-01') as output"
+		);
+		$this->assertEquals( 1, $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT QUARTER('2024-12-31') as output"
+		);
+		$this->assertEquals( 4, $result[0]->output );
+
+		// NULL and invalid input yield NULL.
+		$result = $this->assertQuery( 'SELECT QUARTER(NULL) as output' );
+		$this->assertNull( $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT DAYNAME('not a date') as output"
+		);
+		$this->assertNull( $result[0]->output );
+	}
+
+	public function testLastDayFunction() {
+		// Expected values were taken from MySQL 8.4.
+		$result = $this->assertQuery(
+			"SELECT LAST_DAY('2024-02-10') as output"
+		);
+		$this->assertEquals( '2024-02-29', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT LAST_DAY('2023-02-10') as output"
+		);
+		$this->assertEquals( '2023-02-28', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT LAST_DAY('2024-01-15 10:00:00') as output"
+		);
+		$this->assertEquals( '2024-01-31', $result[0]->output );
+
+		// NULL and invalid input yield NULL.
+		$result = $this->assertQuery( 'SELECT LAST_DAY(NULL) as output' );
+		$this->assertNull( $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT LAST_DAY('not a date') as output"
+		);
+		$this->assertNull( $result[0]->output );
+	}
+
+	public function testMakeDateTimeFunctions() {
+		// Expected values were taken from MySQL 8.4.
+		// 2024 is a leap year, so day 60 (31 + 29) is Feb 29.
+		$result = $this->assertQuery(
+			'SELECT MAKEDATE(2024, 60) as output'
+		);
+		$this->assertEquals( '2024-02-29', $result[0]->output );
+
+		$result = $this->assertQuery(
+			'SELECT MAKEDATE(2023, 365) as output'
+		);
+		$this->assertEquals( '2023-12-31', $result[0]->output );
+
+		// Day numbers past the end of the year roll over.
+		$result = $this->assertQuery(
+			'SELECT MAKEDATE(2023, 366) as output'
+		);
+		$this->assertEquals( '2024-01-01', $result[0]->output );
+
+		$result = $this->assertQuery(
+			'SELECT MAKEDATE(2024, 367) as output'
+		);
+		$this->assertEquals( '2025-01-01', $result[0]->output );
+
+		// The day-of-year must be greater than 0.
+		$result = $this->assertQuery(
+			'SELECT MAKEDATE(2024, 0) as output'
+		);
+		$this->assertNull( $result[0]->output );
+
+		$result = $this->assertQuery(
+			'SELECT MAKEDATE(NULL, 60) as output'
+		);
+		$this->assertNull( $result[0]->output );
+
+		// Hours pad to two digits and may pass 24.
+		$result = $this->assertQuery(
+			'SELECT MAKETIME(12, 15, 30) as output'
+		);
+		$this->assertEquals( '12:15:30', $result[0]->output );
+
+		$result = $this->assertQuery(
+			'SELECT MAKETIME(5, 4, 9) as output'
+		);
+		$this->assertEquals( '05:04:09', $result[0]->output );
+
+		$result = $this->assertQuery(
+			'SELECT MAKETIME(25, 0, 0) as output'
+		);
+		$this->assertEquals( '25:00:00', $result[0]->output );
+
+		$result = $this->assertQuery(
+			'SELECT MAKETIME(838, 59, 59) as output'
+		);
+		$this->assertEquals( '838:59:59', $result[0]->output );
+
+		// Out-of-range and NULL arguments yield NULL.
+		$result = $this->assertQuery(
+			'SELECT MAKETIME(839, 0, 0) as output'
+		);
+		$this->assertNull( $result[0]->output );
+
+		$result = $this->assertQuery(
+			'SELECT MAKETIME(12, 60, 0) as output'
+		);
+		$this->assertNull( $result[0]->output );
+
+		$result = $this->assertQuery(
+			'SELECT MAKETIME(12, 0, NULL) as output'
+		);
+		$this->assertNull( $result[0]->output );
+	}
+
+	public function testSecToTimeFunction() {
+		// Expected values were taken from MySQL 8.4.
+		$result = $this->assertQuery(
+			'SELECT SEC_TO_TIME(3600) as output'
+		);
+		$this->assertEquals( '01:00:00', $result[0]->output );
+
+		// 90000 seconds is 25 hours: TIME values may pass 24 hours.
+		$result = $this->assertQuery(
+			'SELECT SEC_TO_TIME(90000) as output'
+		);
+		$this->assertEquals( '25:00:00', $result[0]->output );
+
+		$result = $this->assertQuery(
+			'SELECT SEC_TO_TIME(-3600) as output'
+		);
+		$this->assertEquals( '-01:00:00', $result[0]->output );
+
+		$result = $this->assertQuery(
+			'SELECT SEC_TO_TIME(0) as output'
+		);
+		$this->assertEquals( '00:00:00', $result[0]->output );
+
+		// A fractional input keeps a trimmed fraction: 61.5 is 1:01.5.
+		$result = $this->assertQuery(
+			'SELECT SEC_TO_TIME(61.5) as output'
+		);
+		$this->assertEquals( '00:01:01.5', $result[0]->output );
+
+		// 838:59:59 is 3020399 seconds (838 * 3600 + 59 * 60 + 59).
+		$result = $this->assertQuery(
+			'SELECT SEC_TO_TIME(3020399) as output'
+		);
+		$this->assertEquals( '838:59:59', $result[0]->output );
+
+		// Anything past the TIME range clamps to the range endpoint.
+		$result = $this->assertQuery(
+			'SELECT SEC_TO_TIME(9999999) as output'
+		);
+		$this->assertEquals( '838:59:59', $result[0]->output );
+
+		$result = $this->assertQuery(
+			'SELECT SEC_TO_TIME(-9999999) as output'
+		);
+		$this->assertEquals( '-838:59:59', $result[0]->output );
+
+		// NULL and non-numeric input yield NULL.
+		$result = $this->assertQuery(
+			'SELECT SEC_TO_TIME(NULL) as output'
+		);
+		$this->assertNull( $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT SEC_TO_TIME('abc') as output"
+		);
+		$this->assertNull( $result[0]->output );
+	}
+
+	public function testTimeToSecFunction() {
+		// Expected values were taken from MySQL 8.4.
+		$result = $this->assertQuery(
+			"SELECT TIME_TO_SEC('01:00:00') as output"
+		);
+		$this->assertEquals( 3600, $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT TIME_TO_SEC('25:00:00') as output"
+		);
+		$this->assertEquals( 90000, $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT TIME_TO_SEC('-01:00:00') as output"
+		);
+		$this->assertEquals( -3600, $result[0]->output );
+
+		// Datetimes convert their time-of-day part.
+		$result = $this->assertQuery(
+			"SELECT TIME_TO_SEC('2024-01-01 02:00:00') as output"
+		);
+		$this->assertEquals( 7200, $result[0]->output );
+
+		// Fractional seconds truncate toward zero.
+		$result = $this->assertQuery(
+			"SELECT TIME_TO_SEC('00:01:01.9') as output"
+		);
+		$this->assertEquals( 61, $result[0]->output );
+
+		// NULL and invalid input yield NULL.
+		$result = $this->assertQuery(
+			'SELECT TIME_TO_SEC(NULL) as output'
+		);
+		$this->assertNull( $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT TIME_TO_SEC('not a time') as output"
+		);
+		$this->assertNull( $result[0]->output );
+	}
+
+	public function testToDaysFromDaysToSeconds() {
+		// Expected values were hand-computed with MySQL's calc_daynr():
+		// TO_DAYS('2007-10-07') = 365 * 2007 + 31 * 9 + 7 = 732841,
+		// minus (10 * 4 + 23) / 10 = 6, plus 2007 / 4 - ((2007 / 100 + 1) * 3) / 4
+		// = 501 - 15 = 486, giving 733321. All divisions truncate.
+		$result = $this->assertQuery(
+			"SELECT TO_DAYS('2007-10-07') as output"
+		);
+		$this->assertEquals( 733321, $result[0]->output );
+
+		// Day number 1 is 0000-01-01: the count anchors at year 0.
+		$result = $this->assertQuery(
+			"SELECT TO_DAYS('0000-01-01') as output"
+		);
+		$this->assertEquals( 1, $result[0]->output );
+
+		// Datetimes use their date part.
+		$result = $this->assertQuery(
+			"SELECT TO_DAYS('2007-10-07 12:00:00') as output"
+		);
+		$this->assertEquals( 733321, $result[0]->output );
+
+		$result = $this->assertQuery(
+			'SELECT FROM_DAYS(733321) as output'
+		);
+		$this->assertEquals( '2007-10-07', $result[0]->output );
+
+		$result = $this->assertQuery(
+			'SELECT FROM_DAYS(1) as output'
+		);
+		$this->assertEquals( '0000-01-01', $result[0]->output );
+
+		// TO_DAYS('9999-12-31') is 3652424 by the same computation, and
+		// anything past it is out of range.
+		$result = $this->assertQuery(
+			'SELECT FROM_DAYS(3652424) as output'
+		);
+		$this->assertEquals( '9999-12-31', $result[0]->output );
+
+		// Day 0 would be the MySQL zero date, which the driver reports
+		// as NULL, so any number below 1 returns NULL.
+		$result = $this->assertQuery(
+			'SELECT FROM_DAYS(0) as output'
+		);
+		$this->assertNull( $result[0]->output );
+
+		$result = $this->assertQuery(
+			'SELECT FROM_DAYS(-5) as output'
+		);
+		$this->assertNull( $result[0]->output );
+
+		$result = $this->assertQuery(
+			'SELECT FROM_DAYS(3652425) as output'
+		);
+		$this->assertNull( $result[0]->output );
+
+		// TO_SECONDS('2007-10-07') is (733321 - 1) * 86400 = 63358848000.
+		$result = $this->assertQuery(
+			"SELECT TO_SECONDS('2007-10-07') as output"
+		);
+		$this->assertEquals( 63358848000, $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT TO_SECONDS('0000-01-01') as output"
+		);
+		$this->assertEquals( 0, $result[0]->output );
+
+		// 2024-05-10 is day 739381, so midnight is (739381 - 1) * 86400
+		// and 14:30:00 adds 14 * 3600 + 30 * 60 = 52200 seconds.
+		$result = $this->assertQuery(
+			"SELECT TO_SECONDS('2024-05-10 14:30:00') as output"
+		);
+		$this->assertEquals( 63882484200, $result[0]->output );
+
+		// NULL and invalid input yield NULL.
+		$result = $this->assertQuery(
+			'SELECT TO_DAYS(NULL) as output'
+		);
+		$this->assertNull( $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT TO_DAYS('not a date') as output"
+		);
+		$this->assertNull( $result[0]->output );
+
+		$result = $this->assertQuery(
+			'SELECT TO_SECONDS(NULL) as output'
+		);
+		$this->assertNull( $result[0]->output );
+	}
+
+	public function testPeriodAddDiffFunctions() {
+		// Expected values were taken from MySQL 8.4.
+		$result = $this->assertQuery(
+			'SELECT PERIOD_ADD(200801, 2) as output'
+		);
+		$this->assertEquals( 200803, $result[0]->output );
+
+		$result = $this->assertQuery(
+			'SELECT PERIOD_ADD(200812, 1) as output'
+		);
+		$this->assertEquals( 200901, $result[0]->output );
+
+		// Two-digit input years are expanded and the result is always YYYYMM:
+		// 7001 is 1970-01, so adding one month is 197002.
+		$result = $this->assertQuery(
+			'SELECT PERIOD_ADD(7001, 1) as output'
+		);
+		$this->assertEquals( 197002, $result[0]->output );
+
+		$result = $this->assertQuery(
+			'SELECT PERIOD_ADD(200802, -1) as output'
+		);
+		$this->assertEquals( 200801, $result[0]->output );
+
+		$result = $this->assertQuery(
+			'SELECT PERIOD_DIFF(200802, 200703) as output'
+		);
+		$this->assertEquals( 11, $result[0]->output );
+
+		$result = $this->assertQuery(
+			'SELECT PERIOD_DIFF(200703, 200802) as output'
+		);
+		$this->assertEquals( -11, $result[0]->output );
+
+		// Invalid months and NULL arguments yield NULL.
+		$result = $this->assertQuery(
+			'SELECT PERIOD_ADD(200813, 1) as output'
+		);
+		$this->assertNull( $result[0]->output );
+
+		$result = $this->assertQuery(
+			'SELECT PERIOD_DIFF(200800, 200801) as output'
+		);
+		$this->assertNull( $result[0]->output );
+
+		$result = $this->assertQuery(
+			'SELECT PERIOD_ADD(NULL, 1) as output'
+		);
+		$this->assertNull( $result[0]->output );
+	}
+
+	public function testMicrosecondAddSubTimeFunctions() {
+		// Expected values were taken from MySQL 8.4.
+		$result = $this->assertQuery(
+			"SELECT MICROSECOND('12:00:00.123456') as output"
+		);
+		$this->assertEquals( 123456, $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT MICROSECOND('12:00:00') as output"
+		);
+		$this->assertEquals( 0, $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT MICROSECOND('2024-01-01 00:00:00.5') as output"
+		);
+		$this->assertEquals( 500000, $result[0]->output );
+
+		$result = $this->assertQuery(
+			'SELECT MICROSECOND(NULL) as output'
+		);
+		$this->assertNull( $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT ADDTIME('2024-01-01 00:00:00', '01:00:00') as output"
+		);
+		$this->assertEquals( '2024-01-01 01:00:00', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT SUBTIME('2024-01-01 00:00:00', '01:00:00') as output"
+		);
+		$this->assertEquals( '2023-12-31 23:00:00', $result[0]->output );
+
+		// TIME results may pass 24 hours: 23:59:59 + 2s is 24:00:01.
+		$result = $this->assertQuery(
+			"SELECT ADDTIME('23:59:59', '00:00:02') as output"
+		);
+		$this->assertEquals( '24:00:01', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT ADDTIME('01:00:00', '25:00:00') as output"
+		);
+		$this->assertEquals( '26:00:00', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT SUBTIME('01:00:00', '25:00:00') as output"
+		);
+		$this->assertEquals( '-24:00:00', $result[0]->output );
+
+		// TIME results clamp to +-838:59:59.
+		$result = $this->assertQuery(
+			"SELECT ADDTIME('838:00:00', '01:00:00') as output"
+		);
+		$this->assertEquals( '838:59:59', $result[0]->output );
+
+		// NULL and invalid input yield NULL.
+		$result = $this->assertQuery(
+			"SELECT ADDTIME(NULL, '01:00:00') as output"
+		);
+		$this->assertNull( $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT SUBTIME('01:00:00', 'not a time') as output"
+		);
+		$this->assertNull( $result[0]->output );
+	}
+
+	public function testGetFormatFunction() {
+		// The static mapping from the MySQL 8.4 documentation.
+		$expected = array(
+			array( 'DATE', 'USA', '%m.%d.%Y' ),
+			array( 'DATE', 'EUR', '%d.%m.%Y' ),
+			array( 'DATE', 'JIS', '%Y-%m-%d' ),
+			array( 'DATE', 'ISO', '%Y-%m-%d' ),
+			array( 'DATE', 'INTERNAL', '%Y%m%d' ),
+			array( 'DATETIME', 'USA', '%Y-%m-%d %H.%i.%s' ),
+			array( 'DATETIME', 'EUR', '%Y-%m-%d %H.%i.%s' ),
+			array( 'DATETIME', 'JIS', '%Y-%m-%d %H:%i:%s' ),
+			array( 'DATETIME', 'ISO', '%Y-%m-%d %H:%i:%s' ),
+			array( 'DATETIME', 'INTERNAL', '%Y%m%d%H%i%s' ),
+			array( 'TIME', 'USA', '%h:%i:%s %p' ),
+			array( 'TIME', 'EUR', '%H.%i.%s' ),
+			array( 'TIME', 'JIS', '%H:%i:%s' ),
+			array( 'TIME', 'ISO', '%H:%i:%s' ),
+			array( 'TIME', 'INTERNAL', '%H%i%s' ),
+		);
+		foreach ( $expected as list( $type, $name, $format ) ) {
+			$result = $this->assertQuery(
+				"SELECT GET_FORMAT($type, '$name') as output"
+			);
+			$this->assertEquals( $format, $result[0]->output, "GET_FORMAT($type, '$name')" );
+		}
+
+		// Both arguments are case-insensitive.
+		$result = $this->assertQuery(
+			"SELECT GET_FORMAT('datetime', 'eur') as output"
+		);
+		$this->assertEquals( '%Y-%m-%d %H.%i.%s', $result[0]->output );
+
+		// Unknown types, unknown names, and NULL yield NULL.
+		$result = $this->assertQuery(
+			"SELECT GET_FORMAT(DATE, 'XXX') as output"
+		);
+		$this->assertNull( $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT GET_FORMAT('XXX', 'USA') as output"
+		);
+		$this->assertNull( $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT GET_FORMAT(NULL, 'USA') as output"
+		);
+		$this->assertNull( $result[0]->output );
+	}
+
+	public function testTimeFormatFunction() {
+		// Expected values were taken from MySQL 8.4.
+		$result = $this->assertQuery(
+			"SELECT TIME_FORMAT('14:30:00', '%h:%i %p') as output"
+		);
+		$this->assertEquals( '02:30 PM', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT TIME_FORMAT('14:30:05', '%T') as output"
+		);
+		$this->assertEquals( '14:30:05', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT TIME_FORMAT('14:30:05', '%r') as output"
+		);
+		$this->assertEquals( '02:30:05 PM', $result[0]->output );
+
+		// %f is the zero-padded microseconds part.
+		$result = $this->assertQuery(
+			"SELECT TIME_FORMAT('14:30:00.5', '%s.%f') as output"
+		);
+		$this->assertEquals( '00.500000', $result[0]->output );
+
+		// Hours past 23 keep their unbounded value.
+		$result = $this->assertQuery(
+			"SELECT TIME_FORMAT('25:00:00', '%H:%i') as output"
+		);
+		$this->assertEquals( '25:00', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT TIME_FORMAT('-01:30:00', '%H:%i') as output"
+		);
+		$this->assertEquals( '-01:30', $result[0]->output );
+
+		// NULL and invalid input yield NULL.
+		$result = $this->assertQuery(
+			'SELECT TIME_FORMAT(NULL, \'%H\') as output'
+		);
+		$this->assertNull( $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT TIME_FORMAT('not a time', '%H') as output"
+		);
+		$this->assertNull( $result[0]->output );
+	}
+
+	public function testStrToDateFunction() {
+		// Expected values were taken from MySQL 8.4.
+		$result = $this->assertQuery(
+			"SELECT STR_TO_DATE('2024-05-10 14:30:00', '%Y-%m-%d %H:%i:%s') as output"
+		);
+		$this->assertEquals( '2024-05-10 14:30:00', $result[0]->output );
+
+		// A format with only date parts yields a DATE, as in MySQL.
+		$result = $this->assertQuery(
+			"SELECT STR_TO_DATE('2024-05-10', '%Y-%m-%d') as output"
+		);
+		$this->assertEquals( '2024-05-10', $result[0]->output );
+
+		// Two-digit years convert as 00-69 to 2000-2069, 70-99 to 1900-1999.
+		$result = $this->assertQuery(
+			"SELECT STR_TO_DATE('24-05-10', '%y-%m-%d') as output"
+		);
+		$this->assertEquals( '2024-05-10', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT STR_TO_DATE('69-05-10', '%y-%m-%d') as output"
+		);
+		$this->assertEquals( '2069-05-10', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT STR_TO_DATE('70-05-10', '%y-%m-%d') as output"
+		);
+		$this->assertEquals( '1970-05-10', $result[0]->output );
+
+		// Month names match in English, case-insensitively.
+		$result = $this->assertQuery(
+			"SELECT STR_TO_DATE('May 10, 2024', '%M %d, %Y') as output"
+		);
+		$this->assertEquals( '2024-05-10', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT STR_TO_DATE('10/05/2024 2:30:05 PM', '%m/%d/%Y %r') as output"
+		);
+		$this->assertEquals( '2024-10-05 14:30:05', $result[0]->output );
+
+		// 12-hour clocks adjust with AM/PM: midnight and noon included.
+		$result = $this->assertQuery(
+			"SELECT STR_TO_DATE('2024-05-10 02:30 PM', '%Y-%m-%d %h:%i %p') as output"
+		);
+		$this->assertEquals( '2024-05-10 14:30:00', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT STR_TO_DATE('2024-05-10 12:00 AM', '%Y-%m-%d %h:%i %p') as output"
+		);
+		$this->assertEquals( '2024-05-10 00:00:00', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT STR_TO_DATE('2024-05-10 12:00 PM', '%Y-%m-%d %h:%i %p') as output"
+		);
+		$this->assertEquals( '2024-05-10 12:00:00', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT STR_TO_DATE('Sept 3, 2024', '%b %d, %Y') as output"
+		);
+		$this->assertEquals( '2024-09-03', $result[0]->output );
+
+		// Values that do not match the format exactly yield NULL.
+		$result = $this->assertQuery(
+			"SELECT STR_TO_DATE('2024-05-10', '%d/%m/%Y') as output"
+		);
+		$this->assertNull( $result[0]->output );
+
+		// Unsupported specifiers yield NULL.
+		$result = $this->assertQuery(
+			"SELECT STR_TO_DATE('2024', '%Y %x') as output"
+		);
+		$this->assertNull( $result[0]->output );
+
+		// The year, month, and day must all be present.
+		$result = $this->assertQuery(
+			"SELECT STR_TO_DATE('10:30', '%H:%i') as output"
+		);
+		$this->assertNull( $result[0]->output );
+
+		// Out-of-range parts yield NULL.
+		$result = $this->assertQuery(
+			"SELECT STR_TO_DATE('2024-13-01', '%Y-%m-%d') as output"
+		);
+		$this->assertNull( $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT STR_TO_DATE('2024-02-30', '%Y-%m-%d') as output"
+		);
+		$this->assertNull( $result[0]->output );
+
+		// NULL arguments yield NULL.
+		$result = $this->assertQuery(
+			'SELECT STR_TO_DATE(NULL, \'%Y-%m-%d\') as output'
+		);
+		$this->assertNull( $result[0]->output );
+	}
+
 	public function testIntervalArithmetic() {
 		// Expected values were taken from MySQL 8.4.
 		$result = $this->assertQuery(
