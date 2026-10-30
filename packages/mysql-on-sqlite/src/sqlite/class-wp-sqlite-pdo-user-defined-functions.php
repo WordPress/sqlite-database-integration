@@ -81,6 +81,13 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'utc_timestamp'                => 'utc_timestamp',
 		'version'                      => 'version',
 		'reverse'                      => 'reverse',
+		'json_exists'                  => 'json_exists',
+		'chr'                          => 'chr',
+		'json_compact'                 => 'json_compact',
+		'json_detailed'                => 'json_detailed',
+		'json_normalize'               => 'json_normalize',
+		'json_object_filter_keys'      => 'json_object_filter_keys',
+		'crc32c'                       => 'crc32c',
 
 		// Internal helper functions.
 		'_helper_like_to_glob_pattern' => '_helper_like_to_glob_pattern',
@@ -109,6 +116,16 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * @var int|null
 	 */
 	private $rand_last_seed = null;
+
+	/**
+	 * Lookup table for the pure-PHP CRC-32C implementation.
+	 *
+	 * Built lazily by _helper_crc32c_raw(); only used when PHP's hash()
+	 * does not offer the 'crc32c' algorithm or when chaining checksums.
+	 *
+	 * @var array|null
+	 */
+	private static $crc32c_table = null;
 
 	/**
 	 * Clear any per-statement state held by the UDFs.
@@ -925,6 +942,915 @@ class WP_SQLite_PDO_User_Defined_Functions {
 			return implode( '', array_reverse( $matches[0] ) );
 		}
 		return strrev( $str );
+	}
+
+	/**
+	 * Method to emulate MariaDB JSON_EXISTS() function.
+	 *
+	 * Returns 1 when the given JSON path exists in the document, 0 when it
+	 * does not, and NULL when any argument is NULL or when either the
+	 * document or the path is invalid. Never throws.
+	 *
+	 * Supported path syntax is a subset of MariaDB JSON paths: '$' for the
+	 * root, '.name' for bare member names ('[A-Za-z0-9_]+', anything else
+	 * must use the quoted form), '."quoted name"' and "$['quoted name']"
+	 * (single or double quotes, backslash escapes) for arbitrary member
+	 * names, and '[N]' for array indices, including '$[N]' at the top
+	 * level. A type mismatch along the path (e.g. a member lookup on an
+	 * array, or an index lookup on an object or scalar) means the path
+	 * does not exist and yields 0, matching MariaDB.
+	 *
+	 * Differences from MariaDB, all by design:
+	 * - Wildcard ('*', '**') and range paths are out of scope and yield
+	 *   NULL instead of being evaluated.
+	 * - MariaDB rejects some paths this implementation accepts and vice
+	 *   versa; anything outside the subset above yields NULL.
+	 * - Duplicate object keys keep the last value (PHP json_decode
+	 *   semantics); JSON deeper than 512 levels yields NULL.
+	 *
+	 * @return int|null 1 when the path exists, 0 when it does not, NULL on
+	 *                  NULL or invalid input.
+	 */
+	public function json_exists() {
+		if ( 2 !== func_num_args() ) {
+			return null;
+		}
+		$args = func_get_args();
+		$doc  = $args[0];
+		$path = $args[1];
+		if ( null === $doc || null === $path ) {
+			return null;
+		}
+		list( $ok, $data ) = $this->_helper_json_decode_doc( $doc );
+		if ( ! $ok ) {
+			return null;
+		}
+		list( $valid, $exists ) = $this->_helper_json_path_lookup( $data, $path );
+		if ( ! $valid ) {
+			return null;
+		}
+		return $exists ? 1 : 0;
+	}
+
+	/**
+	 * Method to emulate MariaDB CHR() function.
+	 *
+	 * Returns the character for the given Unicode codepoint as a UTF-8
+	 * string. NULL yields NULL, and so does anything that is not a valid
+	 * codepoint: negative values, values above U+10FFFF, UTF-16 surrogates
+	 * (U+D800-U+DFFF), and non-numeric strings. MariaDB instead coerces
+	 * invalid input with a warning, but this driver has no warning channel,
+	 * so NULL is returned and nothing is thrown. Floats and numeric strings
+	 * are truncated toward zero, booleans are cast to 0 or 1.
+	 *
+	 * MariaDB CHR() accepts exactly one argument; this implementation also
+	 * accepts additional codepoints and concatenates them (CHAR()-style),
+	 * which is a strict superset: every valid MariaDB CHR(N) call behaves
+	 * the same. Zero arguments yields NULL.
+	 *
+	 * Uses mb_chr() when mbstring is available, chr() for values below 256
+	 * otherwise, and a pure-PHP UTF-8 encoder above that. The zero codepoint
+	 * is always encoded directly, because mb_chr( 0 ) does not produce a NUL
+	 * byte on PHP 7.2.
+	 *
+	 * @return string|null The character(s), or NULL on NULL or invalid input.
+	 */
+	public function chr() {
+		$args = func_get_args();
+		if ( 0 === count( $args ) ) {
+			return null;
+		}
+		$result = '';
+		foreach ( $args as $arg ) {
+			if ( null === $arg ) {
+				return null;
+			}
+			if ( is_bool( $arg ) ) {
+				$codepoint = (int) $arg;
+			} elseif ( is_int( $arg ) ) {
+				$codepoint = $arg;
+			} elseif ( is_float( $arg ) ) {
+				$codepoint = (int) $arg;
+			} elseif ( is_string( $arg ) && is_numeric( $arg ) ) {
+				$codepoint = (int) $arg;
+			} else {
+				return null;
+			}
+			if (
+				$codepoint < 0
+				|| $codepoint > 0x10FFFF
+				|| ( $codepoint >= 0xD800 && $codepoint <= 0xDFFF )
+			) {
+				return null;
+			}
+			if ( 0 === $codepoint ) {
+				// mb_chr( 0 ) does not return a NUL byte on PHP 7.2, so the
+				// zero codepoint is encoded directly.
+				$result .= "\0";
+			} elseif ( function_exists( 'mb_chr' ) ) {
+				try {
+					$char = mb_chr( $codepoint, 'UTF-8' );
+				} catch ( Throwable $e ) {
+					return null;
+				}
+				if ( false === $char ) {
+					return null;
+				}
+				$result .= $char;
+			} elseif ( $codepoint < 256 ) {
+				/*
+				 * A raw chr() byte would be latin1, not UTF-8: CHR(200) must
+				 * yield U+00C8 encoded as two bytes. The general encoder
+				 * handles the whole BMP, so use it here too.
+				 */
+				$encoded = $this->_helper_utf8_encode_codepoint( $codepoint );
+				if ( false === $encoded ) {
+					return null;
+				}
+				$result .= $encoded;
+			} else {
+				$encoded = $this->_helper_utf8_encode_codepoint( $codepoint );
+				if ( false === $encoded ) {
+					return null;
+				}
+				$result .= $encoded;
+			}
+		}
+		return $result;
+	}
+
+	/**
+	 * Method to emulate MariaDB JSON_COMPACT() function.
+	 *
+	 * Removes all insignificant whitespace from a JSON document, preserving
+	 * everything else byte-for-byte: key order, number formatting ('1.50'
+	 * stays '1.50'), and string escapes. This matches MariaDB, which strips
+	 * whitespace rather than re-serializing the document. Returns NULL when
+	 * the argument is NULL or is not valid JSON. Never throws.
+	 *
+	 * @return string|null The compacted document, or NULL on NULL or invalid input.
+	 */
+	public function json_compact() {
+		if ( 1 !== func_num_args() ) {
+			return null;
+		}
+		$args = func_get_args();
+		$doc  = $args[0];
+		if ( null === $doc ) {
+			return null;
+		}
+		$decoded = $this->_helper_json_decode_doc( $doc );
+		if ( ! $decoded[0] ) {
+			return null;
+		}
+		if ( is_bool( $doc ) ) {
+			$doc = $doc ? 'true' : 'false';
+		} elseif ( is_int( $doc ) || is_float( $doc ) ) {
+			$doc = (string) $doc;
+		}
+		return $this->_helper_json_compact_text( $doc );
+	}
+
+	/**
+	 * Method to emulate MariaDB JSON_DETAILED() function.
+	 *
+	 * Renders a JSON document in human-readable form: one value per line,
+	 * objects and arrays expanded with newlines and indentation, scalar
+	 * object values on the same line as their key, and container values on
+	 * the line below their key, e.g.:
+	 *
+	 *     {
+	 *         "A": 1,
+	 *         "B":
+	 *         [
+	 *             2,
+	 *             3
+	 *         ]
+	 *     }
+	 *
+	 * This matches the MariaDB documentation example, including the default
+	 * tab size of 4 spaces. Differences from MariaDB, all by design:
+	 * - No trailing space is emitted after the colon of a container value
+	 *   ('"B":' instead of '"B": ').
+	 * - Newer MariaDB versions (see MDEV-19160) keep short scalar-only
+	 *   arrays on one line; this implementation always expands containers.
+	 * - Numbers are re-serialized from PHP values, so '1.50' becomes '1.5';
+	 *   whole floats print with '.0' ('1.0'); non-ASCII strings print
+	 *   literally (never '\uXXXX'); '/' is never escaped.
+	 * - The optional tab size must be a non-negative number (truncated
+	 *   toward zero) not exceeding 64; anything else yields NULL, as does
+	 *   an explicit NULL tab size. MariaDB raises an error instead.
+	 *
+	 * JSON_PRETTY() is deliberately not registered as an alias here. The
+	 * name belongs to MySQL, which implements it with its own 2-space
+	 * layout, and a separate change provides that implementation.
+	 *
+	 * @return string|null The detailed rendering, or NULL on NULL or invalid input.
+	 */
+	public function json_detailed() {
+		$num_args = func_num_args();
+		if ( 1 !== $num_args && 2 !== $num_args ) {
+			return null;
+		}
+		$args = func_get_args();
+		$doc  = $args[0];
+		if ( null === $doc ) {
+			return null;
+		}
+		if ( 2 === $num_args ) {
+			$tab_size = $args[1];
+			if ( null === $tab_size || is_bool( $tab_size ) || ! is_numeric( $tab_size ) ) {
+				return null;
+			}
+			$tab_size = (int) $tab_size;
+			if ( $tab_size < 0 || $tab_size > 64 ) {
+				return null;
+			}
+		} else {
+			$tab_size = 4;
+		}
+		list( $ok, $data ) = $this->_helper_json_decode_doc( $doc );
+		if ( ! $ok ) {
+			return null;
+		}
+		$rendered = $this->_helper_json_encode_detailed( $data, 0, $tab_size );
+		if ( false === $rendered ) {
+			return null;
+		}
+		return $rendered;
+	}
+
+	/**
+	 * Method to emulate MariaDB JSON_NORMALIZE() function (MariaDB 10.7+).
+	 *
+	 * Recursively sorts object keys and removes insignificant whitespace,
+	 * so equivalent documents compare equal as strings. Key order is byte
+	 * order (PHP strcmp); duplicate keys keep the last value (PHP
+	 * json_decode semantics). Numbers are re-serialized from PHP values, so
+	 * '1.50' becomes '1.5' and whole floats print with '.0'; non-ASCII
+	 * strings print literally and '/' is never escaped. Returns NULL when
+	 * the argument is NULL or is not valid JSON. Never throws.
+	 *
+	 * @return string|null The normalized document, or NULL on NULL or invalid input.
+	 */
+	public function json_normalize() {
+		if ( 1 !== func_num_args() ) {
+			return null;
+		}
+		$args = func_get_args();
+		$doc  = $args[0];
+		if ( null === $doc ) {
+			return null;
+		}
+		list( $ok, $data ) = $this->_helper_json_decode_doc( $doc );
+		if ( ! $ok ) {
+			return null;
+		}
+		$normalized = $this->_helper_json_normalize_value( $data );
+		$encoded    = $this->_helper_json_encode_compact( $normalized );
+		if ( false === $encoded ) {
+			return null;
+		}
+		return $encoded;
+	}
+
+	/**
+	 * Method to emulate MariaDB JSON_OBJECT_FILTER_KEYS() function
+	 * (MariaDB 11.2+).
+	 *
+	 * Returns a JSON object containing only the top-level key/value pairs
+	 * whose keys are listed, preserving the original key order. Two key
+	 * forms are accepted:
+	 * - The MariaDB form: exactly two arguments where the second is a JSON
+	 *   array of keys, e.g. JSON_OBJECT_FILTER_KEYS(doc, '["a","c"]'). Only
+	 *   string, integer, and float array elements are used as keys; anything
+	 *   else in the array is ignored. (A single plain-text key that happens
+	 *   to parse as a JSON array is therefore interpreted as the array form;
+	 *   such key names are pathological and unsupported.)
+	 * - A variadic convenience form: JSON_OBJECT_FILTER_KEYS(doc, 'a', 'c'),
+	 *   where every argument after the document is used verbatim as a key.
+	 *
+	 * Keys not present in the document are ignored; when none match, the
+	 * result is '{}'. Returns NULL when the document is NULL, when any key
+	 * argument is NULL, when the document is not valid JSON, or when the
+	 * document is not a JSON object (MariaDB has no defined result for
+	 * non-objects either). Never throws.
+	 *
+	 * @return string|null The filtered object, or NULL on NULL or invalid input.
+	 */
+	public function json_object_filter_keys() {
+		$num_args = func_num_args();
+		if ( $num_args < 2 ) {
+			return null;
+		}
+		$args = func_get_args();
+		$doc  = $args[0];
+		if ( null === $doc ) {
+			return null;
+		}
+		$key_args = array_slice( $args, 1 );
+		foreach ( $key_args as $key_arg ) {
+			if ( null === $key_arg ) {
+				return null;
+			}
+		}
+		list( $ok, $data ) = $this->_helper_json_decode_doc( $doc );
+		if ( ! $ok ) {
+			return null;
+		}
+		if ( ! ( $data instanceof stdClass ) ) {
+			return null;
+		}
+		if ( 1 === count( $key_args ) && is_string( $key_args[0] ) ) {
+			$decoded_keys = json_decode( $key_args[0] );
+			if ( JSON_ERROR_NONE === json_last_error() && is_array( $decoded_keys ) ) {
+				$keys = array();
+				foreach ( $decoded_keys as $entry ) {
+					if ( is_string( $entry ) ) {
+						$keys[] = $entry;
+					} elseif ( is_int( $entry ) || is_float( $entry ) ) {
+						$keys[] = (string) $entry;
+					}
+				}
+				return $this->_helper_json_filter_keys( $data, $keys );
+			}
+		}
+		$keys = array();
+		foreach ( $key_args as $key_arg ) {
+			if ( is_string( $key_arg ) ) {
+				$keys[] = $key_arg;
+			} elseif ( is_int( $key_arg ) || is_float( $key_arg ) || is_bool( $key_arg ) ) {
+				$keys[] = (string) $key_arg;
+			} else {
+				return null;
+			}
+		}
+		return $this->_helper_json_filter_keys( $data, $keys );
+	}
+
+	/**
+	 * Method to emulate MariaDB CRC32C() function (MariaDB 10.8+).
+	 *
+	 * Computes the CRC-32C (Castagnoli polynomial 0x1EDC6F41) checksum of a
+	 * string as an unsigned 32-bit integer. The two-argument chained form
+	 * CRC32C(previous_crc, str) continues a previous checksum, so
+	 * CRC32C(CRC32C('Maria'), 'DB') equals CRC32C('MariaDB'). The previous
+	 * checksum is masked to 32 bits; anything that is not an integer or a
+	 * numeric string yields NULL. NULL input yields NULL. Never throws.
+	 *
+	 * The checksum is returned as an int when it fits in signed 32 bits, and
+	 * as a float above that. PDO truncates integers returned from SQLite UDFs
+	 * to 32-bit signed, which would corrupt the upper half of the range (e.g.
+	 * CRC32C('123456789') is 0xE3069283 = 3808858755), so those values stay
+	 * floats. Every 32-bit value is exactly representable as a float, so
+	 * numeric comparisons, arithmetic, and integer-affinity storage all
+	 * behave. Text rendering differs by PHP version for the float case: PDO
+	 * stringifies a float result with SQLite's text conversion before PHP
+	 * 8.1, which appends '.0' to integral values, so the upper half of the
+	 * range renders as '3808858755.0' there instead of '3808858755'.
+	 *
+	 * Uses PHP's hash('crc32c') when the algorithm is available (checked via
+	 * hash_algos() at runtime) and a pure-PHP table implementation
+	 * otherwise; the chained form always uses the pure-PHP implementation
+	 * with a custom initial value. Requires 64-bit PHP for correct unsigned
+	 * arithmetic, like the RAND() implementation below.
+	 *
+	 * @return float|int|null The unsigned checksum, or NULL on NULL or invalid input.
+	 */
+	public function crc32c() {
+		$num_args = func_num_args();
+		if ( 1 !== $num_args && 2 !== $num_args ) {
+			return null;
+		}
+		$args = func_get_args();
+		if ( 1 === $num_args ) {
+			$str = $args[0];
+			if ( null === $str ) {
+				return null;
+			}
+			if ( ! is_scalar( $str ) ) {
+				return null;
+			}
+			$str = (string) $str;
+			if (
+				function_exists( 'hash' )
+				&& function_exists( 'hash_algos' )
+				&& in_array( 'crc32c', hash_algos(), true )
+			) {
+				return $this->_helper_crc32c_return( hexdec( hash( 'crc32c', $str ) ) );
+			}
+			return $this->_helper_crc32c_return( ( $this->_helper_crc32c_raw( $str, 0xFFFFFFFF ) ^ 0xFFFFFFFF ) & 0xFFFFFFFF );
+		}
+		$previous = $args[0];
+		$str      = $args[1];
+		if ( null === $previous || null === $str ) {
+			return null;
+		}
+		if ( ! is_scalar( $str ) ) {
+			return null;
+		}
+		$str = (string) $str;
+		if ( is_bool( $previous ) || is_float( $previous ) ) {
+			$previous = (int) $previous;
+		} elseif ( is_string( $previous ) && is_numeric( $previous ) ) {
+			$previous = (int) $previous;
+		} elseif ( ! is_int( $previous ) ) {
+			return null;
+		}
+		$previous = $previous & 0xFFFFFFFF;
+		return $this->_helper_crc32c_return( ( $this->_helper_crc32c_raw( $str, ( $previous ^ 0xFFFFFFFF ) & 0xFFFFFFFF ) ^ 0xFFFFFFFF ) & 0xFFFFFFFF );
+	}
+
+	/**
+	 * Normalise a computed CRC32C checksum for return from the UDF.
+	 *
+	 * A checksum that fits in signed 32 bits is returned as an int, which PDO
+	 * passes through unchanged and which stringifies identically on every
+	 * supported PHP version. Larger checksums are returned as a float because
+	 * PDO truncates integer UDF results to 32-bit signed. The float still
+	 * compares and computes numerically, but PDO stringifies it with SQLite's
+	 * text conversion before PHP 8.1, which renders the upper half of the
+	 * range as '3808858755.0' where an int renders '3808858755'.
+	 *
+	 * @param int|float $crc The computed checksum.
+	 * @return int|float The checksum in the form the UDF should return.
+	 */
+	private function _helper_crc32c_return( $crc ) {
+		if ( (float) $crc <= 0x7FFFFFFF ) {
+			return (int) $crc;
+		}
+		return (float) $crc;
+	}
+
+	/**
+	 * Decode a JSON document argument shared by the JSON UDFs.
+	 *
+	 * Scalars are coerced to their JSON text form (booleans to 'true' or
+	 * 'false', numbers via string cast); anything else that is not a string
+	 * is rejected. Objects decode to stdClass so that empty objects stay
+	 * distinguishable from empty arrays and key order is preserved.
+	 *
+	 * @param mixed $doc The document argument.
+	 * @return array Array of (bool $ok, mixed $data).
+	 */
+	private function _helper_json_decode_doc( $doc ) {
+		if ( is_bool( $doc ) ) {
+			$doc = $doc ? 'true' : 'false';
+		} elseif ( is_int( $doc ) || is_float( $doc ) ) {
+			$doc = (string) $doc;
+		} elseif ( ! is_string( $doc ) ) {
+			return array( false, null );
+		}
+		$data = json_decode( $doc );
+		if ( JSON_ERROR_NONE !== json_last_error() ) {
+			return array( false, null );
+		}
+		return array( true, $data );
+	}
+
+	/**
+	 * Evaluate a JSON path against a decoded document.
+	 *
+	 * See json_exists() for the supported path subset. Parsing continues
+	 * past the first missing step so that the remainder of the path is still
+	 * validated: an invalid path reports invalid even when an earlier step
+	 * is already missing.
+	 *
+	 * @param mixed  $data The decoded document.
+	 * @param mixed  $path The path argument.
+	 * @return array Array of (bool $valid, bool $exists).
+	 */
+	private function _helper_json_path_lookup( $data, $path ) {
+		if ( ! is_string( $path ) || '' === $path || '$' !== $path[0] ) {
+			return array( false, false );
+		}
+		$len     = strlen( $path );
+		$pos     = 1;
+		$current = $data;
+		$exists  = true;
+		if ( 1 === $len ) {
+			return array( true, true );
+		}
+		while ( $pos < $len ) {
+			$char = $path[ $pos ];
+			if ( '.' === $char ) {
+				++$pos;
+				if ( $pos < $len && ( '"' === $path[ $pos ] || "'" === $path[ $pos ] ) ) {
+					list( $ok, $key, $pos ) = $this->_helper_json_path_quoted_key( $path, $pos );
+					if ( ! $ok ) {
+						return array( false, false );
+					}
+				} else {
+					$start = $pos;
+					while ( $pos < $len && '.' !== $path[ $pos ] && '[' !== $path[ $pos ] ) {
+						++$pos;
+					}
+					$key = substr( $path, $start, $pos - $start );
+					if ( '' === $key || 1 !== preg_match( '/^[A-Za-z0-9_]+$/', $key ) ) {
+						return array( false, false );
+					}
+				}
+				if ( $exists ) {
+					if ( $current instanceof stdClass && property_exists( $current, $key ) ) {
+						$current = $current->$key;
+					} else {
+						$exists = false;
+					}
+				}
+			} elseif ( '[' === $char ) {
+				++$pos;
+				if ( $pos < $len && ( '"' === $path[ $pos ] || "'" === $path[ $pos ] ) ) {
+					list( $ok, $key, $pos ) = $this->_helper_json_path_quoted_key( $path, $pos );
+					if ( ! $ok || $pos >= $len || ']' !== $path[ $pos ] ) {
+						return array( false, false );
+					}
+					++$pos;
+					if ( $exists ) {
+						if ( $current instanceof stdClass && property_exists( $current, $key ) ) {
+							$current = $current->$key;
+						} else {
+							$exists = false;
+						}
+					}
+				} elseif ( $pos < $len && '*' === $path[ $pos ] ) {
+					// Wildcards are out of scope; see json_exists().
+					return array( false, false );
+				} else {
+					$start = $pos;
+					while ( $pos < $len && ']' !== $path[ $pos ] ) {
+						++$pos;
+					}
+					$inside = substr( $path, $start, $pos - $start );
+					if ( $pos >= $len || 1 !== preg_match( '/^[0-9]+$/', $inside ) ) {
+						return array( false, false );
+					}
+					++$pos;
+					$index = (int) $inside;
+					if ( $exists ) {
+						if ( is_array( $current ) && array_key_exists( $index, $current ) ) {
+							$current = $current[ $index ];
+						} else {
+							$exists = false;
+						}
+					}
+				}
+			} else {
+				return array( false, false );
+			}
+		}
+		return array( true, $exists );
+	}
+
+	/**
+	 * Parse a quoted JSON path key starting at the opening quote.
+	 *
+	 * A backslash escapes the following character. The closing quote must
+	 * be present; an unescaped closing quote ends the key.
+	 *
+	 * @param string $path The full path text.
+	 * @param int    $pos  Position of the opening quote.
+	 * @return array Array of (bool $ok, string $key, int $next_pos).
+	 */
+	private function _helper_json_path_quoted_key( $path, $pos ) {
+		$len   = strlen( $path );
+		$quote = $path[ $pos ];
+		++$pos;
+		$key = '';
+		while ( $pos < $len ) {
+			$char = $path[ $pos ];
+			if ( '\\' === $char && $pos + 1 < $len ) {
+				$key .= $path[ $pos + 1 ];
+				$pos += 2;
+				continue;
+			}
+			if ( $char === $quote ) {
+				return array( true, $key, $pos + 1 );
+			}
+			$key .= $char;
+			++$pos;
+		}
+		return array( false, '', $pos );
+	}
+
+	/**
+	 * Strip insignificant whitespace from valid JSON text.
+	 *
+	 * Whitespace outside string literals is dropped; everything else,
+	 * including whitespace inside strings, number formatting, key order,
+	 * and escape sequences, is preserved byte-for-byte.
+	 *
+	 * @param string $text Valid JSON text.
+	 * @return string The compacted text.
+	 */
+	private function _helper_json_compact_text( $text ) {
+		$len       = strlen( $text );
+		$out       = '';
+		$in_string = false;
+		$i         = 0;
+		while ( $i < $len ) {
+			$char = $text[ $i ];
+			if ( $in_string ) {
+				$out .= $char;
+				if ( '\\' === $char && $i + 1 < $len ) {
+					$out .= $text[ $i + 1 ];
+					$i   += 2;
+					continue;
+				}
+				if ( '"' === $char ) {
+					$in_string = false;
+				}
+				++$i;
+				continue;
+			}
+			if ( '"' === $char ) {
+				$in_string = true;
+				$out      .= $char;
+				++$i;
+				continue;
+			}
+			if ( ' ' === $char || "\t" === $char || "\n" === $char || "\r" === $char ) {
+				++$i;
+				continue;
+			}
+			$out .= $char;
+			++$i;
+		}
+		return $out;
+	}
+
+	/**
+	 * Encode a scalar JSON value in canonical compact form.
+	 *
+	 * Whole floats print with '.0' so they stay valid JSON numbers that
+	 * still read as floats ('1.0' instead of PHP's '1'); strings print with
+	 * non-ASCII characters and '/' unescaped.
+	 *
+	 * @param mixed $value The scalar value.
+	 * @return string|false The encoded scalar, or false on failure.
+	 */
+	private function _helper_json_encode_scalar( $value ) {
+		if ( null === $value ) {
+			return 'null';
+		}
+		if ( is_bool( $value ) ) {
+			return $value ? 'true' : 'false';
+		}
+		if ( is_int( $value ) ) {
+			return (string) $value;
+		}
+		if ( is_float( $value ) ) {
+			$encoded = json_encode( $value );
+			if ( false === $encoded ) {
+				return false;
+			}
+			if ( strlen( $encoded ) === strcspn( $encoded, '.eE' ) ) {
+				$encoded .= '.0';
+			}
+			return $encoded;
+		}
+		if ( is_string( $value ) ) {
+			return $this->_helper_json_encode_string( $value );
+		}
+		return false;
+	}
+
+	/**
+	 * Encode a string as a JSON string literal.
+	 *
+	 * Non-ASCII characters and '/' are left unescaped, matching MariaDB output.
+	 *
+	 * @param string $str The string.
+	 * @return string|false The quoted literal, or false on failure.
+	 */
+	private function _helper_json_encode_string( $str ) {
+		$encoded = json_encode( $str, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES );
+		if ( false === $encoded ) {
+			return false;
+		}
+		return $encoded;
+	}
+
+	/**
+	 * Encode a decoded JSON value in compact form.
+	 *
+	 * Objects always encode as JSON objects, even when their keys look like
+	 * a sequential integer range (PHP would encode those as arrays).
+	 *
+	 * @param mixed $value The decoded value.
+	 * @return string|false The compact encoding, or false on failure.
+	 */
+	private function _helper_json_encode_compact( $value ) {
+		if ( $value instanceof stdClass ) {
+			$parts = array();
+			foreach ( $value as $k => $v ) {
+				$key     = $this->_helper_json_encode_string( (string) $k );
+				$encoded = $this->_helper_json_encode_compact( $v );
+				if ( false === $key || false === $encoded ) {
+					return false;
+				}
+				$parts[] = $key . ':' . $encoded;
+			}
+			return '{' . implode( ',', $parts ) . '}';
+		}
+		if ( is_array( $value ) ) {
+			$parts = array();
+			foreach ( $value as $v ) {
+				$encoded = $this->_helper_json_encode_compact( $v );
+				if ( false === $encoded ) {
+					return false;
+				}
+				$parts[] = $encoded;
+			}
+			return '[' . implode( ',', $parts ) . ']';
+		}
+		return $this->_helper_json_encode_scalar( $value );
+	}
+
+	/**
+	 * Encode a decoded JSON value in detailed (human-readable) form.
+	 *
+	 * See json_detailed() for the exact layout. Container values start on
+	 * the line below their object key, at the key's own indent level.
+	 *
+	 * @param mixed $value The decoded value.
+	 * @param int   $level The current indent level.
+	 * @param int   $tab   Spaces per indent level.
+	 * @return string|false The detailed rendering, or false on failure.
+	 */
+	private function _helper_json_encode_detailed( $value, $level, $tab ) {
+		if ( $value instanceof stdClass ) {
+			$vars = get_object_vars( $value );
+			if ( 0 === count( $vars ) ) {
+				return '{}';
+			}
+			$indent       = str_repeat( ' ', $tab * $level );
+			$child_indent = str_repeat( ' ', $tab * ( $level + 1 ) );
+			$out          = "{\n";
+			$i            = 0;
+			$n            = count( $vars );
+			foreach ( $vars as $k => $v ) {
+				++$i;
+				$key = $this->_helper_json_encode_string( (string) $k );
+				if ( false === $key ) {
+					return false;
+				}
+				$out .= $child_indent . $key . ':';
+				if ( $v instanceof stdClass || is_array( $v ) ) {
+					$encoded = $this->_helper_json_encode_detailed( $v, $level + 1, $tab );
+					if ( false === $encoded ) {
+						return false;
+					}
+					$out .= "\n" . $child_indent . ltrim( $encoded );
+				} else {
+					$encoded = $this->_helper_json_encode_scalar( $v );
+					if ( false === $encoded ) {
+						return false;
+					}
+					$out .= ' ' . $encoded;
+				}
+				$out .= ( $i < $n ) ? ",\n" : "\n";
+			}
+			$out .= $indent . '}';
+			return $out;
+		}
+		if ( is_array( $value ) ) {
+			if ( 0 === count( $value ) ) {
+				return '[]';
+			}
+			$indent       = str_repeat( ' ', $tab * $level );
+			$child_indent = str_repeat( ' ', $tab * ( $level + 1 ) );
+			$out          = "[\n";
+			$i            = 0;
+			$n            = count( $value );
+			foreach ( $value as $v ) {
+				++$i;
+				if ( $v instanceof stdClass || is_array( $v ) ) {
+					$encoded = $this->_helper_json_encode_detailed( $v, $level + 1, $tab );
+					if ( false === $encoded ) {
+						return false;
+					}
+					$out .= $child_indent . ltrim( $encoded );
+				} else {
+					$encoded = $this->_helper_json_encode_scalar( $v );
+					if ( false === $encoded ) {
+						return false;
+					}
+					$out .= $child_indent . $encoded;
+				}
+				$out .= ( $i < $n ) ? ",\n" : "\n";
+			}
+			$out .= $indent . ']';
+			return $out;
+		}
+		return $this->_helper_json_encode_scalar( $value );
+	}
+
+	/**
+	 * Recursively sort the keys of a decoded JSON value (in place by rebuild).
+	 *
+	 * Object keys sort in byte order; array order is preserved.
+	 *
+	 * @param mixed $value The decoded value.
+	 * @return mixed The normalized value.
+	 */
+	private function _helper_json_normalize_value( $value ) {
+		if ( $value instanceof stdClass ) {
+			$vars = get_object_vars( $value );
+			uksort( $vars, 'strcmp' );
+			$sorted = new stdClass();
+			foreach ( $vars as $k => $v ) {
+				$prop          = (string) $k;
+				$sorted->$prop = $this->_helper_json_normalize_value( $v );
+			}
+			return $sorted;
+		}
+		if ( is_array( $value ) ) {
+			foreach ( $value as $i => $v ) {
+				$value[ $i ] = $this->_helper_json_normalize_value( $v );
+			}
+			return $value;
+		}
+		return $value;
+	}
+
+	/**
+	 * Keep only the listed top-level keys of a decoded JSON object.
+	 *
+	 * Key order of the original object is preserved.
+	 *
+	 * @param stdClass $data The decoded object.
+	 * @param array    $keys The keys to keep.
+	 * @return string|false The filtered object encoding, or false on failure.
+	 */
+	private function _helper_json_filter_keys( $data, $keys ) {
+		$filtered = new stdClass();
+		foreach ( $data as $k => $v ) {
+			if ( in_array( (string) $k, $keys, true ) ) {
+				$prop            = (string) $k;
+				$filtered->$prop = $v;
+			}
+		}
+		return $this->_helper_json_encode_compact( $filtered );
+	}
+
+	/**
+	 * Encode a Unicode codepoint as UTF-8 without mbstring.
+	 *
+	 * @param int $codepoint The codepoint.
+	 * @return string|false The UTF-8 bytes, or false when out of range.
+	 */
+	private function _helper_utf8_encode_codepoint( $codepoint ) {
+		if ( $codepoint < 0 || $codepoint > 0x10FFFF ) {
+			return false;
+		}
+		if ( $codepoint >= 0xD800 && $codepoint <= 0xDFFF ) {
+			return false;
+		}
+		if ( $codepoint < 0x80 ) {
+			return chr( $codepoint );
+		}
+		if ( $codepoint < 0x800 ) {
+			return chr( 0xC0 | ( $codepoint >> 6 ) ) . chr( 0x80 | ( $codepoint & 0x3F ) );
+		}
+		if ( $codepoint < 0x10000 ) {
+			return chr( 0xE0 | ( $codepoint >> 12 ) ) . chr( 0x80 | ( ( $codepoint >> 6 ) & 0x3F ) ) . chr( 0x80 | ( $codepoint & 0x3F ) );
+		}
+		return chr( 0xF0 | ( $codepoint >> 18 ) ) . chr( 0x80 | ( ( $codepoint >> 12 ) & 0x3F ) ) . chr( 0x80 | ( ( $codepoint >> 6 ) & 0x3F ) ) . chr( 0x80 | ( $codepoint & 0x3F ) );
+	}
+
+	/**
+	 * Raw CRC-32C (Castagnoli, reflected, polynomial 0x1EDC6F41) update.
+	 *
+	 * Computes the raw register value starting from $crc without the final
+	 * XOR; callers apply (and, for chaining, pre-apply) the 0xFFFFFFFF XOR.
+	 * Used directly for the chained CRC32C() form and as a fallback when
+	 * PHP's hash() does not offer 'crc32c'.
+	 *
+	 * @param string $data The input bytes.
+	 * @param int    $crc  The starting register value (32 bits).
+	 * @return int The updated register value (32 bits).
+	 */
+	private function _helper_crc32c_raw( $data, $crc ) {
+		if ( null === self::$crc32c_table ) {
+			$table = array();
+			for ( $n = 0; $n < 256; $n++ ) {
+				$c = $n;
+				for ( $k = 0; $k < 8; $k++ ) {
+					if ( $c & 1 ) {
+						$c = 0x82F63B78 ^ ( $c >> 1 );
+					} else {
+						$c = $c >> 1;
+					}
+				}
+				$table[ $n ] = $c;
+			}
+			self::$crc32c_table = $table;
+		}
+		$len = strlen( $data );
+		for ( $i = 0; $i < $len; $i++ ) {
+			$crc = self::$crc32c_table[ ( $crc ^ ord( $data[ $i ] ) ) & 0xFF ] ^ ( ( $crc >> 8 ) & 0xFFFFFF );
+		}
+		return $crc & 0xFFFFFFFF;
 	}
 
 	/**

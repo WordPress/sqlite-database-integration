@@ -16291,4 +16291,386 @@ END;
 		$result = $this->assertQuery( 'SELECT REVERSE(NULL) AS reversed' );
 		$this->assertNull( $result[0]->reversed );
 	}
+
+	public function testJsonExistsFunction(): void {
+		// MariaDB documentation examples.
+		$result = $this->assertQuery( "SELECT JSON_EXISTS('{\"key1\":\"xxxx\", \"key2\":[1, 2, 3]}', '$.key2') AS result" );
+		$this->assertSame( '1', $result[0]->result );
+
+		$result = $this->assertQuery( "SELECT JSON_EXISTS('{\"key1\":\"xxxx\", \"key2\":[1, 2, 3]}', '$.key3') AS result" );
+		$this->assertSame( '0', $result[0]->result );
+
+		$result = $this->assertQuery( "SELECT JSON_EXISTS('{\"key1\":\"xxxx\", \"key2\":[1, 2, 3]}', '$.key2[1]') AS result" );
+		$this->assertSame( '1', $result[0]->result );
+
+		$result = $this->assertQuery( "SELECT JSON_EXISTS('{\"key1\":\"xxxx\", \"key2\":[1, 2, 3]}', '$.key2[10]') AS result" );
+		$this->assertSame( '0', $result[0]->result );
+
+		// Nested paths.
+		$result = $this->assertQuery( "SELECT JSON_EXISTS('{\"a\":{\"b\":[1,2]}}', '$.a.b[0]') AS result" );
+		$this->assertSame( '1', $result[0]->result );
+
+		$result = $this->assertQuery( "SELECT JSON_EXISTS('{\"a\":{\"b\":[1,2]}}', '$.a.b[5]') AS result" );
+		$this->assertSame( '0', $result[0]->result );
+
+		$result = $this->assertQuery( "SELECT JSON_EXISTS('{\"a\":{\"b\":[1,2]}}', '$.a.c.d') AS result" );
+		$this->assertSame( '0', $result[0]->result );
+
+		// Quoted keys, including keys with spaces and escaped quotes.
+		$result = $this->assertQuery( "SELECT JSON_EXISTS('{\"a b\":1}', '$.\"a b\"') AS result" );
+		$this->assertSame( '1', $result[0]->result );
+
+		$result = $this->assertQuery( "SELECT JSON_EXISTS('{\"a b\":1}', \"\$['a b']\") AS result" );
+		$this->assertSame( '1', $result[0]->result );
+
+		$result = $this->assertQuery( "SELECT JSON_EXISTS('{\"a\\\\\"b\":1}', '$.\"a\\\\\"b\"') AS result" );
+		$this->assertSame( '1', $result[0]->result );
+
+		// The root path exists for any valid document, including scalars.
+		$result = $this->assertQuery( "SELECT JSON_EXISTS('{\"a\":1}', '$') AS result" );
+		$this->assertSame( '1', $result[0]->result );
+
+		$result = $this->assertQuery( "SELECT JSON_EXISTS('\"just a string\"', '$') AS result" );
+		$this->assertSame( '1', $result[0]->result );
+
+		// Top-level array index access.
+		$result = $this->assertQuery( "SELECT JSON_EXISTS('[1,2]', '$[0]') AS result" );
+		$this->assertSame( '1', $result[0]->result );
+
+		// Type mismatches along the path mean the path does not exist.
+		$result = $this->assertQuery( "SELECT JSON_EXISTS('[1,2]', '$.a') AS result" );
+		$this->assertSame( '0', $result[0]->result );
+
+		$result = $this->assertQuery( "SELECT JSON_EXISTS('{\"a\":1}', '$[0]') AS result" );
+		$this->assertSame( '0', $result[0]->result );
+
+		// NULL arguments return NULL.
+		$result = $this->assertQuery( "SELECT JSON_EXISTS(NULL, '$.a') AS result" );
+		$this->assertNull( $result[0]->result );
+
+		$result = $this->assertQuery( "SELECT JSON_EXISTS('{\"a\":1}', NULL) AS result" );
+		$this->assertNull( $result[0]->result );
+
+		// Invalid documents return NULL.
+		$result = $this->assertQuery( "SELECT JSON_EXISTS('not json', '$.a') AS result" );
+		$this->assertNull( $result[0]->result );
+
+		// Invalid paths return NULL (never an error).
+		$result = $this->assertQuery( "SELECT JSON_EXISTS('{\"a\":1}', 'nope') AS result" );
+		$this->assertNull( $result[0]->result );
+
+		$result = $this->assertQuery( "SELECT JSON_EXISTS('{\"a\":1}', '$.') AS result" );
+		$this->assertNull( $result[0]->result );
+
+		$result = $this->assertQuery( "SELECT JSON_EXISTS('{\"a\":1}', '$.a[') AS result" );
+		$this->assertNull( $result[0]->result );
+
+		$result = $this->assertQuery( "SELECT JSON_EXISTS('{\"a\":1}', '$[-1]') AS result" );
+		$this->assertNull( $result[0]->result );
+
+		// Wildcards are out of scope and return NULL.
+		$result = $this->assertQuery( "SELECT JSON_EXISTS('{\"a\":1}', '$.a[*]') AS result" );
+		$this->assertNull( $result[0]->result );
+
+		$result = $this->assertQuery( "SELECT JSON_EXISTS('{\"a\":1}', '$**') AS result" );
+		$this->assertNull( $result[0]->result );
+
+		// Wrong argument counts return NULL.
+		$result = $this->assertQuery( "SELECT JSON_EXISTS('{\"a\":1}') AS result" );
+		$this->assertNull( $result[0]->result );
+
+		$result = $this->assertQuery( "SELECT JSON_EXISTS('{\"a\":1}', '$.a', '$.b') AS result" );
+		$this->assertNull( $result[0]->result );
+	}
+
+	public function testChrFunction(): void {
+		$result = $this->assertQuery( 'SELECT CHR(67) AS result' );
+		$this->assertSame( 'C', $result[0]->result );
+
+		// Numeric strings are accepted, like in MariaDB.
+		$result = $this->assertQuery( "SELECT CHR('67') AS result" );
+		$this->assertSame( 'C', $result[0]->result );
+
+		// Extra codepoints are concatenated.
+		$result = $this->assertQuery( 'SELECT CHR(72, 105) AS result' );
+		$this->assertSame( 'Hi', $result[0]->result );
+
+		// Multi-byte codepoints come back as UTF-8.
+		$result = $this->assertQuery( 'SELECT CHR(8364) AS result' );
+		$this->assertSame( "\u{20AC}", $result[0]->result );
+
+		// Floats truncate toward zero.
+		$result = $this->assertQuery( 'SELECT CHR(65.9) AS result' );
+		$this->assertSame( 'A', $result[0]->result );
+
+		// NUL byte: exactly one byte, not an empty string.
+		$result = $this->assertQuery( 'SELECT CHR(0) AS result' );
+		$this->assertSame( "\0", $result[0]->result );
+		$this->assertSame( 1, strlen( $result[0]->result ) );
+
+		// A code point in the 128-255 range must be UTF-8 encoded, not emitted
+		// as a single latin1 byte: U+00C8 is the two bytes C3 88.
+		$result = $this->assertQuery( 'SELECT CHR(200) AS result' );
+		$this->assertSame( "\u{00C8}", $result[0]->result );
+		$this->assertSame( 2, strlen( $result[0]->result ) );
+
+		// NULL input returns NULL.
+		$result = $this->assertQuery( 'SELECT CHR(NULL) AS result' );
+		$this->assertNull( $result[0]->result );
+
+		// Anything that is not a valid codepoint returns NULL.
+		$result = $this->assertQuery( "SELECT CHR('C') AS result" );
+		$this->assertNull( $result[0]->result );
+
+		$result = $this->assertQuery( 'SELECT CHR(-1) AS result' );
+		$this->assertNull( $result[0]->result );
+
+		$result = $this->assertQuery( 'SELECT CHR(1114112) AS result' );
+		$this->assertNull( $result[0]->result );
+
+		$result = $this->assertQuery( 'SELECT CHR(55296) AS result' );
+		$this->assertNull( $result[0]->result );
+
+		// No arguments returns NULL.
+		$result = $this->assertQuery( 'SELECT CHR() AS result' );
+		$this->assertNull( $result[0]->result );
+	}
+
+	public function testJsonCompactFunction(): void {
+		// MariaDB documentation example.
+		$result = $this->assertQuery( "SELECT JSON_COMPACT('{ \"A\": 1, \"B\": [2, 3]}') AS result" );
+		$this->assertSame( '{"A":1,"B":[2,3]}', $result[0]->result );
+
+		// Key order and number formatting are preserved byte-for-byte.
+		$result = $this->assertQuery( "SELECT JSON_COMPACT('{\"b\" : 1.50, \"a\" : [1, 2] }') AS result" );
+		$this->assertSame( '{"b":1.50,"a":[1,2]}', $result[0]->result );
+
+		// Scalars pass through.
+		$result = $this->assertQuery( "SELECT JSON_COMPACT('\"hi\"') AS result" );
+		$this->assertSame( '"hi"', $result[0]->result );
+
+		$result = $this->assertQuery( "SELECT JSON_COMPACT('123') AS result" );
+		$this->assertSame( '123', $result[0]->result );
+
+		// NULL input returns NULL.
+		$result = $this->assertQuery( 'SELECT JSON_COMPACT(NULL) AS result' );
+		$this->assertNull( $result[0]->result );
+
+		// Invalid JSON returns NULL.
+		$result = $this->assertQuery( "SELECT JSON_COMPACT('nope') AS result" );
+		$this->assertNull( $result[0]->result );
+
+		// Wrong argument counts return NULL.
+		$result = $this->assertQuery( "SELECT JSON_COMPACT('{\"a\":1}', 'extra') AS result" );
+		$this->assertNull( $result[0]->result );
+	}
+
+	public function testJsonDetailedFunction(): void {
+		// Matches the MariaDB documentation example, including the default
+		// tab size of 4 spaces and container values on their own lines.
+		$result = $this->assertQuery( "SELECT JSON_DETAILED('{ \"A\":1,\"B\":[2,3]}') AS result" );
+		$this->assertSame(
+			implode(
+				"\n",
+				array(
+					'{',
+					'    "A": 1,',
+					'    "B":',
+					'    [',
+					'        2,',
+					'        3',
+					'    ]',
+					'}',
+				)
+			),
+			$result[0]->result
+		);
+
+		// Explicit tab size.
+		$result = $this->assertQuery( "SELECT JSON_DETAILED('{ \"A\":1,\"B\":[2,3]}', 2) AS result" );
+		$this->assertSame(
+			implode(
+				"\n",
+				array(
+					'{',
+					'  "A": 1,',
+					'  "B":',
+					'  [',
+					'    2,',
+					'    3',
+					'  ]',
+					'}',
+				)
+			),
+			$result[0]->result
+		);
+
+		// Nested containers.
+		$result = $this->assertQuery( "SELECT JSON_DETAILED('{\"o\":{\"x\":1},\"l\":[{\"y\":null}]}') AS result" );
+		$this->assertSame(
+			implode(
+				"\n",
+				array(
+					'{',
+					'    "o":',
+					'    {',
+					'        "x": 1',
+					'    },',
+					'    "l":',
+					'    [',
+					'        {',
+					'            "y": null',
+					'        }',
+					'    ]',
+					'}',
+				)
+			),
+			$result[0]->result
+		);
+
+		// Empty containers stay inline.
+		$result = $this->assertQuery( "SELECT JSON_DETAILED('{}') AS result" );
+		$this->assertSame( '{}', $result[0]->result );
+
+		$result = $this->assertQuery( "SELECT JSON_DETAILED('[]') AS result" );
+		$this->assertSame( '[]', $result[0]->result );
+
+		// Numbers are re-serialized: '1.50' becomes '1.5'.
+		$result = $this->assertQuery( "SELECT JSON_DETAILED('1.50') AS result" );
+		$this->assertSame( '1.5', $result[0]->result );
+
+		// Non-ASCII strings print literally and '/' is never escaped.
+		$result = $this->assertQuery( "SELECT JSON_DETAILED('{\"e\":\"a/b\"}') AS result" );
+		$this->assertSame(
+			implode(
+				"\n",
+				array(
+					'{',
+					'    "e": "a/b"',
+					'}',
+				)
+			),
+			$result[0]->result
+		);
+
+		// NULL input returns NULL.
+		$result = $this->assertQuery( 'SELECT JSON_DETAILED(NULL) AS result' );
+		$this->assertNull( $result[0]->result );
+
+		// Invalid JSON returns NULL.
+		$result = $this->assertQuery( "SELECT JSON_DETAILED('nope') AS result" );
+		$this->assertNull( $result[0]->result );
+
+		// An explicit NULL tab size returns NULL.
+		$result = $this->assertQuery( "SELECT JSON_DETAILED('{\"a\":1}', NULL) AS result" );
+		$this->assertNull( $result[0]->result );
+
+		// Negative, oversized, and non-numeric tab sizes return NULL.
+		$result = $this->assertQuery( "SELECT JSON_DETAILED('{\"a\":1}', -1) AS result" );
+		$this->assertNull( $result[0]->result );
+
+		$result = $this->assertQuery( "SELECT JSON_DETAILED('{\"a\":1}', 65) AS result" );
+		$this->assertNull( $result[0]->result );
+
+		$result = $this->assertQuery( "SELECT JSON_DETAILED('{\"a\":1}', 'x') AS result" );
+		$this->assertNull( $result[0]->result );
+	}
+
+	public function testJsonNormalizeFunction(): void {
+		// Keys sort recursively in byte order, whitespace is removed.
+		$result = $this->assertQuery( "SELECT JSON_NORMALIZE('{\"b\":1,\"a\":{\"d\":4,\"c\":3}}') AS result" );
+		$this->assertSame( '{"a":{"c":3,"d":4},"b":1}', $result[0]->result );
+
+		$result = $this->assertQuery( "SELECT JSON_NORMALIZE('{ \"b\" : 1 }') AS result" );
+		$this->assertSame( '{"b":1}', $result[0]->result );
+
+		// Numbers are re-serialized from PHP values.
+		$result = $this->assertQuery( "SELECT JSON_NORMALIZE('{\"b\":1.50,\"a\":null}') AS result" );
+		$this->assertSame( '{"a":null,"b":1.5}', $result[0]->result );
+
+		// NULL input returns NULL.
+		$result = $this->assertQuery( 'SELECT JSON_NORMALIZE(NULL) AS result' );
+		$this->assertNull( $result[0]->result );
+
+		// Invalid JSON returns NULL.
+		$result = $this->assertQuery( "SELECT JSON_NORMALIZE('xx') AS result" );
+		$this->assertNull( $result[0]->result );
+	}
+
+	public function testJsonObjectFilterKeysFunction(): void {
+		// MariaDB form: keys given as a JSON array.
+		$result = $this->assertQuery( "SELECT JSON_OBJECT_FILTER_KEYS('{\"a\": 1, \"b\": 2, \"c\": 3}', '[\"b\", \"c\"]') AS result" );
+		$this->assertSame( '{"b":2,"c":3}', $result[0]->result );
+
+		// Variadic convenience form: keys given as plain strings.
+		$result = $this->assertQuery( "SELECT JSON_OBJECT_FILTER_KEYS('{\"a\": 1, \"b\": 2, \"c\": 3}', 'b', 'c') AS result" );
+		$this->assertSame( '{"b":2,"c":3}', $result[0]->result );
+
+		// Missing keys are ignored; the original key order is preserved.
+		$result = $this->assertQuery( "SELECT JSON_OBJECT_FILTER_KEYS('{\"b\":2,\"a\":1}', '[\"a\",\"b\",\"zzz\"]') AS result" );
+		$this->assertSame( '{"b":2,"a":1}', $result[0]->result );
+
+		// No matches yields an empty object.
+		$result = $this->assertQuery( "SELECT JSON_OBJECT_FILTER_KEYS('{\"a\":1,\"b\":2}', 'c') AS result" );
+		$this->assertSame( '{}', $result[0]->result );
+
+		// Non-object documents return NULL.
+		$result = $this->assertQuery( "SELECT JSON_OBJECT_FILTER_KEYS('[1,2]', '[\"a\"]') AS result" );
+		$this->assertNull( $result[0]->result );
+
+		// NULL document or NULL key returns NULL.
+		$result = $this->assertQuery( "SELECT JSON_OBJECT_FILTER_KEYS(NULL, '[\"a\"]') AS result" );
+		$this->assertNull( $result[0]->result );
+
+		$result = $this->assertQuery( "SELECT JSON_OBJECT_FILTER_KEYS('{\"a\":1}', NULL) AS result" );
+		$this->assertNull( $result[0]->result );
+
+		// At least a document and one key are required.
+		$result = $this->assertQuery( "SELECT JSON_OBJECT_FILTER_KEYS('{\"a\":1}') AS result" );
+		$this->assertNull( $result[0]->result );
+	}
+
+	public function testCrc32cFunction(): void {
+		// Known vectors: the empty string, the Castagnoli check value
+		// 0xE3069283, and the value from the MariaDB documentation.
+		$result = $this->assertQuery( "SELECT CRC32C('') AS result" );
+		$this->assertSame( '0', $result[0]->result );
+
+		// Above the signed 32-bit range the checksum is returned as a float,
+		// because PDO truncates integer UDF results to 32-bit signed. PHP's
+		// PDO stringifies such a float through SQLite's text conversion before
+		// PHP 8.1, which appends '.0', so the numeric value is asserted here
+		// rather than its text form.
+		$result = $this->assertQuery( "SELECT CRC32C('123456789') AS result" );
+		$this->assertSame( 3808858755, (int) $result[0]->result );
+
+		$result = $this->assertQuery( "SELECT CRC32C('MariaDB') AS result" );
+		$this->assertSame( '809606978', $result[0]->result );
+
+		// The chained form continues a previous checksum.
+		$result = $this->assertQuery( "SELECT CRC32C(CRC32C('Maria'),'DB') AS result" );
+		$this->assertSame( '809606978', $result[0]->result );
+
+		// A numeric-string previous checksum works like an integer.
+		$result = $this->assertQuery( "SELECT CRC32C(42, '') AS result" );
+		$this->assertSame( '42', $result[0]->result );
+
+		// The checksum compares numerically against integer literals.
+		$result = $this->assertQuery( 'SELECT CRC32C(\'123456789\') = 3808858755 AS result' );
+		$this->assertSame( '1', $result[0]->result );
+
+		// NULL input returns NULL.
+		$result = $this->assertQuery( 'SELECT CRC32C(NULL) AS result' );
+		$this->assertNull( $result[0]->result );
+
+		$result = $this->assertQuery( "SELECT CRC32C('x', NULL) AS result" );
+		$this->assertNull( $result[0]->result );
+
+		// Non-numeric previous checksums and wrong arities return NULL.
+		$result = $this->assertQuery( "SELECT CRC32C('xx', 'yy') AS result" );
+		$this->assertNull( $result[0]->result );
+
+		$result = $this->assertQuery( "SELECT CRC32C('a', 'b', 'c') AS result" );
+		$this->assertNull( $result[0]->result );
+	}
 }
