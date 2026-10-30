@@ -67,6 +67,12 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'greatest'                     => 'greatest',
 		'get_lock'                     => 'get_lock',
 		'release_lock'                 => 'release_lock',
+		'is_free_lock'                 => 'is_free_lock',
+		'is_used_lock'                 => 'is_used_lock',
+		'release_all_locks'            => 'release_all_locks',
+		'connection_id'                => 'connection_id',
+		'last_insert_id'               => 'last_insert_id',
+		'row_count'                    => 'row_count',
 		'ucase'                        => 'ucase',
 		'lcase'                        => 'lcase',
 		'unhex'                        => 'unhex',
@@ -111,12 +117,121 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	private $rand_last_seed = null;
 
 	/**
+	 * PDO connection used for connection-state fallbacks.
+	 *
+	 * Currently used by last_insert_id() to fall back to the connection's
+	 * most recent AUTO_INCREMENT value when no LAST_INSERT_ID(expr)
+	 * session value was set. Never reset by flush().
+	 *
+	 * @var PDO|null
+	 */
+	private $pdo = null;
+
+	/**
+	 * Session value set by the most recent LAST_INSERT_ID(expr) call.
+	 *
+	 * The driver mirrors its own session stash into this property before
+	 * every query and reads it back afterwards, so the value survives
+	 * across statements like in MySQL.
+	 *
+	 * @var mixed
+	 */
+	private $last_insert_id_value = null;
+
+	/**
+	 * Whether an explicit LAST_INSERT_ID(expr) session value is stored.
+	 *
+	 * @var bool
+	 */
+	private $last_insert_id_is_set = false;
+
+	/**
+	 * Whether LAST_INSERT_ID(expr) was called during the current statement.
+	 *
+	 * @var bool
+	 */
+	private $last_insert_id_set_in_statement = false;
+
+	/**
+	 * Stashed ROW_COUNT() value pushed by the driver before every query.
+	 *
+	 * @var int
+	 */
+	private $row_count_value = -1;
+
+	/**
 	 * Clear any per-statement state held by the UDFs.
+	 *
+	 * NB: The PDO connection is deliberately not reset here; it is set once
+	 * via set_connection() and lives as long as the connection itself.
 	 */
 	public function flush(): void {
-		$this->rand_seed1     = null;
-		$this->rand_seed2     = null;
-		$this->rand_last_seed = null;
+		$this->rand_seed1                      = null;
+		$this->rand_seed2                      = null;
+		$this->rand_last_seed                  = null;
+		$this->last_insert_id_value            = null;
+		$this->last_insert_id_is_set           = false;
+		$this->last_insert_id_set_in_statement = false;
+		$this->row_count_value                 = -1;
+	}
+
+	/**
+	 * Whether LAST_INSERT_ID(expr) ran during the current statement.
+	 *
+	 * The driver uses this to keep a value the statement set itself. The
+	 * common case is an upsert such as:
+	 *
+	 *     INSERT ... ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)
+	 *
+	 * where MySQL leaves LAST_INSERT_ID() returning the updated row's id.
+	 * Without this flag, the value would be discarded when the INSERT ends.
+	 *
+	 * @return bool Whether the session value was set by the statement.
+	 */
+	public function has_last_insert_id_override(): bool {
+		return $this->last_insert_id_set_in_statement;
+	}
+
+	/**
+	 * Store the PDO connection for use by functions needing connection state.
+	 *
+	 * @param PDO $pdo The PDO connection.
+	 */
+	public function set_connection( PDO $pdo ): void {
+		$this->pdo = $pdo;
+	}
+
+	/**
+	 * Push the driver's stashed ROW_COUNT() value for the upcoming query.
+	 *
+	 * @param int $value Rows changed by the previous row-changing statement.
+	 */
+	public function set_row_count_value( $value ): void {
+		$this->row_count_value = (int) $value;
+	}
+
+	/**
+	 * Push the LAST_INSERT_ID(expr) session value for the upcoming query.
+	 *
+	 * @param mixed $value  The stashed session value.
+	 * @param bool  $is_set Whether an explicit session value was stashed.
+	 */
+	public function set_last_insert_id_state( $value, $is_set ): void {
+		$this->last_insert_id_value            = $value;
+		$this->last_insert_id_is_set           = (bool) $is_set;
+		$this->last_insert_id_set_in_statement = false;
+	}
+
+	/**
+	 * Read back the LAST_INSERT_ID(expr) session value.
+	 *
+	 * The driver calls this after each query to persist a value possibly
+	 * set through last_insert_id() while the query was executing.
+	 *
+	 * @return array An array of the session value and whether it was explicitly set.
+	 */
+	public function get_last_insert_id_state() {
+		return array( $this->last_insert_id_value, $this->last_insert_id_is_set );
 	}
 
 	/**
@@ -711,6 +826,111 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 */
 	public function release_lock( $name ) {
 		return '1=1';
+	}
+
+	/**
+	 * Method to dummy out MySQL IS_FREE_LOCK() function.
+	 *
+	 * Named locks are never actually held here – GET_LOCK() is a stub that
+	 * acquires nothing – so every named lock is always free. Returns 1 for
+	 * a non-NULL name and NULL for a NULL name.
+	 *
+	 * @param string|null $name Not used, only checked for NULL.
+	 *
+	 * @return int|null 1 when the lock is free, NULL on NULL input.
+	 */
+	public function is_free_lock( $name ) {
+		if ( null === $name ) {
+			return null;
+		}
+		return 1;
+	}
+
+	/**
+	 * Method to dummy out MySQL IS_USED_LOCK() function.
+	 *
+	 * MySQL returns the connection id holding the lock, or NULL when the
+	 * lock is free. Locks are never held here – GET_LOCK() is a stub –
+	 * so this always returns NULL.
+	 *
+	 * @param string|null $name Not used.
+	 *
+	 * @return null
+	 */
+	public function is_used_lock( $name ) {
+		return null;
+	}
+
+	/**
+	 * Method to dummy out MySQL RELEASE_ALL_LOCKS() function.
+	 *
+	 * MySQL returns the number of released locks. No locks are ever held
+	 * here – GET_LOCK() is a stub – so this always returns 0.
+	 *
+	 * @return int
+	 */
+	public function release_all_locks() {
+		return 0;
+	}
+
+	/**
+	 * Method to dummy out MySQL CONNECTION_ID() function.
+	 *
+	 * SQLite has no sessions or connection threads, so there is no real
+	 * connection id to report. Return a constant, mirroring the dummy
+	 * GET_LOCK()/RELEASE_LOCK() stubs.
+	 *
+	 * @return int
+	 */
+	public function connection_id() {
+		return 1;
+	}
+
+	/**
+	 * Method to emulate MySQL LAST_INSERT_ID() function.
+	 *
+	 * With an argument, stores the argument as the new session value and
+	 * returns it. This is the read-back idiom used, e.g., by rate limiters:
+	 * UPDATE t SET hits = LAST_INSERT_ID(hits + 1).
+	 *
+	 * Without an argument, returns the stored session value when one was
+	 * set, or the connection's most recent AUTO_INCREMENT value otherwise.
+	 *
+	 * A NULL argument stores NULL and returns NULL, matching the
+	 * NULL-in-NULL-out contract of the other user-defined functions.
+	 *
+	 * @param mixed $expr Optional. New session value to store and return.
+	 *
+	 * @return mixed The session value, or NULL.
+	 */
+	public function last_insert_id( $expr = null ) {
+		if ( func_num_args() > 0 ) {
+			$this->last_insert_id_value            = $expr;
+			$this->last_insert_id_is_set           = true;
+			$this->last_insert_id_set_in_statement = true;
+			return $expr;
+		}
+		if ( $this->last_insert_id_is_set ) {
+			return $this->last_insert_id_value;
+		}
+		if ( null === $this->pdo ) {
+			return null;
+		}
+		return $this->pdo->lastInsertId();
+	}
+
+	/**
+	 * Method to emulate MySQL ROW_COUNT() function.
+	 *
+	 * Returns the value stashed by the driver before the query: the rows
+	 * changed by the previous INSERT, REPLACE, UPDATE, or DELETE statement;
+	 * -1 when the previous statement was a SELECT or SHOW; 0 for any other
+	 * statement; -1 before any statement ran.
+	 *
+	 * @return int
+	 */
+	public function row_count() {
+		return $this->row_count_value;
 	}
 
 	/**

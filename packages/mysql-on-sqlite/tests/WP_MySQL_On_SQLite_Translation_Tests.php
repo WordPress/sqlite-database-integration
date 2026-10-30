@@ -2210,6 +2210,66 @@ class WP_MySQL_On_SQLite_Translation_Tests extends TestCase {
 		);
 	}
 
+	public function testMiscInfoLockAndAggregateFunctions(): void {
+		// ANY_VALUE(x) → MIN(x)
+		$this->assertQuery(
+			'SELECT MIN(`v`) AS `ANY_VALUE(v)` FROM `t`',
+			'SELECT ANY_VALUE(v) FROM t'
+		);
+		$this->assertQuery(
+			'SELECT `g` , MIN(`v`) AS `av` FROM `t` GROUP BY `g` ORDER BY `g`',
+			'SELECT g, ANY_VALUE(v) AS av FROM t GROUP BY g ORDER BY g'
+		);
+
+		// JSON_ARRAYAGG(x) → JSON_GROUP_ARRAY(x)
+		$this->assertQuery(
+			'SELECT JSON_GROUP_ARRAY(`v`) AS `JSON_ARRAYAGG(v)` FROM `t`',
+			'SELECT JSON_ARRAYAGG(v) FROM t'
+		);
+		$this->assertQuery(
+			'SELECT `g` , JSON_GROUP_ARRAY(`v`) AS `j` FROM `t` GROUP BY `g` ORDER BY `g`',
+			'SELECT g, JSON_ARRAYAGG(v) AS j FROM t GROUP BY g ORDER BY g'
+		);
+
+		// JSON_OBJECTAGG(k, v) → JSON_GROUP_OBJECT(k, v)
+		$this->assertQuery(
+			'SELECT JSON_GROUP_OBJECT(`g`, `v`) AS `JSON_OBJECTAGG(g, v)` FROM `t`',
+			'SELECT JSON_OBJECTAGG(g, v) FROM t'
+		);
+
+		// VERSION_WITH_UPDATE() → four-part version literal
+		$this->assertQuery(
+			sprintf(
+				"SELECT '8.0.38.0-mysql-on-sqlite-%s' AS `VERSION_WITH_UPDATE()`",
+				SQLITE_DRIVER_VERSION
+			),
+			'SELECT VERSION_WITH_UPDATE()'
+		);
+
+		// ROW_COUNT(), CONNECTION_ID(), LAST_INSERT_ID(), and the lock stubs
+		// pass through to the user-defined functions of the same name.
+		$this->assertQuery(
+			'SELECT `ROW_COUNT` ( ) AS `ROW_COUNT()`',
+			'SELECT ROW_COUNT()'
+		);
+		$this->assertQuery(
+			'SELECT `CONNECTION_ID` ( ) AS `CONNECTION_ID()`',
+			'SELECT CONNECTION_ID()'
+		);
+		$this->assertQuery(
+			'SELECT `LAST_INSERT_ID` ( 5 ) AS `LAST_INSERT_ID(5)`',
+			'SELECT LAST_INSERT_ID(5)'
+		);
+		$this->assertQuery(
+			"SELECT `IS_FREE_LOCK` ( 'x' ) AS `IS_FREE_LOCK('x')`",
+			"SELECT IS_FREE_LOCK('x')"
+		);
+		$this->assertQuery(
+			'SELECT `RELEASE_ALL_LOCKS` ( ) AS `RELEASE_ALL_LOCKS()`',
+			'SELECT RELEASE_ALL_LOCKS()'
+		);
+	}
+
 	private function assertQuery( $expected, string $query ): void {
 		$error = null;
 		try {
