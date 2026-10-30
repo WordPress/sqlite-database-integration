@@ -14475,6 +14475,78 @@ END;
 		$this->assertCount( 0, $result );
 	}
 
+	public function testQualifiedNamePartsStartingWithDigits(): void {
+		$this->assertQuery( 'CREATE TABLE 1t (`1` INT, `1st` INT, `1e5` INT)' );
+		$this->assertQuery( 'INSERT INTO 1t VALUES (1, 2, 3), (4, 5, 6)' );
+
+		$result = $this->assertQuery( 'SELECT 1t.1, 1t.1st, 1t.1e5 FROM 1t WHERE 1t.1 = 4' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'1'   => '4',
+					'1st' => '5',
+					'1e5' => '6',
+				),
+			),
+			$result
+		);
+
+		$result = $this->assertQuery( 'SELECT wp.1t.1st FROM wp.1t ORDER BY wp.1t.1 DESC' );
+		$this->assertEquals(
+			array( (object) array( '1st' => '5' ), (object) array( '1st' => '2' ) ),
+			$result
+		);
+	}
+
+	public function testReservedWordsAsQualifiers(): void {
+		$this->assertQuery( 'CREATE TABLE `order` (id INT, `1` INT)' );
+		$this->assertQuery( 'INSERT INTO `order` VALUES (7, 8), (9, 10)' );
+
+		$result = $this->assertQuery( 'SELECT order.id, order.1 FROM `order` WHERE order.id = 7' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id' => '7',
+					'1'  => '8',
+				),
+			),
+			$result
+		);
+
+		$result = $this->assertQuery( 'SELECT wp.order.1 FROM wp.`order` ORDER BY order.id DESC' );
+		$this->assertEquals(
+			array( (object) array( '1' => '10' ), (object) array( '1' => '8' ) ),
+			$result
+		);
+	}
+
+	public function testCheckConstraintsWithQualifiedNames(): void {
+		// The stored check clauses are parsed again to create the SQLite table.
+		$this->assertQuery( 'CREATE TABLE `order` (id INT, `1` INT, CHECK (order.id > 0), CHECK (wp.order.1 < 10))' );
+
+		$result = $this->assertQuery( 'SHOW CREATE TABLE `order`' );
+		$this->assertEquals(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `order` (',
+					'  `id` int DEFAULT NULL,',
+					'  `1` int DEFAULT NULL,',
+					'  CONSTRAINT `order_chk_1` CHECK (order.id > 0),',
+					'  CONSTRAINT `order_chk_2` CHECK (wp.order.1 < 10)',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$result[0]->{'Create Table'}
+		);
+
+		$this->assertQuery( 'INSERT INTO `order` VALUES (1, 9)' );
+
+		$this->expectException( WP_MySQL_On_SQLite_Exception::class );
+		$this->expectExceptionMessage( 'SQLSTATE[23000]: Integrity constraint violation: 19 CHECK constraint failed: order_chk_2' );
+		$this->assertQuery( 'INSERT INTO `order` VALUES (1, 10)' );
+	}
+
 	public function testWriteWithUsageOfInformationSchemaTables(): void {
 		// Ensure "information_schema.tables" is empty.
 		$this->assertQuery( 'DROP TABLE _options, _dates' );

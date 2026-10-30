@@ -55,6 +55,29 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 		$this->assertNull( $lexer->get_token() );
 	}
 
+	public function test_system_variable_name_must_not_be_empty(): void {
+		// As in MySQL, the name after "@@" can't be empty, and only backticks
+		// can quote it. Otherwise, the tokens end before the "@@", with no EOF.
+		$invalid = array(
+			array( 'SELECT @@', array() ),
+			array( 'SELECT @@ version', array() ),
+			array( "SELECT @@'version'", array() ),
+			array( 'SELECT @@"version"', array() ),
+			array( 'SELECT @@"version"', array( 'ANSI_QUOTES' ) ),
+		);
+		foreach ( $invalid as list( $sql, $sql_modes ) ) {
+			$tokens = ( new WP_MySQL_Lexer( $sql, 80038, $sql_modes ) )->remaining_tokens();
+			$this->assertCount( 1, $tokens, $sql );
+			$this->assertSame( WP_MySQL_Lexer::SELECT_SYMBOL, $tokens[0]->id, $sql );
+		}
+
+		$names = array();
+		foreach ( ( new WP_MySQL_Lexer( 'SELECT @@`version`' ) )->remaining_tokens() as $token ) {
+			$names[] = $token->get_name();
+		}
+		$this->assertSame( array( 'SELECT_SYMBOL', 'AT_AT_SIGN_SYMBOL', 'BACK_TICK_QUOTED_ID', 'EOF' ), $names );
+	}
+
 	/**
 	 * Test that the whole U+0080 to U+FFFF UTF-8 range is valid in an identifier.
 	 * The validity is checked against PCRE with the "u" (PCRE_UTF8) modifier set.
@@ -419,6 +442,78 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 			'charset introducer before string'      => array( "_utf8'x'", 0, WP_MySQL_Lexer::UNDERSCORE_CHARSET ),
 			// A non-charset underscore name after a dot stays an identifier.
 			'non-charset underscore name after dot' => array( 't._foo', 2, WP_MySQL_Lexer::IDENTIFIER ),
+		);
+	}
+
+	/**
+	 * Qualified names are lexed as in MySQL. A "." right after a name is
+	 * a separator, even before digits, and a keyword before it is an
+	 * identifier, except after "@@". A name right after a "." separator is
+	 * always an identifier. Elsewhere, ".N" is a number. All cases are
+	 * verified against MySQL 8.4.
+	 *
+	 * @dataProvider data_qualified_name_tokens
+	 */
+	public function test_qualified_name_tokens( string $sql, array $expected ): void {
+		$names = array();
+		foreach ( ( new WP_MySQL_Lexer( $sql ) )->remaining_tokens() as $token ) {
+			$names[] = $token->get_name();
+		}
+		$this->assertSame( array_merge( $expected, array( 'EOF' ) ), $names );
+	}
+
+	/**
+	 * @return array<string,array{0:string,1:string[]}>
+	 */
+	public function data_qualified_name_tokens(): array {
+		$qualified = array( 'IDENTIFIER', 'DOT_SYMBOL', 'IDENTIFIER' );
+		return array(
+			// Digits after a dot are a qualified name part.
+			'digits only'                 => array( 't.1', $qualified ),
+			'digit-led identifier'        => array( 't.1st', $qualified ),
+			'float-like identifier'       => array( 't.1e5', $qualified ),
+			'part ends before a sign'     => array( 't.1e+5', array_merge( $qualified, array( 'PLUS_OPERATOR', 'INT_NUMBER' ) ) ),
+			'after a digit-led qualifier' => array( '1ea10.1', $qualified ),
+			'three parts'                 => array( 'd.1.2', array_merge( $qualified, array( 'DOT_SYMBOL', 'IDENTIFIER' ) ) ),
+
+			// Elsewhere, ".N" is a number.
+			'after a quoted identifier'   => array( '`t`.1', array( 'BACK_TICK_QUOTED_ID', 'DECIMAL_NUMBER' ) ),
+			'after whitespace'            => array( 't .1', array( 'IDENTIFIER', 'DECIMAL_NUMBER' ) ),
+			'after a separator dot'       => array( 't..1', array( 'IDENTIFIER', 'DOT_SYMBOL', 'DECIMAL_NUMBER' ) ),
+			'after a decimal'             => array( '1.5.6', array( 'DECIMAL_NUMBER', 'DECIMAL_NUMBER' ) ),
+			'after a float'               => array( '1e5.1', array( 'FLOAT_NUMBER', 'DECIMAL_NUMBER' ) ),
+			'after a hex number'          => array( '0x1F.1', array( 'HEX_NUMBER', 'DECIMAL_NUMBER' ) ),
+			'after a binary number'       => array( '0b1.1', array( 'BIN_NUMBER', 'DECIMAL_NUMBER' ) ),
+			'after "\N"'                  => array( '\N.1', array( 'NULL2_SYMBOL', 'DECIMAL_NUMBER' ) ),
+			'after a version comment'     => array( '/*!50000.5*/', array( 'DECIMAL_NUMBER' ) ),
+
+			// A user variable name includes the dot.
+			'in a user variable'          => array( '@a.1', array( 'AT_TEXT_SUFFIX' ) ),
+
+			// A keyword before a dot and a name is an identifier.
+			'keyword before a name'       => array( 'order.id', $qualified ),
+			'keyword before digits'       => array( 'select.1', $qualified ),
+			'keyword before non-ASCII'    => array( 'order.ñ', $qualified ),
+			'keyword before "$"'          => array( 'order.$x', $qualified ),
+			'keyword in three parts'      => array( 'order.t.id', array_merge( $qualified, array( 'DOT_SYMBOL', 'IDENTIFIER' ) ) ),
+
+			// A name after a separator dot is an identifier.
+			'keyword after a dot'         => array( '`t`.order', array( 'BACK_TICK_QUOTED_ID', 'DOT_SYMBOL', 'IDENTIFIER' ) ),
+			'literal prefix after a dot'  => array( "t.x'41'", array_merge( $qualified, array( 'SINGLE_QUOTED_TEXT' ) ) ),
+
+			// Otherwise, it stays a keyword or a charset.
+			'keyword after a decimal'     => array( '1.FROM', array( 'DECIMAL_NUMBER', 'FROM_SYMBOL' ) ),
+			'keyword before a backtick'   => array( 'order.`id`', array( 'ORDER_SYMBOL', 'DOT_SYMBOL', 'BACK_TICK_QUOTED_ID' ) ),
+			'keyword before an asterisk'  => array( 'order.*', array( 'ORDER_SYMBOL', 'DOT_SYMBOL', 'MULT_OPERATOR' ) ),
+			'keyword before whitespace'   => array( 'order .id', array( 'ORDER_SYMBOL', 'DOT_SYMBOL', 'IDENTIFIER' ) ),
+			'system variable scope'       => array( '@@session.sql_mode', array( 'AT_AT_SIGN_SYMBOL', 'SESSION_SYMBOL', 'DOT_SYMBOL', 'IDENTIFIER' ) ),
+			'charset introducer'          => array( '_utf8mb4.x', array( 'UNDERSCORE_CHARSET', 'DOT_SYMBOL', 'IDENTIFIER' ) ),
+
+			// After "@@", it is a name, never a number, a literal, or a charset.
+			'system variable digits'      => array( '@@123', array( 'AT_AT_SIGN_SYMBOL', 'IDENTIFIER' ) ),
+			'system variable float-like'  => array( '@@1e5', array( 'AT_AT_SIGN_SYMBOL', 'IDENTIFIER' ) ),
+			'system variable before text' => array( "@@b'01'", array( 'AT_AT_SIGN_SYMBOL', 'IDENTIFIER', 'SINGLE_QUOTED_TEXT' ) ),
+			'system variable charset'     => array( '@@_utf8mb4', array( 'AT_AT_SIGN_SYMBOL', 'IDENTIFIER' ) ),
 		);
 	}
 
