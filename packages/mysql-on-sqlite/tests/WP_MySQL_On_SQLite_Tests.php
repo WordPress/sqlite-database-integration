@@ -16291,4 +16291,494 @@ END;
 		$result = $this->assertQuery( 'SELECT REVERSE(NULL) AS reversed' );
 		$this->assertNull( $result[0]->reversed );
 	}
+
+	public function testJsonContainsPathFunction(): void {
+		$doc = "'{\"a\": {\"b\": 1}, \"c\": [1, 2]}'";
+
+		// "one" returns 1 when any path exists.
+		$result = $this->assertQuery( "SELECT JSON_CONTAINS_PATH($doc, 'one', '$.a.b', '$.x') AS m" );
+		$this->assertSame( '1', $result[0]->m );
+
+		// "one" returns 0 when no path exists.
+		$result = $this->assertQuery( "SELECT JSON_CONTAINS_PATH($doc, 'one', '$.x', '$.y') AS m" );
+		$this->assertSame( '0', $result[0]->m );
+
+		// "all" returns 1 when every path exists.
+		$result = $this->assertQuery( "SELECT JSON_CONTAINS_PATH($doc, 'all', '$.a.b', '$.c[1]') AS m" );
+		$this->assertSame( '1', $result[0]->m );
+
+		// "all" returns 0 when any path is missing.
+		$result = $this->assertQuery( "SELECT JSON_CONTAINS_PATH($doc, 'all', '$.a.b', '$.x') AS m" );
+		$this->assertSame( '0', $result[0]->m );
+
+		// Mode matching is case-insensitive.
+		$result = $this->assertQuery( "SELECT JSON_CONTAINS_PATH($doc, 'ONE', '$.a') AS m" );
+		$this->assertSame( '1', $result[0]->m );
+
+		// Quoted keys with spaces resolve.
+		$result = $this->assertQuery( 'SELECT JSON_CONTAINS_PATH(\'{"a b": 1}\', \'one\', \'$."a b"\' ) AS m' );
+		$this->assertSame( '1', $result[0]->m );
+
+		// Root path always exists in a valid document.
+		$result = $this->assertQuery( "SELECT JSON_CONTAINS_PATH($doc, 'one', '$') AS m" );
+		$this->assertSame( '1', $result[0]->m );
+
+		// Invalid mode returns NULL.
+		$result = $this->assertQuery( "SELECT JSON_CONTAINS_PATH($doc, 'any', '$.a') AS m" );
+		$this->assertNull( $result[0]->m );
+
+		// Invalid path returns NULL.
+		$result = $this->assertQuery( "SELECT JSON_CONTAINS_PATH($doc, 'one', '$.a.') AS m" );
+		$this->assertNull( $result[0]->m );
+
+		// Invalid JSON returns NULL.
+		$result = $this->assertQuery( "SELECT JSON_CONTAINS_PATH('{oops', 'one', '$.a') AS m" );
+		$this->assertNull( $result[0]->m );
+
+		// NULL argument returns NULL.
+		$result = $this->assertQuery( 'SELECT JSON_CONTAINS_PATH(NULL, \'one\', \'$.a\') AS m' );
+		$this->assertNull( $result[0]->m );
+		$result = $this->assertQuery( "SELECT JSON_CONTAINS_PATH($doc, NULL, '$.a') AS m" );
+		$this->assertNull( $result[0]->m );
+		$result = $this->assertQuery( "SELECT JSON_CONTAINS_PATH($doc, 'one', NULL) AS m" );
+		$this->assertNull( $result[0]->m );
+
+		// Missing path arguments return NULL.
+		$result = $this->assertQuery( "SELECT JSON_CONTAINS_PATH($doc, 'one') AS m" );
+		$this->assertNull( $result[0]->m );
+	}
+
+	public function testJsonDepthFunction(): void {
+		// Scalars and empty containers have depth 1.
+		$result = $this->assertQuery( 'SELECT JSON_DEPTH(\'"hello"\') AS d' );
+		$this->assertSame( '1', $result[0]->d );
+		$result = $this->assertQuery( 'SELECT JSON_DEPTH(10) AS d' );
+		$this->assertSame( '1', $result[0]->d );
+		$result = $this->assertQuery( "SELECT JSON_DEPTH('{}') AS d" );
+		$this->assertSame( '1', $result[0]->d );
+		$result = $this->assertQuery( "SELECT JSON_DEPTH('[]') AS d" );
+		$this->assertSame( '1', $result[0]->d );
+
+		// Nested documents.
+		$result = $this->assertQuery( 'SELECT JSON_DEPTH(\'{"a": {"b": [1, 2, {"c": null}]}}\') AS d' );
+		$this->assertSame( '5', $result[0]->d );
+		$result = $this->assertQuery( "SELECT JSON_DEPTH('[1, {\"a\": []}]') AS d" );
+		$this->assertSame( '3', $result[0]->d );
+
+		// NULL input returns NULL.
+		$result = $this->assertQuery( 'SELECT JSON_DEPTH(NULL) AS d' );
+		$this->assertNull( $result[0]->d );
+
+		// Invalid JSON returns NULL.
+		$result = $this->assertQuery( "SELECT JSON_DEPTH('{oops') AS d" );
+		$this->assertNull( $result[0]->d );
+	}
+
+	public function testJsonKeysFunction(): void {
+		// Top-level keys of an object.
+		$result = $this->assertQuery( 'SELECT JSON_KEYS(\'{"a": 1, "b": 2}\') AS k' );
+		$this->assertSame( '["a","b"]', $result[0]->k );
+
+		// Keys of a nested object selected by path.
+		$result = $this->assertQuery( 'SELECT JSON_KEYS(\'{"a": {"x": 1, "y": 2}}\', \'$.a\') AS k' );
+		$this->assertSame( '["x","y"]', $result[0]->k );
+
+		// Numeric-looking keys stay strings, like MySQL.
+		$result = $this->assertQuery( 'SELECT JSON_KEYS(\'{"0": 1, "a": 2}\') AS k' );
+		$this->assertSame( '["0","a"]', $result[0]->k );
+
+		// Empty object has no keys.
+		$result = $this->assertQuery( "SELECT JSON_KEYS('{}') AS k" );
+		$this->assertSame( '[]', $result[0]->k );
+
+		// A top-level array is not an object, so NULL.
+		$result = $this->assertQuery( "SELECT JSON_KEYS('[1, 2]') AS k" );
+		$this->assertNull( $result[0]->k );
+
+		// A path selecting a non-object returns NULL.
+		$result = $this->assertQuery( 'SELECT JSON_KEYS(\'{"a": [1]}\', \'$.a\') AS k' );
+		$this->assertNull( $result[0]->k );
+
+		// A missing path returns NULL.
+		$result = $this->assertQuery( 'SELECT JSON_KEYS(\'{"a": 1}\', \'$.x\') AS k' );
+		$this->assertNull( $result[0]->k );
+
+		// NULL input returns NULL.
+		$result = $this->assertQuery( 'SELECT JSON_KEYS(NULL) AS k' );
+		$this->assertNull( $result[0]->k );
+
+		// Invalid JSON returns NULL.
+		$result = $this->assertQuery( "SELECT JSON_KEYS('{oops') AS k" );
+		$this->assertNull( $result[0]->k );
+	}
+
+	public function testJsonOverlapsFunction(): void {
+		// Arrays sharing an element overlap.
+		$result = $this->assertQuery( "SELECT JSON_OVERLAPS('[1, 2, 3]', '[3, 4]') AS o" );
+		$this->assertSame( '1', $result[0]->o );
+		$result = $this->assertQuery( "SELECT JSON_OVERLAPS('[1, 2]', '[3, 4]') AS o" );
+		$this->assertSame( '0', $result[0]->o );
+
+		// Objects sharing a key-value pair overlap.
+		$result = $this->assertQuery( 'SELECT JSON_OVERLAPS(\'{"a": 1}\', \'{"a": 1, "b": 2}\') AS o' );
+		$this->assertSame( '1', $result[0]->o );
+		$result = $this->assertQuery( 'SELECT JSON_OVERLAPS(\'{"a": 1}\', \'{"a": 2}\') AS o' );
+		$this->assertSame( '0', $result[0]->o );
+
+		// Nested values compare by equality, not partial overlap.
+		$result = $this->assertQuery( 'SELECT JSON_OVERLAPS(\'[[1, 2], [3, 4], 5]\', \'[1, [2, 3], [4, 5]]\') AS o' );
+		$this->assertSame( '0', $result[0]->o );
+		$result = $this->assertQuery( 'SELECT JSON_OVERLAPS(\'{"a": [1, 2]}\', \'{"a": [2, 3]}\') AS o' );
+		$this->assertSame( '0', $result[0]->o );
+		$result = $this->assertQuery( 'SELECT JSON_OVERLAPS(\'{"a": [1, 2]}\', \'{"a": [2, 3], "b": 9}\') AS o' );
+		$this->assertSame( '0', $result[0]->o );
+		$result = $this->assertQuery( 'SELECT JSON_OVERLAPS(\'{"a": [1, 2]}\', \'{"a": [1, 2], "b": 9}\') AS o' );
+		$this->assertSame( '1', $result[0]->o );
+
+		// Top-level array elements overlap only when they are deeply equal.
+		$result = $this->assertQuery( 'SELECT JSON_OVERLAPS(\'[[1, 2], [3, 4]]\', \'[[3, 4], 9]\') AS o' );
+		$this->assertSame( '1', $result[0]->o );
+
+		// Scalar against array uses element comparison.
+		$result = $this->assertQuery( "SELECT JSON_OVERLAPS('2', '[2, 3]') AS o" );
+		$this->assertSame( '1', $result[0]->o );
+		$result = $this->assertQuery( "SELECT JSON_OVERLAPS('1', '[2, 3]') AS o" );
+		$this->assertSame( '0', $result[0]->o );
+
+		// Scalar against object never overlaps.
+		$result = $this->assertQuery( 'SELECT JSON_OVERLAPS(\'1\', \'{"a": 1}\') AS o' );
+		$this->assertSame( '0', $result[0]->o );
+
+		// Type-sensitive scalar comparison: 1.0 equals 1, "1" does not.
+		$result = $this->assertQuery( "SELECT JSON_OVERLAPS('1', '1.0') AS o" );
+		$this->assertSame( '1', $result[0]->o );
+		$result = $this->assertQuery( 'SELECT JSON_OVERLAPS(\'1\', \'"1"\') AS o' );
+		$this->assertSame( '0', $result[0]->o );
+		$result = $this->assertQuery( 'SELECT JSON_OVERLAPS(\'true\', \'1\') AS o' );
+		$this->assertSame( '0', $result[0]->o );
+
+		// NULL argument returns NULL.
+		$result = $this->assertQuery( "SELECT JSON_OVERLAPS(NULL, '[1]') AS o" );
+		$this->assertNull( $result[0]->o );
+
+		// Invalid JSON returns NULL.
+		$result = $this->assertQuery( "SELECT JSON_OVERLAPS('{oops', '[1]') AS o" );
+		$this->assertNull( $result[0]->o );
+	}
+
+	public function testJsonPrettyFunction(): void {
+		// Exact MySQL-style output shape: two-space indent, one value per line.
+		$result = $this->assertQuery( 'SELECT JSON_PRETTY(\'{"b": 2, "a": [1, 2]}\') AS p' );
+		$this->assertSame( "{\n  \"b\": 2,\n  \"a\": [\n    1,\n    2\n  ]\n}", $result[0]->p );
+
+		// Empty containers stay inline.
+		$result = $this->assertQuery( 'SELECT JSON_PRETTY(\'{"a": {}, "b": []}\') AS p' );
+		$this->assertSame( "{\n  \"a\": {},\n  \"b\": []\n}", $result[0]->p );
+
+		// Scalars pass through.
+		$result = $this->assertQuery( 'SELECT JSON_PRETTY(\'"x"\') AS p' );
+		$this->assertSame( '"x"', $result[0]->p );
+
+		// Output is valid JSON decoding to the input value.
+		$result = $this->assertQuery( 'SELECT JSON_EXTRACT(JSON_PRETTY(\'{"a": [1, {"b": true}]}\'), \'$.a[1].b\') AS v' );
+		$this->assertSame( '1', $result[0]->v );
+
+		// NULL input returns NULL.
+		$result = $this->assertQuery( 'SELECT JSON_PRETTY(NULL) AS p' );
+		$this->assertNull( $result[0]->p );
+
+		// Invalid JSON returns NULL.
+		$result = $this->assertQuery( "SELECT JSON_PRETTY('{oops') AS p" );
+		$this->assertNull( $result[0]->p );
+	}
+
+	public function testJsonSearchFunction(): void {
+		$doc = '\'["abc", "abcd", "ab"]\'';
+
+		// "one" returns the first matching path.
+		$result = $this->assertQuery( "SELECT JSON_SEARCH($doc, 'one', 'abc') AS s" );
+		$this->assertSame( '$[0]', $result[0]->s );
+
+		// "all" returns every matching path as a JSON array.
+		$result = $this->assertQuery( "SELECT JSON_SEARCH($doc, 'all', 'abc%') AS s" );
+		$this->assertSame( '["$[0]","$[1]"]', $result[0]->s );
+
+		// "_" matches a single character.
+		$result = $this->assertQuery( "SELECT JSON_SEARCH($doc, 'one', 'ab_') AS s" );
+		$this->assertSame( '$[0]', $result[0]->s );
+
+		// An escaped wildcard matches literally: nothing ends in a literal "%".
+		$result = $this->assertQuery( "SELECT JSON_SEARCH($doc, 'one', 'abc\\%', '\\\\') AS s" );
+		$this->assertNull( $result[0]->s );
+
+		// A NULL escape falls back to the backslash default.
+		$result = $this->assertQuery( 'SELECT JSON_SEARCH(\'{"a": "x"}\', \'one\', \'x\', NULL, \'$.a\') AS s' );
+		$this->assertSame( '$.a', $result[0]->s );
+		$result = $this->assertQuery( "SELECT JSON_SEARCH('{\"a\": \"100%\"}', 'one', '100\\%', NULL) AS s" );
+		$this->assertSame( '$.a', $result[0]->s );
+
+		// Non-string values never match, so '1' skips the number 1.
+		$result = $this->assertQuery( "SELECT JSON_SEARCH('[1, \"1\"]', 'one', '1') AS s" );
+		$this->assertSame( '$[1]', $result[0]->s );
+
+		// No match returns NULL.
+		$result = $this->assertQuery( "SELECT JSON_SEARCH($doc, 'one', 'zzz') AS s" );
+		$this->assertNull( $result[0]->s );
+
+		// A scope path restricts the search but results stay root-relative.
+		$result = $this->assertQuery( 'SELECT JSON_SEARCH(\'{"x": {"v": "hit"}, "y": "hit"}\', \'one\', \'hit\', \'\\\\\', \'$.x\') AS s' );
+		$this->assertSame( '$.x.v', $result[0]->s );
+
+		// A missing scope path finds nothing.
+		$result = $this->assertQuery( 'SELECT JSON_SEARCH(\'{"x": 1}\', \'one\', \'hit\', \'\\\\\', \'$.missing\') AS s' );
+		$this->assertNull( $result[0]->s );
+
+		// Invalid mode returns NULL.
+		$result = $this->assertQuery( "SELECT JSON_SEARCH($doc, 'any', 'abc') AS s" );
+		$this->assertNull( $result[0]->s );
+
+		// NULL argument returns NULL.
+		$result = $this->assertQuery( 'SELECT JSON_SEARCH(NULL, \'one\', \'abc\') AS s' );
+		$this->assertNull( $result[0]->s );
+
+		// Invalid JSON returns NULL.
+		$result = $this->assertQuery( "SELECT JSON_SEARCH('{oops', 'one', 'abc') AS s" );
+		$this->assertNull( $result[0]->s );
+	}
+
+	public function testJsonValueFunction(): void {
+		// Scalars extract as unquoted values.
+		$result = $this->assertQuery( 'SELECT JSON_VALUE(\'{"a": {"b": 42}, "c": "hi"}\', \'$.a.b\') AS v' );
+		$this->assertSame( '42', $result[0]->v );
+		$result = $this->assertQuery( 'SELECT JSON_VALUE(\'{"a": {"b": 42}, "c": "hi"}\', \'$.c\') AS v' );
+		$this->assertSame( 'hi', $result[0]->v );
+		$result = $this->assertQuery( 'SELECT JSON_VALUE(\'{"a": 1.5}\', \'$.a\') AS v' );
+		$this->assertSame( '1.5', $result[0]->v );
+
+		// Booleans render as true/false.
+		$result = $this->assertQuery( 'SELECT JSON_VALUE(\'{"t": true, "f": false}\', \'$.t\') AS v' );
+		$this->assertSame( 'true', $result[0]->v );
+		$result = $this->assertQuery( 'SELECT JSON_VALUE(\'{"t": true, "f": false}\', \'$.f\') AS v' );
+		$this->assertSame( 'false', $result[0]->v );
+
+		// JSON null becomes SQL NULL.
+		$result = $this->assertQuery( 'SELECT JSON_VALUE(\'{"a": null}\', \'$.a\') AS v' );
+		$this->assertNull( $result[0]->v );
+
+		// Objects and arrays cannot be scalars, so NULL.
+		$result = $this->assertQuery( 'SELECT JSON_VALUE(\'{"a": {"b": 1}}\', \'$.a\') AS v' );
+		$this->assertNull( $result[0]->v );
+		$result = $this->assertQuery( 'SELECT JSON_VALUE(\'{"a": [1]}\', \'$.a\') AS v' );
+		$this->assertNull( $result[0]->v );
+
+		// Interplay: extract from a value built by JSON_ARRAY_APPEND().
+		$result = $this->assertQuery( 'SELECT JSON_VALUE(JSON_ARRAY_APPEND(\'{"a": [1]}\', \'$.a\', 2), \'$.a[1]\') AS v' );
+		$this->assertSame( '2', $result[0]->v );
+
+		// Missing path returns NULL.
+		$result = $this->assertQuery( 'SELECT JSON_VALUE(\'{"a": 1}\', \'$.x\') AS v' );
+		$this->assertNull( $result[0]->v );
+
+		// NULL argument returns NULL.
+		$result = $this->assertQuery( 'SELECT JSON_VALUE(NULL, \'$.a\') AS v' );
+		$this->assertNull( $result[0]->v );
+
+		// Invalid JSON returns NULL.
+		$result = $this->assertQuery( "SELECT JSON_VALUE('{oops', '$.a') AS v" );
+		$this->assertNull( $result[0]->v );
+	}
+
+	public function testJsonArrayAppendFunction(): void {
+		// Append to an existing array.
+		$result = $this->assertQuery( 'SELECT JSON_ARRAY_APPEND(\'{"a": [1], "b": 2}\', \'$.a\', 3) AS j' );
+		$this->assertSame( '{"a":[1,3],"b":2}', $result[0]->j );
+
+		// Append autowraps an existing scalar.
+		$result = $this->assertQuery( 'SELECT JSON_ARRAY_APPEND(\'{"b": 2}\', \'$.b\', 3) AS j' );
+		$this->assertSame( '{"b":[2,3]}', $result[0]->j );
+
+		// A missing object key is ignored: the pair creates nothing.
+		$result = $this->assertQuery( 'SELECT JSON_ARRAY_APPEND(\'{"a": 1}\', \'$.c\', \'"x"\') AS j' );
+		$this->assertSame( '{"a":1}', $result[0]->j );
+
+		// String values that parse as JSON are stored parsed.
+		$result = $this->assertQuery( 'SELECT JSON_ARRAY_APPEND(\'[]\', \'$\', \'{"x": 1}\') AS j' );
+		$this->assertSame( '[{"x":1}]', $result[0]->j );
+		$result = $this->assertQuery( 'SELECT JSON_ARRAY_APPEND(\'[]\', \'$\', \'"abc"\') AS j' );
+		$this->assertSame( '["abc"]', $result[0]->j );
+
+		// Multiple pairs evaluate left to right.
+		$result = $this->assertQuery( 'SELECT JSON_ARRAY_APPEND(\'{"a": [1]}\', \'$.a\', 2, \'$.a\', 3) AS j' );
+		$this->assertSame( '{"a":[1,2,3]}', $result[0]->j );
+
+		// A pair with a missing intermediate path is ignored.
+		$result = $this->assertQuery( 'SELECT JSON_ARRAY_APPEND(\'{"a": 1}\', \'$.x.y\', 1) AS j' );
+		$this->assertSame( '{"a":1}', $result[0]->j );
+
+		// NULL document returns NULL.
+		$result = $this->assertQuery( "SELECT JSON_ARRAY_APPEND(NULL, '$.a', 1) AS j" );
+		$this->assertNull( $result[0]->j );
+
+		// Invalid JSON returns NULL.
+		$result = $this->assertQuery( "SELECT JSON_ARRAY_APPEND('{oops', '$.a', 1) AS j" );
+		$this->assertNull( $result[0]->j );
+
+		// An incomplete pair returns NULL.
+		$result = $this->assertQuery( "SELECT JSON_ARRAY_APPEND('[1]', '$[0]') AS j" );
+		$this->assertNull( $result[0]->j );
+	}
+
+	public function testJsonArrayInsertFunction(): void {
+		// Insert before an index.
+		$result = $this->assertQuery( 'SELECT JSON_ARRAY_INSERT(\'["a", "c"]\', \'$[1]\', \'"b"\') AS j' );
+		$this->assertSame( '["a","b","c"]', $result[0]->j );
+
+		// Insert into a nested array selected by path.
+		$result = $this->assertQuery( 'SELECT JSON_ARRAY_INSERT(\'{"a": [1, 3]}\', \'$.a[1]\', 2) AS j' );
+		$this->assertSame( '{"a":[1,2,3]}', $result[0]->j );
+
+		// An index past the end appends.
+		$result = $this->assertQuery( "SELECT JSON_ARRAY_INSERT('[1]', '$[5]', 2) AS j" );
+		$this->assertSame( '[1,2]', $result[0]->j );
+
+		// A path not ending in an index is ignored.
+		$result = $this->assertQuery( "SELECT JSON_ARRAY_INSERT('[1]', '$', 2) AS j" );
+		$this->assertSame( '[1]', $result[0]->j );
+
+		// A path through a non-array is ignored.
+		$result = $this->assertQuery( 'SELECT JSON_ARRAY_INSERT(\'{"a": 1}\', \'$.a[0]\', 2) AS j' );
+		$this->assertSame( '{"a":1}', $result[0]->j );
+
+		// NULL document returns NULL.
+		$result = $this->assertQuery( "SELECT JSON_ARRAY_INSERT(NULL, '$[0]', 1) AS j" );
+		$this->assertNull( $result[0]->j );
+
+		// Invalid JSON returns NULL.
+		$result = $this->assertQuery( "SELECT JSON_ARRAY_INSERT('[oops', '$[0]', 1) AS j" );
+		$this->assertNull( $result[0]->j );
+	}
+
+	public function testJsonStorageFunctions(): void {
+		// No storage is ever freed.
+		$result = $this->assertQuery( 'SELECT JSON_STORAGE_FREE(\'{"a": 1}\') AS f' );
+		$this->assertSame( '0', $result[0]->f );
+
+		// Size is the byte length of the normalized compact document.
+		$result = $this->assertQuery( 'SELECT JSON_STORAGE_SIZE(\'{"a": 1}\') AS s' );
+		$this->assertSame( '7', $result[0]->s );
+		$result = $this->assertQuery( "SELECT JSON_STORAGE_SIZE('[1, 2]') AS s" );
+		$this->assertSame( '5', $result[0]->s );
+
+		// NULL input returns NULL.
+		$result = $this->assertQuery( 'SELECT JSON_STORAGE_FREE(NULL) AS f' );
+		$this->assertNull( $result[0]->f );
+		$result = $this->assertQuery( 'SELECT JSON_STORAGE_SIZE(NULL) AS s' );
+		$this->assertNull( $result[0]->s );
+
+		// Invalid JSON returns NULL.
+		$result = $this->assertQuery( "SELECT JSON_STORAGE_FREE('{oops') AS f" );
+		$this->assertNull( $result[0]->f );
+		$result = $this->assertQuery( "SELECT JSON_STORAGE_SIZE('{oops') AS s" );
+		$this->assertNull( $result[0]->s );
+	}
+
+	public function testJsonSchemaValidFunction(): void {
+		$schema = '\'{"type": "object", "properties": {"a": {"type": "integer"}}, "required": ["a"]}\'';
+
+		$result = $this->assertQuery( "SELECT JSON_SCHEMA_VALID($schema, '{\"a\": 1}') AS v" );
+		$this->assertSame( '1', $result[0]->v );
+		$result = $this->assertQuery( "SELECT JSON_SCHEMA_VALID($schema, '{\"a\": \"x\"}') AS v" );
+		$this->assertSame( '0', $result[0]->v );
+		$result = $this->assertQuery( "SELECT JSON_SCHEMA_VALID($schema, '{}') AS v" );
+		$this->assertSame( '0', $result[0]->v );
+
+		// Enum membership.
+		$result = $this->assertQuery( 'SELECT JSON_SCHEMA_VALID(\'{"enum": [1, "two", null]}\', \'"two"\') AS v' );
+		$this->assertSame( '1', $result[0]->v );
+		$result = $this->assertQuery( 'SELECT JSON_SCHEMA_VALID(\'{"enum": [1, "two", null]}\', \'"three"\') AS v' );
+		$this->assertSame( '0', $result[0]->v );
+
+		// Array items.
+		$result = $this->assertQuery( 'SELECT JSON_SCHEMA_VALID(\'{"type": "array", "items": {"type": "integer"}}\', \'[1, 2]\') AS v' );
+		$this->assertSame( '1', $result[0]->v );
+		$result = $this->assertQuery( 'SELECT JSON_SCHEMA_VALID(\'{"type": "array", "items": {"type": "integer"}}\', \'[1, "x"]\') AS v' );
+		$this->assertSame( '0', $result[0]->v );
+
+		// A non-object schema returns NULL.
+		$result = $this->assertQuery( 'SELECT JSON_SCHEMA_VALID(\'[1]\', \'[1]\') AS v' );
+		$this->assertNull( $result[0]->v );
+
+		// NULL argument returns NULL.
+		$result = $this->assertQuery( "SELECT JSON_SCHEMA_VALID(NULL, '{}') AS v" );
+		$this->assertNull( $result[0]->v );
+
+		// Invalid JSON returns NULL.
+		$result = $this->assertQuery( "SELECT JSON_SCHEMA_VALID('{oops', '{}') AS v" );
+		$this->assertNull( $result[0]->v );
+		$result = $this->assertQuery( "SELECT JSON_SCHEMA_VALID('{}', '{oops') AS v" );
+		$this->assertNull( $result[0]->v );
+	}
+
+	public function testJsonSchemaValidationReportFunction(): void {
+		$schema = '\'{"type": "object", "required": ["a"]}\'';
+
+		// A valid document reports valid without a reason.
+		$result = $this->assertQuery( "SELECT JSON_SCHEMA_VALIDATION_REPORT($schema, '{\"a\": 1}') AS r" );
+		$this->assertSame( '{"valid":true}', $result[0]->r );
+
+		// An invalid document reports valid false with a reason.
+		$result = $this->assertQuery( "SELECT JSON_SCHEMA_VALIDATION_REPORT($schema, '{}') AS r" );
+		$this->assertSame(
+			'{"valid":false,"reason":"The object at $ is missing required property \\"a\\"."}',
+			$result[0]->r
+		);
+
+		// Interplay: the report is machine-readable via JSON_EXTRACT().
+		$result = $this->assertQuery( "SELECT JSON_EXTRACT(JSON_SCHEMA_VALIDATION_REPORT($schema, '{}'), '$.valid') AS v" );
+		$this->assertSame( '0', $result[0]->v );
+
+		// NULL argument returns NULL.
+		$result = $this->assertQuery( "SELECT JSON_SCHEMA_VALIDATION_REPORT(NULL, '{}') AS r" );
+		$this->assertNull( $result[0]->r );
+
+		// Invalid JSON returns NULL.
+		$result = $this->assertQuery( "SELECT JSON_SCHEMA_VALIDATION_REPORT('{oops', '{}') AS r" );
+		$this->assertNull( $result[0]->r );
+	}
+
+	public function testJsonMergeFunction(): void {
+		// JSON_MERGE() aliases merge-preserve semantics: shared keys combine.
+		$result = $this->assertQuery( 'SELECT JSON_MERGE(\'{"a": 1, "b": 2}\', \'{"a": 3}\') AS j' );
+		$this->assertSame( '{"a":[1,3],"b":2}', $result[0]->j );
+
+		// Arrays concatenate; non-array operands autowrap first.
+		$result = $this->assertQuery( "SELECT JSON_MERGE('[1, 2]', '[3]') AS j" );
+		$this->assertSame( '[1,2,3]', $result[0]->j );
+		$result = $this->assertQuery( "SELECT JSON_MERGE('[1, 2]', '3') AS j" );
+		$this->assertSame( '[1,2,3]', $result[0]->j );
+		$result = $this->assertQuery( 'SELECT JSON_MERGE(\'{"a": 1}\', \'[1]\') AS j' );
+		$this->assertSame( '[{"a":1},1]', $result[0]->j );
+		$result = $this->assertQuery( 'SELECT JSON_MERGE(\'{"a": [1]}\', \'{"a": 2}\') AS j' );
+		$this->assertSame( '{"a":[1,2]}', $result[0]->j );
+
+		// Nested objects merge recursively.
+		$result = $this->assertQuery( 'SELECT JSON_MERGE(\'{"a": {"x": 1}}\', \'{"a": {"y": 2}}\') AS j' );
+		$this->assertSame( '{"a":{"x":1,"y":2}}', $result[0]->j );
+
+		// More than two documents fold left to right.
+		$result = $this->assertQuery( "SELECT JSON_MERGE('[1]', '[2]', '[3]') AS j" );
+		$this->assertSame( '[1,2,3]', $result[0]->j );
+
+		// Interplay: merged keys are readable via JSON_KEYS().
+		$result = $this->assertQuery( 'SELECT JSON_KEYS(JSON_MERGE(\'{"a": 1}\', \'{"b": 2}\')) AS k' );
+		$this->assertSame( '["a","b"]', $result[0]->k );
+
+		// A NULL argument returns NULL.
+		$result = $this->assertQuery( 'SELECT JSON_MERGE(\'{"a": 1}\', NULL) AS j' );
+		$this->assertNull( $result[0]->j );
+
+		// Invalid JSON returns NULL.
+		$result = $this->assertQuery( "SELECT JSON_MERGE('{oops', '{}') AS j" );
+		$this->assertNull( $result[0]->j );
+	}
 }
