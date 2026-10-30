@@ -1066,6 +1066,105 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$this->assertEquals( '2024-01-08 10:00:00', $result[0]->output );
 	}
 
+	public function testConvertTzFunction() {
+		// Identity conversion.
+		$result = $this->assertQuery(
+			"SELECT CONVERT_TZ('2026-09-29 12:00:00', '+00:00', '+00:00') as output"
+		);
+		$this->assertEquals( '2026-09-29 12:00:00', $result[0]->output );
+
+		// Numeric offset conversion.
+		$result = $this->assertQuery(
+			"SELECT CONVERT_TZ('2026-09-29 12:00:00', '+00:00', '-05:00') as output"
+		);
+		$this->assertEquals( '2026-09-29 07:00:00', $result[0]->output );
+
+		// Half-hour offset conversion.
+		$result = $this->assertQuery(
+			"SELECT CONVERT_TZ('2026-09-29 12:00:00', '+00:00', '+05:30') as output"
+		);
+		$this->assertEquals( '2026-09-29 17:30:00', $result[0]->output );
+
+		// Named time zone conversion observes daylight saving time.
+		$result = $this->assertQuery(
+			"SELECT CONVERT_TZ('2026-01-15 12:00:00', '+00:00', 'America/New_York') as output"
+		);
+		$this->assertEquals( '2026-01-15 07:00:00', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT CONVERT_TZ('2026-07-15 12:00:00', '+00:00', 'America/New_York') as output"
+		);
+		$this->assertEquals( '2026-07-15 08:00:00', $result[0]->output );
+
+		// DATE() over CONVERT_TZ() groups per-day analytics correctly.
+		$result = $this->assertQuery(
+			"SELECT DATE(CONVERT_TZ('2026-09-29 23:30:00', '+00:00', '+05:00')) as output"
+		);
+		$this->assertEquals( '2026-09-30', $result[0]->output );
+
+		// UTC alias behaves like +00:00.
+		$result = $this->assertQuery(
+			"SELECT CONVERT_TZ('2026-09-29 12:00:00', 'UTC', '+00:00') as output"
+		);
+		$this->assertEquals( '2026-09-29 12:00:00', $result[0]->output );
+
+		// NULL propagates like MySQL.
+		$result = $this->assertQuery(
+			"SELECT CONVERT_TZ(NULL, '+00:00', '+00:00') as output"
+		);
+		$this->assertNull( $result[0]->output );
+
+		// Invalid datetime returns NULL like MySQL.
+		$result = $this->assertQuery(
+			"SELECT CONVERT_TZ('bad', '+00:00', '+00:00') as output"
+		);
+		$this->assertNull( $result[0]->output );
+
+		// Unknown time zone returns NULL like MySQL.
+		$result = $this->assertQuery(
+			"SELECT CONVERT_TZ('2026-09-29 12:00:00', 'bad', '+00:00') as output"
+		);
+		$this->assertNull( $result[0]->output );
+
+		// Zero-dates and impossible calendar dates return NULL instead of
+		// being rolled over into a real date.
+		$result = $this->assertQuery(
+			"SELECT CONVERT_TZ('0000-00-00 00:00:00', '+00:00', '+00:00') as output"
+		);
+		$this->assertNull( $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT CONVERT_TZ('2026-02-31', '+00:00', '+00:00') as output"
+		);
+		$this->assertNull( $result[0]->output );
+
+		// An out-of-range hour is rejected rather than rolled into the next day.
+		$result = $this->assertQuery(
+			"SELECT CONVERT_TZ('2026-09-29 25:00:00', '+00:00', '+00:00') as output"
+		);
+		$this->assertNull( $result[0]->output );
+
+		// MySQL accepts numeric offsets only from -13:59 through +14:00.
+		foreach ( array( '+15:00', '-14:00', '+14:01', '-13:60' ) as $invalid ) {
+			$result = $this->assertQuery(
+				"SELECT CONVERT_TZ('2026-09-29 12:00:00', '$invalid', '+00:00') as output"
+			);
+			$this->assertNull( $result[0]->output, "offset $invalid" );
+		}
+
+		// The bounds themselves are accepted.
+		$result = $this->assertQuery(
+			"SELECT CONVERT_TZ('2026-09-29 12:00:00', '+14:00', '+00:00') as output"
+		);
+		$this->assertEquals( '2026-09-28 22:00:00', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT CONVERT_TZ('2026-09-29 12:00:00', '-13:59', '+00:00') as output"
+		);
+		$this->assertEquals( '2026-09-30 01:59:00', $result[0]->output );
+	}
+
+
 	public function testIntervalArithmetic() {
 		// Expected values were taken from MySQL 8.4.
 		$result = $this->assertQuery(
