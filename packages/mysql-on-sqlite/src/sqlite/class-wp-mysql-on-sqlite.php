@@ -7895,6 +7895,12 @@ class WP_MySQL_On_SQLite extends PDO {
 			return (string) bindec( substr( $column['COLUMN_DEFAULT'], 2, -1 ) );
 		}
 
+		// A BLOB column in a STRICT table only accepts a BLOB default.
+		if ( 'binary' === $column['DATA_TYPE'] || 'varbinary' === $column['DATA_TYPE'] ) {
+			$bytes = WP_SQLite_Information_Schema_Builder::get_binary_default_bytes( $column['COLUMN_DEFAULT'] );
+			return sprintf( "x'%s'", bin2hex( $bytes ) );
+		}
+
 		return $this->quote_sqlite_value( $column['COLUMN_DEFAULT'] );
 	}
 
@@ -7908,6 +7914,14 @@ class WP_MySQL_On_SQLite extends PDO {
 		// BIT defaults are already stored as b'...' literals.
 		if ( 'bit' === $column['DATA_TYPE'] ) {
 			return $column['COLUMN_DEFAULT'];
+		}
+
+		// Like MySQL, use a hex literal for bytes that aren't valid UTF-8.
+		if ( 'binary' === $column['DATA_TYPE'] || 'varbinary' === $column['DATA_TYPE'] ) {
+			$bytes = WP_SQLite_Information_Schema_Builder::get_binary_default_bytes( $column['COLUMN_DEFAULT'] );
+			return 1 === preg_match( '//u', $bytes )
+				? $this->quote_mysql_utf8_string_literal( $bytes )
+				: '0x' . strtoupper( bin2hex( $bytes ) );
 		}
 
 		return $this->quote_mysql_utf8_string_literal( $column['COLUMN_DEFAULT'] );
