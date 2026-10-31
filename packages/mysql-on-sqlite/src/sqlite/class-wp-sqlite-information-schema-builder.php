@@ -591,27 +591,23 @@ class WP_SQLite_Information_Schema_Builder {
 			}
 
 			// Extract inline column constraints and indexes.
-			$index_data                  = $this->extract_column_statistics_data(
+			$index_data            = $this->extract_column_statistics_data(
 				$table_name,
 				$column_name,
 				$column_node,
 				'YES' === $column_data['is_nullable']
 			);
-			$constraint_data             = $this->extract_table_constraint_data(
+			$constraint_data       = $this->extract_table_constraint_data(
 				$column_node,
 				$table_name,
 				$index_data['index_name'] ?? null
 			);
-			$referential_constraint_data = $this->extract_referential_constraint_data(
-				$column_node,
-				$table_name
-			);
-			$key_column_usage_data       = $this->extract_key_column_usage_data(
+			$key_column_usage_data = $this->extract_key_column_usage_data(
 				$column_node,
 				$table_name,
 				$index_data['index_name'] ?? null
 			);
-			$check_constraint_data       = $this->extract_check_constraint_data(
+			$check_constraint_data = $this->extract_check_constraint_data(
 				$column_node,
 				$table_name
 			);
@@ -627,12 +623,6 @@ class WP_SQLite_Information_Schema_Builder {
 				$this->insert_values(
 					$this->get_table_name( $table_is_temporary, 'table_constraints' ),
 					$constraint_data
-				);
-			}
-			if ( null !== $referential_constraint_data ) {
-				$this->insert_values(
-					$this->get_table_name( $table_is_temporary, 'referential_constraints' ),
-					$referential_constraint_data
 				);
 			}
 			foreach ( $key_column_usage_data as $key_column_usage_item ) {
@@ -1892,6 +1882,10 @@ class WP_SQLite_Information_Schema_Builder {
 	 * @return array|null                 The referential constraint data as stored in information schema.
 	 */
 	private function extract_referential_constraint_data( WP_Parser_Node $node, string $table_name ): ?array {
+		if ( 'tableConstraintDef' !== $node->rule_name ) {
+			return null;
+		}
+
 		$references = $node->get_first_descendant_node( 'references' );
 		if ( null === $references ) {
 			return null;
@@ -1984,7 +1978,7 @@ class WP_SQLite_Information_Schema_Builder {
 	): array {
 		$is_primary = $node->get_first_descendant_token( WP_MySQL_Lexer::PRIMARY_SYMBOL );
 		$is_unique  = $node->get_first_descendant_token( WP_MySQL_Lexer::UNIQUE_SYMBOL );
-		$references = $node->get_first_descendant_node( 'references' );
+		$references = 'tableConstraintDef' === $node->rule_name ? $node->get_first_descendant_node( 'references' ) : null;
 		if ( null === $references && ! $is_primary && ! $is_unique ) {
 			return array();
 		}
@@ -2928,7 +2922,7 @@ class WP_SQLite_Information_Schema_Builder {
 			return $this->get_value( $name_node->get_first_child_node( 'identifier' ) );
 		}
 
-		$foreign_key      = $node->get_first_descendant_node( 'references' );
+		$foreign_key      = 'tableConstraintDef' === $node->rule_name ? $node->get_first_descendant_node( 'references' ) : null;
 		$check_constraint = $node->get_first_descendant_node( 'checkConstraint' );
 
 		// FOREIGN KEY and CHECK constraints without a name get a generated name.
@@ -2986,7 +2980,7 @@ class WP_SQLite_Information_Schema_Builder {
 		if ( $node->get_first_descendant_token( WP_MySQL_Lexer::UNIQUE_SYMBOL ) ) {
 			return 'UNIQUE';
 		}
-		if ( $node->get_first_descendant_node( 'references' ) ) {
+		if ( 'tableConstraintDef' === $node->rule_name && $node->get_first_descendant_node( 'references' ) ) {
 			return 'FOREIGN KEY';
 		}
 		if ( $node->get_first_descendant_node( 'checkConstraint' ) ) {
