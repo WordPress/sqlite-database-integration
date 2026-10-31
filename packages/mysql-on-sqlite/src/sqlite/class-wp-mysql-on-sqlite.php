@@ -606,6 +606,42 @@ class WP_MySQL_On_SQLite extends PDO {
 	private $last_insert_id = '0';
 
 	/**
+	 * Rows changed by the previous row-changing statement, for ROW_COUNT().
+	 *
+	 * MySQL's ROW_COUNT() reports the rows changed by the preceding INSERT,
+	 * REPLACE, UPDATE, or DELETE statement; -1 when the preceding statement
+	 * was a SELECT or SHOW; 0 for any other statement; -1 before any
+	 * statement ran.
+	 *
+	 * This is deliberately not derived from SQLite's CHANGES(): a single
+	 * MySQL statement can translate to multiple SQLite writes (e.g. a
+	 * multi-table DELETE reports the sum of N DELETEs, while CHANGES()
+	 * would only see the last one).
+	 *
+	 * @var int
+	 */
+	private $row_count_value = -1;
+
+	/**
+	 * Session value set by the most recent LAST_INSERT_ID(expr) call.
+	 *
+	 * MySQL scopes this to the session: it survives across statements until
+	 * the next LAST_INSERT_ID(expr) call or an INSERT/REPLACE generating a
+	 * new AUTO_INCREMENT value. Mirrored into the user-defined functions
+	 * before every query and read back afterwards (see query()).
+	 *
+	 * @var mixed
+	 */
+	private $last_insert_id_session_value = null;
+
+	/**
+	 * Whether an explicit LAST_INSERT_ID(expr) session value is stored.
+	 *
+	 * @var bool
+	 */
+	private $last_insert_id_session_is_set = false;
+
+	/**
 	 * User-defined functions registered on the SQLite connection.
 	 *
 	 * @var WP_SQLite_PDO_User_Defined_Functions
@@ -955,6 +991,7 @@ class WP_MySQL_On_SQLite extends PDO {
 
 		// Register SQLite functions.
 		$this->user_defined_functions = WP_SQLite_PDO_User_Defined_Functions::register_for( $this->connection->get_pdo() );
+		$this->user_defined_functions->set_connection( $this->connection->get_pdo() );
 
 		// Load MySQL grammar.
 		if ( null === self::$mysql_grammar ) {
@@ -1112,6 +1149,17 @@ class WP_MySQL_On_SQLite extends PDO {
 		$this->flush();
 		$this->last_mysql_query = $query;
 
+		/*
+		 * Push the stashed per-connection state into the user-defined
+		 * functions. flush() above reset their per-statement copies, while
+		 * the session values below live on until replaced.
+		 */
+		$this->user_defined_functions->set_row_count_value( $this->row_count_value );
+		$this->user_defined_functions->set_last_insert_id_state(
+			$this->last_insert_id_session_value,
+			$this->last_insert_id_session_is_set
+		);
+
 		try {
 			// Parse the MySQL query.
 			$parser = $this->create_parser( $query );
@@ -1199,6 +1247,89 @@ class WP_MySQL_On_SQLite extends PDO {
 				array( 'insertStatement', 'replaceStatement', 'updateStatement', 'deleteStatement' ),
 				true
 			);
+
+			/*
+			 * Stash the ROW_COUNT() value for the next statement and sync the
+			 * LAST_INSERT_ID(expr) session value possibly set by this one.
+			 */
+			if ( $reports_affected_rows ) {
+				$affected_rows = $this->last_affected_rows;
+				if ( null === $affected_rows && null !== $this->last_result_statement ) {
+					$affected_rows = $this->last_result_statement->rowCount();
+				}
+				$this->row_count_value = (int) $affected_rows;
+			} elseif (
+				null !== $statement_node
+				&& in_array(
+					$statement_node->rule_name,
+					array( 'selectStatement', 'showStatement' ),
+					true
+				)
+			) {
+				$this->row_count_value = -1;
+			} else {
+				$this->row_count_value = 0;
+			}
+
+			/*
+			 * A successful INSERT or REPLACE sets the LAST_INSERT_ID() session
+			 * value, unless the statement set one itself with
+			 * LAST_INSERT_ID(expr). The upsert idiom
+			 *
+			 *     INSERT ... ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)
+			 *
+			 * relies on that: MySQL keeps returning the updated row's id.
+			 * Any other statement keeps the value possibly set through
+			 * last_insert_id() while it was executing, and mirrors it to
+			 * lastInsertId() like MySQL's mysql_insert_id() does.
+			 *
+			 * The generated id is copied into the session state here rather
+			 * than left to fall back on the raw SQLite connection state. The
+			 * driver issues its own writes (information schema bookkeeping),
+			 * which would otherwise replace the id from the user's INSERT.
+			 * MySQL reports the FIRST id of a multi-row insert while SQLite
+			 * reports the last row id, so the first is derived from the
+			 * affected row count.
+			 */
+			$is_insert_or_replace = null !== $statement_node
+				&& in_array(
+					$statement_node->rule_name,
+					array( 'insertStatement', 'replaceStatement' ),
+					true
+				);
+			if ( $is_insert_or_replace ) {
+				if ( $this->user_defined_functions->has_last_insert_id_override() ) {
+					$session_state                       = $this->user_defined_functions->get_last_insert_id_state();
+					$this->last_insert_id_session_value  = $session_state[0];
+					$this->last_insert_id_session_is_set = $session_state[1];
+				} else {
+					$generated = (int) $this->last_insert_id;
+					$rows      = null !== $this->last_affected_rows
+						? (int) $this->last_affected_rows
+						: ( null !== $this->last_result_statement ? (int) $this->last_result_statement->rowCount() : 0 );
+					if ( $generated > 0 && $rows > 1 ) {
+						$generated -= ( $rows - 1 );
+					}
+					if ( $generated > 0 ) {
+						$this->last_insert_id_session_value  = $generated;
+						$this->last_insert_id_session_is_set = true;
+						$this->last_insert_id                = (string) $generated;
+					} else {
+						$this->last_insert_id_session_value  = null;
+						$this->last_insert_id_session_is_set = false;
+					}
+				}
+			} else {
+				$session_state                       = $this->user_defined_functions->get_last_insert_id_state();
+				$this->last_insert_id_session_value  = $session_state[0];
+				$this->last_insert_id_session_is_set = $session_state[1];
+				if (
+					$this->last_insert_id_session_is_set
+					&& null !== $this->last_insert_id_session_value
+				) {
+					$this->last_insert_id = (string) $this->last_insert_id_session_value;
+				}
+			}
 
 			$stmt = new WP_MySQL_On_SQLite_Statement(
 				$this->last_result_statement,
@@ -4439,6 +4570,8 @@ class WP_MySQL_On_SQLite extends PDO {
 				return $this->translate_runtime_function_call( $node );
 			case 'functionCall':
 				return $this->translate_function_call( $node );
+			case 'jsonFunction':
+				return $this->translate_json_function( $node );
 			case 'substringFunction':
 				$nodes = $node->get_child_nodes();
 				if ( count( $nodes ) === 2 ) {
@@ -5284,6 +5417,47 @@ class WP_MySQL_On_SQLite extends PDO {
 	}
 
 	/**
+	 * Translate a MySQL JSON aggregate function to SQLite.
+	 *
+	 * JSON_ARRAYAGG() and JSON_OBJECTAGG() map onto SQLite's native
+	 * json_group_array() and json_group_object() aggregates.
+	 *
+	 * NB: The driver's MySQL grammar rejects DISTINCT inside these
+	 * aggregates, so only the basic forms are supported here.
+	 *
+	 * @param  WP_Parser_Node $node       The "jsonFunction" AST node.
+	 * @return string                     The translated value.
+	 */
+	private function translate_json_function( WP_Parser_Node $node ): string {
+		$name_token = $node->get_first_child_token();
+		$args       = array();
+		/*
+		 * jsonFunction places an optional windowingClause after the closing
+		 * parenthesis. It is not an aggregate argument, so translating it as
+		 * one would produce invalid SQLite such as
+		 * "JSON_GROUP_ARRAY(value, OVER (...))".
+		 */
+		$windowing_clause = $node->get_first_child_node( 'windowingClause' );
+		foreach ( $node->get_child_nodes() as $child ) {
+			if ( $child === $windowing_clause ) {
+				continue;
+			}
+			$args[] = $this->translate( $child );
+		}
+		$window_sql = null === $windowing_clause
+			? ''
+			: ' ' . $this->translate( $windowing_clause );
+
+		if (
+			null !== $name_token
+			&& WP_MySQL_Lexer::JSON_ARRAYAGG_SYMBOL === $name_token->id
+		) {
+			return 'JSON_GROUP_ARRAY(' . implode( ', ', $args ) . ')' . $window_sql;
+		}
+		return 'JSON_GROUP_OBJECT(' . implode( ', ', $args ) . ')' . $window_sql;
+	}
+
+	/**
 	 * Translate a MySQL function call to SQLite.
 	 *
 	 * @param  WP_Parser_Node $node       The "functionCall" AST node.
@@ -5387,6 +5561,28 @@ class WP_MySQL_On_SQLite extends PDO {
 				}
 			case 'VERSION':
 				return $this->quote_sqlite_value( $this->get_mysql_server_version_string() );
+			case 'VERSION_WITH_UPDATE':
+				/*
+				 * MySQL's four-part form: the three-part server version with
+				 * an extra ".0", keeping the "-mysql-on-sqlite" suffix.
+				 */
+				return $this->quote_sqlite_value(
+					sprintf(
+						'%s.0-mysql-on-sqlite-%s',
+						$this->get_mysql_version_string(),
+						SQLITE_DRIVER_VERSION
+					)
+				);
+			case 'ANY_VALUE':
+				/*
+				 * ANY_VALUE() only exists to satisfy ONLY_FULL_GROUP_BY.
+				 * Approximate it with MIN(): any single grouped value is
+				 * acceptable to MySQL, and MIN() is deterministic here.
+				 */
+				if ( 1 !== count( $args ) ) {
+					return $this->translate_sequence( $node->get_children() );
+				}
+				return 'MIN(' . $args[0] . ')';
 			default:
 				return $this->translate_sequence( $node->get_children() );
 		}
