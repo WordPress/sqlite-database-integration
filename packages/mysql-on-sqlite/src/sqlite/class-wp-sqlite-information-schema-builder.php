@@ -879,6 +879,34 @@ class WP_SQLite_Information_Schema_Builder {
 	}
 
 	/**
+	 * Get the bytes of a BINARY or VARBINARY column default.
+	 *
+	 * Defaults are stored as "0x..." hex literals. In tables from older versions,
+	 * they can also be any other hex or bit literal as written, or the bytes of
+	 * a text default.
+	 *
+	 * @param  string $default_value A stored default, or a hex or bit literal.
+	 * @return string                The default value bytes.
+	 */
+	public static function get_binary_default_bytes( string $default_value ): string {
+		if ( 1 === preg_match( "/\A(?|0x([0-9a-fA-F]+)|[xX]'([0-9a-fA-F]*)')\z/", $default_value, $matches ) ) {
+			// MySQL pads odd-length 0x literals with a leading zero.
+			return hex2bin( 1 === strlen( $matches[1] ) % 2 ? '0' . $matches[1] : $matches[1] );
+		}
+
+		if ( 1 === preg_match( "/\A(?|0b([01]+)|[bB]'([01]*)')\z/", $default_value, $matches ) ) {
+			$bits  = str_pad( $matches[1], (int) ceil( strlen( $matches[1] ) / 8 ) * 8, '0', STR_PAD_LEFT );
+			$bytes = '';
+			for ( $i = 0; $i < strlen( $bits ); $i += 8 ) {
+				$bytes .= chr( bindec( substr( $bits, $i, 8 ) ) );
+			}
+			return $bytes;
+		}
+
+		return $default_value;
+	}
+
+	/**
 	 * Analyze ADD COLUMN definition and record data in the information schema.
 	 *
 	 * @param bool           $table_is_temporary Whether the table is temporary.
@@ -2274,6 +2302,10 @@ class WP_SQLite_Information_Schema_Builder {
 			return null;
 		}
 
+		if ( 'binary' === $data_type || 'varbinary' === $data_type ) {
+			return $this->get_binary_literal_default( $literal );
+		}
+
 		// DEFAULT TRUE or DEFAULT FALSE
 		if ( $literal->has_child_node( 'boolLiteral' ) ) {
 			$bool_literal = $literal->get_first_child_node( 'boolLiteral' );
@@ -2315,17 +2347,56 @@ class WP_SQLite_Information_Schema_Builder {
 			return $bit_default;
 		}
 
+		if ( 'binary' === $data_type || 'varbinary' === $data_type ) {
+			return $this->format_binary_default( $default_value );
+		}
+
 		/*
-		 * @TODO: Non-BIT literal defaults, except for temporal zero values, are
+		 * @TODO: Other literal defaults, except for temporal zero values, are
 		 * currently stored verbatim. To match MySQL, they should be normalized.
 		 * For example:
-		 *  - BINARY/VARBINARY defaults stored as 0x hex literals.
 		 *  - Hex and bit literals coerced to raw bytes for text columns and to
 		 *    their decimal value for numeric columns.
 		 *  - The charset introducer dropped from text-literal defaults.
 		 *  - Numeric defaults normalized, e.g. 1.0 to 1 or 1e3 to 1000.
 		 */
 		return $default_value;
+	}
+
+	/**
+	 * Get the default of a BINARY or VARBINARY column from a literal.
+	 *
+	 * Hex and bit literals are byte strings. Other literals give the bytes of
+	 * their text, so the text '0x41' stays distinct from the hex literal 0x41.
+	 *
+	 * @param  WP_Parser_Node $literal The "literal" AST node.
+	 * @return string                  The default value as stored in information schema.
+	 */
+	private function get_binary_literal_default( WP_Parser_Node $literal ): string {
+		$byte_string = $literal->get_first_child_token( WP_MySQL_Lexer::HEX_NUMBER )
+			?? $literal->get_first_child_token( WP_MySQL_Lexer::BIN_NUMBER );
+		if ( null !== $byte_string ) {
+			return $this->format_binary_default( self::get_binary_default_bytes( $byte_string->get_value() ) );
+		}
+
+		$bool_literal = $literal->get_first_child_node( 'boolLiteral' );
+		if ( null !== $bool_literal ) {
+			return $this->format_binary_default( $bool_literal->has_child_token( WP_MySQL_Lexer::TRUE_SYMBOL ) ? '1' : '0' );
+		}
+
+		return $this->format_binary_default( $this->get_value( $literal ) );
+	}
+
+	/**
+	 * Format the bytes of a BINARY or VARBINARY default for the information schema.
+	 *
+	 * Like in MySQL, the bytes are shown in hex, except for an empty default.
+	 *
+	 * @param  string $bytes The default value bytes.
+	 * @return string        The default value as stored in information schema.
+	 */
+	private function format_binary_default( string $bytes ): string {
+		return '' === $bytes ? '' : '0x' . strtoupper( bin2hex( $bytes ) );
 	}
 
 	/**

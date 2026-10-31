@@ -772,6 +772,116 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		);
 	}
 
+	/**
+	 * @dataProvider data_binary_column_defaults
+	 */
+	public function testBinaryColumnDefaults(
+		string $column_type,
+		string $default_value,
+		string $expected_create_default,
+		string $expected_information_schema_default,
+		string $expected_value
+	): void {
+		$this->assertQuery( "CREATE TABLE t (id INT PRIMARY KEY, v $column_type NOT NULL DEFAULT $default_value)" );
+
+		$this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertStringContainsString(
+			"`v` $column_type NOT NULL DEFAULT $expected_create_default,",
+			$this->last_result[0]->{'Create Table'}
+		);
+
+		$this->assertQuery( "SELECT COLUMN_DEFAULT FROM information_schema.columns WHERE table_name = 't' AND column_name = 'v'" );
+		$this->assertSame( $expected_information_schema_default, $this->last_result[0]->COLUMN_DEFAULT );
+
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (1)' );
+		$this->assertQuery( "INSERT INTO t VALUES (2, 'z')" );
+		$this->assertQuery( 'UPDATE t SET v = DEFAULT WHERE id = 2' );
+		$this->assertQuery( 'SELECT HEX(v) AS v FROM t ORDER BY id' );
+		$this->assertSame(
+			array( $expected_value, $expected_value ),
+			array_column( $this->last_result, 'v' )
+		);
+	}
+
+	public static function data_binary_column_defaults(): array {
+		return array(
+			'hex number'         => array( 'varbinary(4)', '0xDEADBEEF', '0xDEADBEEF', '0xDEADBEEF', 'DEADBEEF' ),
+			'hex string'         => array( 'varbinary(4)', "x'deadbeef'", '0xDEADBEEF', '0xDEADBEEF', 'DEADBEEF' ),
+			'uppercase string'   => array( 'varbinary(4)', "X'deadbeef'", '0xDEADBEEF', '0xDEADBEEF', 'DEADBEEF' ),
+			'odd-length hex'     => array( 'varbinary(4)', '0xa', "'\\n'", '0x0A', '0A' ),
+			'bit string'         => array( 'varbinary(4)', "b'01000001'", "'A'", '0x41', '41' ),
+			'bit number'         => array( 'varbinary(4)', '0b01000001', "'A'", '0x41', '41' ),
+			'zero bytes'         => array( 'binary(2)', "x'0000'", "'\\0\\0'", '0x0000', '0000' ),
+			'escaped zero bytes' => array( 'binary(2)', "'\\0\\0'", "'\\0\\0'", '0x0000', '0000' ),
+			'text'               => array( 'varbinary(4)', "'F'", "'F'", '0x46', '46' ),
+			'quoted text'        => array( 'varbinary(4)', "'it''s'", "'it''s'", '0x69742773', '69742773' ),
+			'empty text'         => array( 'varbinary(4)', "''", "''", '', '' ),
+			'text like a number' => array( 'varbinary(4)', "'0x41'", "'0x41'", '0x30783431', '30783431' ),
+			'text like a string' => array( 'varbinary(8)', "'x''41'''", "'x''41'''", '0x7827343127', '7827343127' ),
+			'number'             => array( 'varbinary(4)', '5', "'5'", '0x35', '35' ),
+			'negative number'    => array( 'varbinary(4)', '-5', "'-5'", '0x2D35', '2D35' ),
+			'true'               => array( 'varbinary(4)', 'TRUE', "'1'", '0x31', '31' ),
+			'false'              => array( 'varbinary(4)', 'FALSE', "'0'", '0x30', '30' ),
+		);
+	}
+
+	public function testBinaryColumnSetDefault(): void {
+		$this->assertQuery( "CREATE TABLE t (id INT PRIMARY KEY, v VARBINARY(4) NOT NULL DEFAULT 'a')" );
+
+		$this->assertQuery( 'ALTER TABLE t ALTER COLUMN v SET DEFAULT 0xDEADBEEF' );
+
+		$this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertStringContainsString(
+			'`v` varbinary(4) NOT NULL DEFAULT 0xDEADBEEF,',
+			$this->last_result[0]->{'Create Table'}
+		);
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (1)' );
+		$this->assertQuery( 'SELECT HEX(v) AS v FROM t' );
+		$this->assertSame( 'DEADBEEF', $this->last_result[0]->v );
+	}
+
+	/**
+	 * Older versions stored most BINARY and VARBINARY defaults as written.
+	 *
+	 * @dataProvider data_binary_column_defaults_from_older_versions
+	 */
+	public function testBinaryColumnDefaultsFromOlderVersions(
+		string $stored_default,
+		string $expected_create_default,
+		string $expected_value
+	): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT PRIMARY KEY, v VARBINARY(16) NOT NULL)' );
+		$statement = $this->sqlite->prepare(
+			"UPDATE _wp_sqlite_mysql_information_schema_columns SET COLUMN_DEFAULT = ? WHERE TABLE_NAME = 't' AND COLUMN_NAME = 'v'"
+		);
+		$statement->execute( array( $stored_default ) );
+
+		$this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertStringContainsString(
+			"`v` varbinary(16) NOT NULL DEFAULT $expected_create_default,",
+			$this->last_result[0]->{'Create Table'}
+		);
+
+		// A table rebuild writes the column default to SQLite as bytes.
+		$this->assertQuery( 'ALTER TABLE t MODIFY COLUMN id BIGINT' );
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (1)' );
+		$this->assertQuery( 'SELECT HEX(v) AS v FROM t' );
+		$this->assertSame( $expected_value, $this->last_result[0]->v );
+	}
+
+	public static function data_binary_column_defaults_from_older_versions(): array {
+		return array(
+			'hex string'           => array( "x'00000000000000000000000000000000'", "'\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0'", '00000000000000000000000000000000' ),
+			'uppercase hex string' => array( "X'DEADBEEF'", '0xDEADBEEF', 'DEADBEEF' ),
+			'hex number'           => array( '0xdeadbeef', '0xDEADBEEF', 'DEADBEEF' ),
+			'bit string'           => array( "b'01000001'", "'A'", '41' ),
+			'bit number'           => array( '0b01000001', "'A'", '41' ),
+			'zero bytes'           => array( "\0\0", "'\\0\\0'", '0000' ),
+			'text'                 => array( 'abcd', "'abcd'", '61626364' ),
+			'empty text'           => array( '', "''", '' ),
+		);
+	}
+
 	public function testShowCreateTableWithBitDefaultValues(): void {
 		$this->assertQuery(
 			"CREATE TABLE _tmp_bit_defaults (
