@@ -11288,6 +11288,8 @@ END;
 		$this->assertQuery( 'ALTER TABLE t_alter ADD a INT REFERENCES p (id)' );
 		$this->assertQuery( 'INSERT INTO t_alter (a) VALUES (999)' );
 		$this->assertEquals( array(), $this->assertQuery( "SELECT * FROM information_schema.referential_constraints WHERE table_name = 't_alter'" ) );
+		$this->assertEquals( array(), $this->assertQuery( "SELECT * FROM information_schema.table_constraints WHERE table_name = 't_alter'" ) );
+		$this->assertEquals( array(), $this->assertQuery( "SELECT * FROM information_schema.key_column_usage WHERE table_name = 't_alter'" ) );
 
 		// Parenthesized ALTER TABLE ADD (...) also ignores inline REFERENCES.
 		$this->assertQuery( 'CREATE TABLE t_alter_paren (id INT)' );
@@ -11295,6 +11297,7 @@ END;
 		$this->assertQuery( 'INSERT INTO t_alter_paren (a) VALUES (999)' );
 		$this->assertEquals( array(), $this->assertQuery( "SELECT * FROM information_schema.referential_constraints WHERE table_name = 't_alter_paren'" ) );
 		$this->assertEquals( array(), $this->assertQuery( "SELECT * FROM information_schema.table_constraints WHERE table_name = 't_alter_paren'" ) );
+		$this->assertEquals( array(), $this->assertQuery( "SELECT * FROM information_schema.key_column_usage WHERE table_name = 't_alter_paren'" ) );
 
 		// Explicit table-level FOREIGN KEY constraint still rejects the insert.
 		$this->assertQuery( 'CREATE TABLE t_explicit (id INT, a INT, FOREIGN KEY (a) REFERENCES p (id))' );
