@@ -11266,6 +11266,46 @@ END;
 		$this->assertEquals( array( (object) array( 'id' => '0' ) ), $result );
 	}
 
+	public function testInlineReferencesIgnored(): void {
+		$this->assertQuery( 'CREATE TABLE p (id INT PRIMARY KEY)' );
+		$this->assertQuery( 'CREATE TABLE t (id INT, a INT REFERENCES p (id))' );
+
+		// The insert succeeds because MySQL ignores inline REFERENCES clauses.
+		$this->assertQuery( 'INSERT INTO t (a) VALUES (999)' );
+		$result = $this->assertQuery( 'SELECT a FROM t' );
+		$this->assertEquals( array( (object) array( 'a' => '999' ) ), $result );
+
+		// Foreign-key metadata is absent for inline references.
+		$table_constraints = $this->assertQuery( "SELECT * FROM information_schema.table_constraints WHERE table_name = 't'" );
+		$this->assertEquals( array(), $table_constraints );
+		$referential_constraints = $this->assertQuery( "SELECT * FROM information_schema.referential_constraints WHERE table_name = 't'" );
+		$this->assertEquals( array(), $referential_constraints );
+		$key_column_usage = $this->assertQuery( "SELECT * FROM information_schema.key_column_usage WHERE table_name = 't'" );
+		$this->assertEquals( array(), $key_column_usage );
+
+		// Single-column ALTER TABLE ADD also ignores inline REFERENCES.
+		$this->assertQuery( 'CREATE TABLE t_alter (id INT)' );
+		$this->assertQuery( 'ALTER TABLE t_alter ADD a INT REFERENCES p (id)' );
+		$this->assertQuery( 'INSERT INTO t_alter (a) VALUES (999)' );
+		$this->assertEquals( array(), $this->assertQuery( "SELECT * FROM information_schema.referential_constraints WHERE table_name = 't_alter'" ) );
+
+		// Parenthesized ALTER TABLE ADD (...) also ignores inline REFERENCES.
+		$this->assertQuery( 'CREATE TABLE t_alter_paren (id INT)' );
+		$this->assertQuery( 'ALTER TABLE t_alter_paren ADD (a INT REFERENCES p (id))' );
+		$this->assertQuery( 'INSERT INTO t_alter_paren (a) VALUES (999)' );
+		$this->assertEquals( array(), $this->assertQuery( "SELECT * FROM information_schema.referential_constraints WHERE table_name = 't_alter_paren'" ) );
+		$this->assertEquals( array(), $this->assertQuery( "SELECT * FROM information_schema.table_constraints WHERE table_name = 't_alter_paren'" ) );
+
+		// Explicit table-level FOREIGN KEY constraint still rejects the insert.
+		$this->assertQuery( 'CREATE TABLE t_explicit (id INT, a INT, FOREIGN KEY (a) REFERENCES p (id))' );
+		$explicit_fk_meta = $this->assertQuery( "SELECT * FROM information_schema.referential_constraints WHERE table_name = 't_explicit'" );
+		$this->assertCount( 1, $explicit_fk_meta );
+
+		$this->expectException( 'WP_MySQL_On_SQLite_Exception' );
+		$this->expectExceptionMessage( 'SQLSTATE[23000]: Integrity constraint violation: 19 FOREIGN KEY constraint failed' );
+		$this->assertQuery( 'INSERT INTO t_explicit (a) VALUES (999)' );
+	}
+
 	public function testUpdateWithJoinedTables(): void {
 		$sqlite_version = $this->engine->get_sqlite_version();
 		if ( version_compare( $sqlite_version, '3.33.0', '<' ) ) {
