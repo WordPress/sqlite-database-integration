@@ -352,6 +352,16 @@ class WP_SQLite_Information_Schema_Builder {
 	private $temporary_information_schema_exists = false;
 
 	/**
+	 * Whether to keep the string zero defaults of YEAR columns as written.
+	 *
+	 * This is used when reconstructing the information schema of an existing
+	 * SQLite table, as the table keeps such defaults as written as well.
+	 *
+	 * @var bool
+	 */
+	private $keep_year_string_zero_defaults = false;
+
+	/**
 	 * An instance of the SQLite connection.
 	 *
 	 * @var WP_SQLite_Connection
@@ -497,6 +507,24 @@ class WP_SQLite_Information_Schema_Builder {
 			);
 		}
 		$this->temporary_information_schema_exists = true;
+	}
+
+	/**
+	 * Record the information schema of an existing SQLite table.
+	 *
+	 * This works like record_create_table(), but it keeps the string zero
+	 * defaults of YEAR columns, such as '0', as written. Older driver versions
+	 * stored such defaults as written, so the SQLite table uses them as well.
+	 *
+	 * @param WP_Parser_Node $node The "createStatement" AST node with "createTable" child.
+	 */
+	public function record_reconstructed_table( WP_Parser_Node $node ): void {
+		$this->keep_year_string_zero_defaults = true;
+		try {
+			$this->record_create_table( $node );
+		} finally {
+			$this->keep_year_string_zero_defaults = false;
+		}
 	}
 
 	/**
@@ -2286,10 +2314,13 @@ class WP_SQLite_Information_Schema_Builder {
 		/*
 		 * Normalize numeric zero defaults to MySQL's temporal zero values.
 		 * Also normalize string zeros, even where strict MySQL rejects them.
-		 * Preserve YEAR strings '0' and '00', which MySQL interprets as 2000.
+		 * YEAR strings that are zero follow their own rule, e.g., '0' is 2000.
 		 */
 		if ( 'year' === $data_type && $literal->has_child_node( 'textLiteral' ) ) {
-			return $default;
+			if ( $this->keep_year_string_zero_defaults ) {
+				return $default;
+			}
+			return $this->get_year_string_zero_value( $default ) ?? $default;
 		}
 		return $this->get_temporal_zero_value( $data_type, $default, $datetime_precision ) ?? $default;
 	}
@@ -2326,6 +2357,25 @@ class WP_SQLite_Information_Schema_Builder {
 		 *  - Numeric defaults normalized, e.g. 1.0 to 1 or 1e3 to 1000.
 		 */
 		return $default_value;
+	}
+
+	/**
+	 * Get the year of a YEAR string default when the string is zero.
+	 *
+	 * MySQL stores a string whose number rounds to 0 as the year 2000, unless
+	 * the string is 4 bytes long. For example, '0', '00', and '0.4' are 2000,
+	 * while '0000' is 0000. Spaces and tabs around the number are allowed, and
+	 * they count toward the length. The number 0, which is not a string, is 0000.
+	 *
+	 * @param  string $default_value The YEAR column default value of a string literal.
+	 * @return string|null           The year, or null when the string is not a number that rounds to 0.
+	 */
+	private function get_year_string_zero_value( string $default_value ): ?string {
+		$number = trim( $default_value, " \t" );
+		if ( trim( $number ) !== $number || ! is_numeric( $number ) || 0.0 !== round( (float) $number ) ) {
+			return null;
+		}
+		return 4 === strlen( $default_value ) ? '0000' : '2000';
 	}
 
 	/**
