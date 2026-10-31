@@ -6437,6 +6437,15 @@ class WP_MySQL_On_SQLite extends PDO {
 			if ( null === $expr ) {
 				// Emulate "column = DEFAULT".
 				$value = null === $default ? 'NULL' : $this->format_sqlite_column_default( $column_info );
+
+				/*
+				 * A stored YEAR default is already a year, such as '2000' or '0000',
+				 * so don't read it as a string, which would turn '0' into 2000.
+				 * Older driver versions stored both DEFAULT 0 and DEFAULT '0' as '0'.
+				 */
+				if ( null !== $default && 'year' === strtolower( $data_type ) ) {
+					$value = sprintf( 'CAST(%s AS INTEGER)', $value );
+				}
 			} else {
 				$value = $this->translate( $expr );
 			}

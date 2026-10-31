@@ -7393,6 +7393,25 @@ QUERY
 		);
 	}
 
+	public function testUpdateToStoredYearZeroDefault(): void {
+		// Driver 3.1.x and older stored both DEFAULT 0 and DEFAULT '0' of a YEAR column as '0'.
+		$this->assertQuery( 'CREATE TABLE _tmp_table (id INT PRIMARY KEY, y YEAR NOT NULL DEFAULT 0)' );
+		$this->sqlite->exec(
+			"UPDATE _wp_sqlite_mysql_information_schema_columns
+			SET column_default = '0'
+			WHERE table_name = '_tmp_table' AND column_name = 'y'"
+		);
+		$this->assertQuery( 'OPTIMIZE TABLE _tmp_table' );
+
+		// Setting the column to its default still stores 0000, not 2000.
+		$this->assertQuery( 'INSERT INTO _tmp_table (id, y) VALUES (1, 1999), (2, 1999)' );
+		$this->assertQuery( 'UPDATE _tmp_table SET y = DEFAULT WHERE id = 1' );
+		$this->assertQuery( 'INSERT INTO _tmp_table (id, y) VALUES (2, 1999) ON DUPLICATE KEY UPDATE y = DEFAULT' );
+
+		$this->assertQuery( 'SELECT y FROM _tmp_table ORDER BY id' );
+		$this->assertSame( array( '0000', '0000' ), array_column( $this->last_result, 'y' ) );
+	}
+
 	public function testAlterTableWithTemporalZeroDefaults(): void {
 		$this->assertQuery(
 			'CREATE TABLE _tmp_table (
