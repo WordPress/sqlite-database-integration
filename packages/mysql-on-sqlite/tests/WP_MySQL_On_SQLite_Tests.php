@@ -178,6 +178,40 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$this->assertCount( 1, $this->last_result );
 	}
 
+	public function testRegexpUnicodeAndReplacementGroups(): void {
+		// Matching is by character, not byte, like MySQL's ICU.
+		$result = $this->assertQuery( 'SELECT REGEXP_SUBSTR(\'héllo\', \'h.llo\') AS r' );
+		$this->assertSame( 'héllo', $result[0]->r );
+
+		$result = $this->assertQuery( 'SELECT REGEXP_REPLACE(\'é\', \'.\', \'X\') AS r' );
+		$this->assertSame( 'X', $result[0]->r );
+
+		$result = $this->assertQuery( 'SELECT REGEXP_INSTR(\'héllo\', \'llo\') AS r' );
+		$this->assertSame( '3', $result[0]->r );
+
+		// Case folding covers non-ASCII letters.
+		$result = $this->assertQuery( 'SELECT REGEXP_LIKE(\'É\', \'é\') AS r' );
+		$this->assertSame( '1', $result[0]->r );
+
+		// An unbraced two-digit reference falls back to one digit when the
+		// two-digit group does not exist, as in ICU.
+		$result = $this->assertQuery( 'SELECT REGEXP_REPLACE(\'ab\', \'(a)\', \'$10\') AS r' );
+		$this->assertSame( 'a0b', $result[0]->r );
+
+		$result = $this->assertQuery( 'SELECT REGEXP_REPLACE(\'ab\', \'(a)\', \'$1\') AS r' );
+		$this->assertSame( 'ab', $result[0]->r );
+
+		// With ten or more groups the two-digit form is used.
+		$result = $this->assertQuery(
+			'SELECT REGEXP_REPLACE(\'abcdefghij\', \'(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)\', \'$10\') AS r'
+		);
+		$this->assertSame( 'j', $result[0]->r );
+
+		// A subject that is not valid UTF-8 cannot be matched by character.
+		$result = $this->assertQuery( "SELECT REGEXP_LIKE(CONCAT('a', 0xC3), 'a') AS r" );
+		$this->assertNull( $result[0]->r );
+	}
+
 	/**
 	 * @dataProvider regexpOperators
 	 */
@@ -216,6 +250,220 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			array( 'NOT REGEXP BINARY', '^RSS_.+$', $lowercase_rss ),
 			array( 'NOT RLIKE BINARY', '^RSS_.+$', $lowercase_rss ),
 		);
+	}
+
+	public function testRegexpLike() {
+		// Examples from https://dev.mysql.com/doc/refman/8.4/en/regexp.html.
+		$cases = array(
+			// array( expr, pattern, match_type, expected ).
+			array( 'abc', 'ABC', null, 1 ),
+			array( 'abc', 'ABC', 'c', 0 ),
+			array( 'CamelCase', 'CAMELCASE', null, 1 ),
+			array( 'Michael!', '.*', null, 1 ),
+			array( 'a', '^[a-d]', null, 1 ),
+			array( 'abc', '^b', null, 0 ),
+		);
+		foreach ( $cases as $case ) {
+			list( $expr, $pattern, $match_type, $expected ) = $case;
+			$sql = null === $match_type
+				? sprintf( "SELECT REGEXP_LIKE('%s', '%s') AS r", $expr, $pattern )
+				: sprintf( "SELECT REGEXP_LIKE('%s', '%s', '%s') AS r", $expr, $pattern, $match_type );
+			$this->assertQuery( $sql );
+			$this->assertEquals( $expected, $this->last_result[0]->r, $sql );
+		}
+	}
+
+	public function testRegexpLikeMatchType() {
+		$cases = array(
+			// Explicit case-insensitive flag.
+			array( "SELECT REGEXP_LIKE('abc', 'ABC', 'i') AS r", 1 ),
+			// Rightmost of contradictory 'c'/'i' wins.
+			array( "SELECT REGEXP_LIKE('abc', 'ABC', 'ci') AS r", 1 ),
+			array( "SELECT REGEXP_LIKE('abc', 'ABC', 'ic') AS r", 0 ),
+			array( "SELECT REGEXP_LIKE('ABC', 'abc', 'c') AS r", 0 ),
+			// 'm': ^ and $ match at line boundaries.
+			array( "SELECT REGEXP_LIKE('fo\\nfo', '^fo\$') AS r", 0 ),
+			array( "SELECT REGEXP_LIKE('fo\\nfo', '^fo\$', 'm') AS r", 1 ),
+			// 'n': . matches line terminators.
+			array( "SELECT REGEXP_LIKE('a\\nb', 'a.b') AS r", 0 ),
+			array( "SELECT REGEXP_LIKE('a\\nb', 'a.b', 'n') AS r", 1 ),
+			// 'u' is accepted (PCRE already treats \n as the line ending).
+			array( "SELECT REGEXP_LIKE('abc', 'ABC', 'u') AS r", 1 ),
+			// Empty match_type means defaults.
+			array( "SELECT REGEXP_LIKE('abc', 'ABC', '') AS r", 1 ),
+			// Unknown flag characters yield NULL.
+			array( "SELECT REGEXP_LIKE('abc', 'ABC', 'x') AS r", null ),
+			array( "SELECT REGEXP_LIKE('abc', 'ABC', 'C') AS r", null ),
+			// NULL arguments and invalid patterns yield NULL.
+			array( "SELECT REGEXP_LIKE(NULL, 'a') AS r", null ),
+			array( "SELECT REGEXP_LIKE('a', NULL) AS r", null ),
+			array( "SELECT REGEXP_LIKE('a', 'b', NULL) AS r", null ),
+			array( "SELECT REGEXP_LIKE('abc', '([') AS r", null ),
+			// Wrong argument count yields NULL instead of an error.
+			array( "SELECT REGEXP_LIKE('a') AS r", null ),
+			array( "SELECT REGEXP_LIKE('a', 'b', 'i', 'c') AS r", null ),
+		);
+		foreach ( $cases as $case ) {
+			list( $sql, $expected ) = $case;
+			$this->assertQuery( $sql );
+			if ( null === $expected ) {
+				$this->assertNull( $this->last_result[0]->r, $sql );
+			} else {
+				$this->assertEquals( $expected, $this->last_result[0]->r, $sql );
+			}
+		}
+	}
+
+	public function testRegexpInstr() {
+		// Examples from https://dev.mysql.com/doc/refman/8.4/en/regexp.html.
+		$cases = array(
+			// array( sql, expected ).
+			array( "SELECT REGEXP_INSTR('dog cat dog', 'dog') AS r", 1 ),
+			array( "SELECT REGEXP_INSTR('dog cat dog', 'dog', 2) AS r", 9 ),
+			array( "SELECT REGEXP_INSTR('aa aaa aaaa', 'a{2}') AS r", 1 ),
+			array( "SELECT REGEXP_INSTR('aa aaa aaaa', 'a{4}') AS r", 8 ),
+			// Occurrence counted from pos; indexes stay absolute.
+			array( "SELECT REGEXP_INSTR('dog cat dog', 'dog', 1, 2) AS r", 9 ),
+			array( "SELECT REGEXP_INSTR('abcabc', 'b', 3) AS r", 5 ),
+			// return_option 1: index just past the end of the match.
+			array( "SELECT REGEXP_INSTR('dog cat dog', 'dog', 1, 1, 1) AS r", 4 ),
+			array( "SELECT REGEXP_INSTR('abc', 'b', 1, 1, 1) AS r", 3 ),
+			// No match yields 0.
+			array( "SELECT REGEXP_INSTR('abc', 'z') AS r", 0 ),
+			array( "SELECT REGEXP_INSTR('ABC', 'abc', 1, 1, 0, 'c') AS r", 0 ),
+			// Case-insensitive by default.
+			array( "SELECT REGEXP_INSTR('ABC', 'abc') AS r", 1 ),
+		);
+		foreach ( $cases as $case ) {
+			list( $sql, $expected ) = $case;
+			$this->assertQuery( $sql );
+			$this->assertEquals( $expected, $this->last_result[0]->r, $sql );
+		}
+	}
+
+	public function testRegexpInstrNullAndInvalid() {
+		$cases = array(
+			"SELECT REGEXP_INSTR(NULL, 'a') AS r",
+			"SELECT REGEXP_INSTR('a', NULL) AS r",
+			"SELECT REGEXP_INSTR('a', 'b', NULL) AS r",
+			"SELECT REGEXP_INSTR('a', 'b', 1, NULL) AS r",
+			"SELECT REGEXP_INSTR('a', 'b', 1, 1, NULL) AS r",
+			"SELECT REGEXP_INSTR('a', 'b', 1, 1, 0, NULL) AS r",
+			"SELECT REGEXP_INSTR('abc', '([') AS r",
+			"SELECT REGEXP_INSTR('ABC', 'abc', 1, 1, 0, 'z') AS r",
+			// MySQL errors on these; the driver returns NULL instead.
+			"SELECT REGEXP_INSTR('abc', 'b', 0) AS r",
+			"SELECT REGEXP_INSTR('abc', 'b', 1, 0) AS r",
+			"SELECT REGEXP_INSTR('abc', 'b', 1, 1, 2) AS r",
+			"SELECT REGEXP_INSTR('a') AS r",
+		);
+		foreach ( $cases as $sql ) {
+			$this->assertQuery( $sql );
+			$this->assertNull( $this->last_result[0]->r, $sql );
+		}
+	}
+
+	public function testRegexpSubstr() {
+		// Examples from https://dev.mysql.com/doc/refman/8.4/en/regexp.html.
+		$cases = array(
+			// array( sql, expected ).
+			array( "SELECT REGEXP_SUBSTR('abc def ghi', '[a-z]+') AS r", 'abc' ),
+			array( "SELECT REGEXP_SUBSTR('abc def ghi', '[a-z]+', 1, 3) AS r", 'ghi' ),
+			array( "SELECT REGEXP_SUBSTR('abc def ghi', '[a-z]+', 5) AS r", 'def' ),
+			array( "SELECT REGEXP_SUBSTR('abc def ghi', '[a-z]+', 5, 2) AS r", 'ghi' ),
+			// Case-insensitive by default; 'c' forces case-sensitivity.
+			array( "SELECT REGEXP_SUBSTR('ABC', 'abc') AS r", 'ABC' ),
+			array( "SELECT REGEXP_SUBSTR('ABC', 'abc', 1, 1, 'i') AS r", 'ABC' ),
+			// Character (not byte) matching.
+			array( "SELECT REGEXP_SUBSTR('h\xc3\xa9llo', 'llo') AS r", 'llo' ),
+		);
+		foreach ( $cases as $case ) {
+			list( $sql, $expected ) = $case;
+			$this->assertQuery( $sql );
+			$this->assertSame( $expected, $this->last_result[0]->r, $sql );
+		}
+	}
+
+	public function testRegexpSubstrNullAndInvalid() {
+		$cases = array(
+			"SELECT REGEXP_SUBSTR(NULL, 'a') AS r",
+			"SELECT REGEXP_SUBSTR('a', NULL) AS r",
+			"SELECT REGEXP_SUBSTR('a', 'b', NULL) AS r",
+			"SELECT REGEXP_SUBSTR('a', 'b', 1, NULL) AS r",
+			"SELECT REGEXP_SUBSTR('a', 'b', 1, 1, NULL) AS r",
+			"SELECT REGEXP_SUBSTR('abc', '([') AS r",
+			// No match yields NULL (not 0 or empty).
+			"SELECT REGEXP_SUBSTR('abc', 'z') AS r",
+			"SELECT REGEXP_SUBSTR('abc def', '[a-z]+', 1, 5) AS r",
+			"SELECT REGEXP_SUBSTR('ABC', 'abc', 1, 1, 'c') AS r",
+			// MySQL errors on these; the driver returns NULL instead.
+			"SELECT REGEXP_SUBSTR('abc', 'b', 0) AS r",
+			"SELECT REGEXP_SUBSTR('abc', 'b', 1, 0) AS r",
+			"SELECT REGEXP_SUBSTR('a') AS r",
+		);
+		foreach ( $cases as $sql ) {
+			$this->assertQuery( $sql );
+			$this->assertNull( $this->last_result[0]->r, $sql );
+		}
+	}
+
+	public function testRegexpReplace() {
+		// Examples from https://dev.mysql.com/doc/refman/8.4/en/regexp.html.
+		$cases = array(
+			// array( sql, expected ).
+			array( "SELECT REGEXP_REPLACE('a b c', 'b', 'X') AS r", 'a X c' ),
+			array( "SELECT REGEXP_REPLACE('abc def ghi', '[a-z]+', 'X', 1, 3) AS r", 'abc def X' ),
+			// occurrence 0 (the default) replaces all matches.
+			array( "SELECT REGEXP_REPLACE('aaa', 'a', 'X') AS r", 'XXX' ),
+			array( "SELECT REGEXP_REPLACE('aaa', 'a', 'X', 1, 0) AS r", 'XXX' ),
+			// A positive occurrence replaces only that match.
+			array( "SELECT REGEXP_REPLACE('aaa', 'a', 'X', 1, 2) AS r", 'aXa' ),
+			// Only the text at and after pos participates; the prefix is kept.
+			array( "SELECT REGEXP_REPLACE('abcabc', 'b', 'X', 4) AS r", 'abcaXc' ),
+			// No match leaves the string unchanged.
+			array( "SELECT REGEXP_REPLACE('abc', 'z', 'X') AS r", 'abc' ),
+			array( "SELECT REGEXP_REPLACE('abc', 'b', 'X', 1, 9) AS r", 'abc' ),
+			// $n backreferences and $0 for the whole match.
+			array( "SELECT REGEXP_REPLACE('abcd', '(b)(c)', '\$2\$1') AS r", 'acbd' ),
+			array( "SELECT REGEXP_REPLACE('John Smith', '([a-z]+) ([a-z]+)', '\$2 \$1') AS r", 'Smith John' ),
+			array( "SELECT REGEXP_REPLACE('abc', 'b', '<\$0>') AS r", 'a<b>c' ),
+			array( "SELECT REGEXP_REPLACE('ab', '(a)(b)', '\$2\$1\$0') AS r", 'baab' ),
+			// Backslash quotes the next character; lone $ is literal.
+			array( "SELECT REGEXP_REPLACE('abc', 'b', '\\\\\$') AS r", 'a$c' ),
+			array( "SELECT REGEXP_REPLACE('a b', ' ', ' \$ ') AS r", 'a $ b' ),
+			array( "SELECT REGEXP_REPLACE('ab', '(a)', 'x\$1y\$') AS r", 'xay$b' ),
+			// Case-insensitive by default.
+			array( "SELECT REGEXP_REPLACE('ABC', 'abc', 'X') AS r", 'X' ),
+			array( "SELECT REGEXP_REPLACE('ABC', 'abc', 'X', 1, 0, 'c') AS r", 'ABC' ),
+		);
+		foreach ( $cases as $case ) {
+			list( $sql, $expected ) = $case;
+			$this->assertQuery( $sql );
+			$this->assertSame( $expected, $this->last_result[0]->r, $sql );
+		}
+	}
+
+	public function testRegexpReplaceNullAndInvalid() {
+		$cases = array(
+			"SELECT REGEXP_REPLACE(NULL, 'a', 'X') AS r",
+			"SELECT REGEXP_REPLACE('a', NULL, 'X') AS r",
+			"SELECT REGEXP_REPLACE('a', 'b', NULL) AS r",
+			"SELECT REGEXP_REPLACE('a', 'b', 'X', NULL) AS r",
+			"SELECT REGEXP_REPLACE('a', 'b', 'X', 1, NULL) AS r",
+			"SELECT REGEXP_REPLACE('a', 'b', 'X', 1, 0, NULL) AS r",
+			"SELECT REGEXP_REPLACE('abc', '(b', 'X') AS r",
+			"SELECT REGEXP_REPLACE('ABC', 'abc', 'X', 1, 0, 'z') AS r",
+			// Reference to a group that does not exist.
+			"SELECT REGEXP_REPLACE('abc', '(b)', '\$9') AS r",
+			// MySQL errors on these; the driver returns NULL instead.
+			"SELECT REGEXP_REPLACE('abc', 'b', 'X', 0) AS r",
+			"SELECT REGEXP_REPLACE('abc', 'b', 'X', 1, -1) AS r",
+			"SELECT REGEXP_REPLACE('a', 'b') AS r",
+		);
+		foreach ( $cases as $sql ) {
+			$this->assertQuery( $sql );
+			$this->assertNull( $this->last_result[0]->r, $sql );
+		}
 	}
 
 	public function testInsertDateNow() {

@@ -61,6 +61,10 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'localtimestamp'               => 'now',
 		'isnull'                       => 'isnull',
 		'regexp'                       => 'regexp',
+		'regexp_like'                  => 'regexp_like',
+		'regexp_instr'                 => 'regexp_instr',
+		'regexp_substr'                => 'regexp_substr',
+		'regexp_replace'               => 'regexp_replace',
 		'field'                        => 'field',
 		'log'                          => 'log',
 		'least'                        => 'least',
@@ -598,6 +602,541 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		$pattern = '/' . $pattern . '/' . $flags;
 
 		return preg_match( $pattern, $field );
+	}
+
+	/**
+	 * Method to emulate MySQL REGEXP_LIKE() function.
+	 *
+	 * @see https://dev.mysql.com/doc/refman/8.4/en/regexp.html#function_regexp-like
+	 *
+	 * Returns 1 when $expr matches $pattern, 0 when it does not, and NULL
+	 * when any argument is NULL, the argument count is wrong, the match_type
+	 * flags are invalid, or the pattern does not compile.
+	 *
+	 * By default matching is case-insensitive, mirroring MySQL's default
+	 * case-insensitive collations and the existing regexp() UDF above.
+	 * Pass 'c' in $match_type for case-sensitive matching.
+	 *
+	 * @param mixed $expr       The string to search.
+	 * @param mixed $pattern    The regular expression.
+	 * @param mixed $match_type Optional flags: 'c', 'i', 'm', 'n', 'u'.
+	 *
+	 * @return int|null 1, 0, or NULL.
+	 */
+	public function regexp_like( $expr = null, $pattern = null, $match_type = null ) {
+		$num_args = func_num_args();
+		if ( 2 !== $num_args && 3 !== $num_args ) {
+			return null;
+		}
+		if ( null === $expr || null === $pattern ) {
+			return null;
+		}
+		if ( 3 === $num_args && null === $match_type ) {
+			return null;
+		}
+		$pcre = $this->regexp_compile_pattern( $pattern, $match_type );
+		if ( null === $pcre ) {
+			return null;
+		}
+		$matched = $this->regexp_preg( 'preg_match', array( $pcre, (string) $expr ) );
+		if ( false === $matched ) {
+			return null;
+		}
+		return $matched;
+	}
+
+	/**
+	 * Method to emulate MySQL REGEXP_INSTR() function.
+	 *
+	 * @see https://dev.mysql.com/doc/refman/8.4/en/regexp.html#function_regexp-instr
+	 *
+	 * Returns the 1-based character index of the requested match, or 0 when
+	 * there is no match. With $return_option 1, returns the index just past
+	 * the end of the match instead. Returns NULL when any argument is NULL,
+	 * the argument count is wrong, $pos < 1, $occurrence < 1, $return_option
+	 * is not 0 or 1, the match_type flags are invalid, or the pattern does
+	 * not compile.
+	 *
+	 * @param mixed $expr          The string to search.
+	 * @param mixed $pattern       The regular expression.
+	 * @param mixed $pos           Optional 1-based position to start at. Default 1.
+	 * @param mixed $occurrence    Optional 1-based match number. Default 1.
+	 * @param mixed $return_option Optional 0 (match start) or 1 (past match end). Default 0.
+	 * @param mixed $match_type    Optional flags: 'c', 'i', 'm', 'n', 'u'.
+	 *
+	 * @return int|null The character index, 0, or NULL.
+	 */
+	public function regexp_instr( $expr = null, $pattern = null, $pos = null, $occurrence = null, $return_option = null, $match_type = null ) {
+		$num_args = func_num_args();
+		if ( $num_args < 2 || $num_args > 6 ) {
+			return null;
+		}
+		if ( null === $expr || null === $pattern ) {
+			return null;
+		}
+		$pos_value           = 1;
+		$occurrence_value    = 1;
+		$return_option_value = 0;
+		$match_type_value    = null;
+		if ( $num_args >= 3 ) {
+			if ( null === $pos ) {
+				return null;
+			}
+			$pos_value = (int) $pos;
+			if ( $pos_value < 1 ) {
+				return null;
+			}
+		}
+		if ( $num_args >= 4 ) {
+			if ( null === $occurrence ) {
+				return null;
+			}
+			$occurrence_value = (int) $occurrence;
+			if ( $occurrence_value < 1 ) {
+				return null;
+			}
+		}
+		if ( $num_args >= 5 ) {
+			if ( null === $return_option ) {
+				return null;
+			}
+			$return_option_value = (int) $return_option;
+			if ( 0 !== $return_option_value && 1 !== $return_option_value ) {
+				return null;
+			}
+		}
+		if ( 6 === $num_args ) {
+			if ( null === $match_type ) {
+				return null;
+			}
+			$match_type_value = $match_type;
+		}
+		$match = $this->regexp_find_occurrence( $expr, $pattern, $pos_value, $occurrence_value, $match_type_value );
+		if ( null === $match ) {
+			// Either no match (return 0) or an error (return NULL).
+			return $this->regexp_last_error ? null : 0;
+		}
+		$index = $match['index'];
+		if ( 1 === $return_option_value ) {
+			$index += $match['length'];
+		}
+		return $index;
+	}
+
+	/**
+	 * Method to emulate MySQL REGEXP_SUBSTR() function.
+	 *
+	 * @see https://dev.mysql.com/doc/refman/8.4/en/regexp.html#function_regexp-substr
+	 *
+	 * Returns the matched substring, or NULL when there is no match, any
+	 * argument is NULL, the argument count is wrong, $pos < 1,
+	 * $occurrence < 1, the match_type flags are invalid, or the pattern
+	 * does not compile.
+	 *
+	 * @param mixed $expr       The string to search.
+	 * @param mixed $pattern    The regular expression.
+	 * @param mixed $pos        Optional 1-based position to start at. Default 1.
+	 * @param mixed $occurrence Optional 1-based match number. Default 1.
+	 * @param mixed $match_type Optional flags: 'c', 'i', 'm', 'n', 'u'.
+	 *
+	 * @return string|null The matched substring, or NULL.
+	 */
+	public function regexp_substr( $expr = null, $pattern = null, $pos = null, $occurrence = null, $match_type = null ) {
+		$num_args = func_num_args();
+		if ( $num_args < 2 || $num_args > 5 ) {
+			return null;
+		}
+		if ( null === $expr || null === $pattern ) {
+			return null;
+		}
+		$pos_value        = 1;
+		$occurrence_value = 1;
+		$match_type_value = null;
+		if ( $num_args >= 3 ) {
+			if ( null === $pos ) {
+				return null;
+			}
+			$pos_value = (int) $pos;
+			if ( $pos_value < 1 ) {
+				return null;
+			}
+		}
+		if ( $num_args >= 4 ) {
+			if ( null === $occurrence ) {
+				return null;
+			}
+			$occurrence_value = (int) $occurrence;
+			if ( $occurrence_value < 1 ) {
+				return null;
+			}
+		}
+		if ( 5 === $num_args ) {
+			if ( null === $match_type ) {
+				return null;
+			}
+			$match_type_value = $match_type;
+		}
+		$match = $this->regexp_find_occurrence( $expr, $pattern, $pos_value, $occurrence_value, $match_type_value );
+		if ( null === $match ) {
+			return null;
+		}
+		return $match['text'];
+	}
+
+	/**
+	 * Method to emulate MySQL REGEXP_REPLACE() function.
+	 *
+	 * @see https://dev.mysql.com/doc/refman/8.4/en/regexp.html#function_regexp-replace
+	 *
+	 * Replaces matches of $pattern in $expr with $replacement. $occurrence 0
+	 * (the default) replaces all matches; a positive $occurrence replaces
+	 * only that match counted from $pos. Only the part of $expr at and after
+	 * $pos participates in matching; anything before $pos is preserved.
+	 * Returns NULL when any argument is NULL, the argument count is wrong,
+	 * $pos < 1, $occurrence < 0, the match_type flags are invalid, the
+	 * pattern does not compile, or the replacement references a group that
+	 * does not exist.
+	 *
+	 * Replacement references follow MySQL/ICU syntax, expanded manually here
+	 * instead of via preg_replace() so literal dollars need no PCRE escaping:
+	 *
+	 * - `$n` (one or two digits, e.g. `$1`, `$12`) inserts capture group n.
+	 * - `$0` inserts the whole match.
+	 * - A backslash quotes the next character, so `\$` is a literal `$`
+	 *   and `\\` is a literal backslash.
+	 * - A `$` not followed by a digit is a literal `$`.
+	 *
+	 * An unmatched optional group expands to an empty string.
+	 *
+	 * @param mixed $expr        The string to search.
+	 * @param mixed $pattern     The regular expression.
+	 * @param mixed $replacement The replacement string with $n references.
+	 * @param mixed $pos         Optional 1-based position to start at. Default 1.
+	 * @param mixed $occurrence  Optional 0 (all) or 1-based match number. Default 0.
+	 * @param mixed $match_type  Optional flags: 'c', 'i', 'm', 'n', 'u'.
+	 *
+	 * @return string|null The resulting string, or NULL.
+	 */
+	public function regexp_replace( $expr = null, $pattern = null, $replacement = null, $pos = null, $occurrence = null, $match_type = null ) {
+		$num_args = func_num_args();
+		if ( $num_args < 3 || $num_args > 6 ) {
+			return null;
+		}
+		if ( null === $expr || null === $pattern || null === $replacement ) {
+			return null;
+		}
+		$pos_value        = 1;
+		$occurrence_value = 0;
+		$match_type_value = null;
+		if ( $num_args >= 4 ) {
+			if ( null === $pos ) {
+				return null;
+			}
+			$pos_value = (int) $pos;
+			if ( $pos_value < 1 ) {
+				return null;
+			}
+		}
+		if ( $num_args >= 5 ) {
+			if ( null === $occurrence ) {
+				return null;
+			}
+			$occurrence_value = (int) $occurrence;
+			if ( $occurrence_value < 0 ) {
+				return null;
+			}
+		}
+		if ( 6 === $num_args ) {
+			if ( null === $match_type ) {
+				return null;
+			}
+			$match_type_value = $match_type;
+		}
+
+		$subject = (string) $expr;
+		$prefix  = $this->regexp_char_substr( $subject, 0, $pos_value - 1 );
+		$tail    = $this->regexp_char_substr( $subject, $pos_value - 1 );
+
+		$pcre = $this->regexp_compile_pattern( $pattern, $match_type_value );
+		if ( null === $pcre ) {
+			return null;
+		}
+		$all_matches = array();
+		$count       = $this->regexp_preg( 'preg_match_all', array( $pcre, $tail, &$all_matches, PREG_OFFSET_CAPTURE ) );
+		if ( false === $count || 0 === $count ) {
+			// A failed match is an invalid pattern; zero matches means $expr is unchanged.
+			return false === $count ? null : $subject;
+		}
+		$full_matches = $all_matches[0];
+		if ( $occurrence_value >= 1 && ! isset( $full_matches[ $occurrence_value - 1 ] ) ) {
+			return $subject;
+		}
+
+		$result = '';
+		$cursor = 0;
+		foreach ( $full_matches as $index => $full_match ) {
+			$match_text   = $full_match[0];
+			$match_offset = $full_match[1];
+			$result      .= substr( $tail, $cursor, $match_offset - $cursor );
+			if ( 0 === $occurrence_value || $index === $occurrence_value - 1 ) {
+				$expanded = $this->regexp_expand_replacement( (string) $replacement, $all_matches, $index );
+				if ( null === $expanded ) {
+					return null;
+				}
+				$result .= $expanded;
+			} else {
+				$result .= $match_text;
+			}
+			$cursor = $match_offset + strlen( $match_text );
+		}
+		$result .= substr( $tail, $cursor );
+
+		return $prefix . $result;
+	}
+
+	/**
+	 * Whether the last regexp helper call failed with an invalid pattern.
+	 *
+	 * preg_match_all() reports both "no match" and "invalid pattern" without
+	 * throwing, so regexp_find_occurrence() records failures here for its
+	 * callers (REGEXP_INSTR must return 0 for no match but NULL on error).
+	 *
+	 * @var bool
+	 */
+	private $regexp_last_error = false;
+
+	/**
+	 * Find the Nth regexp match at or after a 1-based character position.
+	 *
+	 * @param mixed $expr        The string to search.
+	 * @param mixed $pattern     The regular expression.
+	 * @param int   $pos         1-based character position to start at.
+	 * @param int   $occurrence  1-based match number counted from $pos.
+	 * @param mixed $match_type  Optional flags: 'c', 'i', 'm', 'n', 'u'.
+	 *
+	 * @return array|null Array with 'text' (matched string), 'index' (1-based
+	 *                    character index in $expr), and 'length' (character
+	 *                    length of the match), or NULL when there is no match
+	 *                    or the pattern is invalid. Check regexp_last_error to
+	 *                    tell the two apart.
+	 */
+	private function regexp_find_occurrence( $expr, $pattern, $pos, $occurrence, $match_type ) {
+		$this->regexp_last_error = false;
+
+		$subject = (string) $expr;
+		$length  = $this->regexp_char_length( $subject );
+		if ( $pos > $length + 1 ) {
+			return null;
+		}
+		$tail = $this->regexp_char_substr( $subject, $pos - 1 );
+
+		$pcre = $this->regexp_compile_pattern( $pattern, $match_type );
+		if ( null === $pcre ) {
+			$this->regexp_last_error = true;
+			return null;
+		}
+		$all_matches = array();
+		$count       = $this->regexp_preg( 'preg_match_all', array( $pcre, $tail, &$all_matches, PREG_OFFSET_CAPTURE ) );
+		if ( false === $count ) {
+			$this->regexp_last_error = true;
+			return null;
+		}
+		if ( ! isset( $all_matches[0][ $occurrence - 1 ] ) ) {
+			return null;
+		}
+		$match       = $all_matches[0][ $occurrence - 1 ];
+		$char_offset = $this->regexp_char_length( substr( $tail, 0, $match[1] ) );
+		return array(
+			'text'   => $match[0],
+			'index'  => $pos + $char_offset,
+			'length' => $this->regexp_char_length( $match[0] ),
+		);
+	}
+
+	/**
+	 * Compile a MySQL regular expression and match_type to a PCRE pattern.
+	 *
+	 * flag mapping (see REGEXP_LIKE in the MySQL 8.4 manual):
+	 *
+	 * - No flags, or flags without 'c'/'i': case-insensitive ('i'), matching
+	 *   MySQL's default case-insensitive collations and the regexp() UDF.
+	 * - 'c': case-sensitive. When both 'c' and 'i' are present, the
+	 *   rightmost one wins, as in MySQL.
+	 * - 'm': PCRE multiline ('m'), so ^ and $ match at line boundaries.
+	 * - 'n': PCRE dotall ('s'), so . matches line terminators.
+	 * - 'u': Unix-only line endings. PCRE has no equivalent; it is accepted
+	 *   and ignored because PCRE already treats "\n" as the line ending.
+	 *
+	 * Any other flag character (including uppercase) is invalid and yields
+	 * NULL, mirroring the MySQL error for an unknown match_type character.
+	 *
+	 * The pattern is delimited with \x01, a byte that cannot appear in a
+	 * valid PCRE pattern unescaped; a pattern containing it yields NULL.
+	 *
+	 * @param mixed $pattern    The regular expression.
+	 * @param mixed $match_type Optional flags: 'c', 'i', 'm', 'n', 'u'.
+	 *
+	 * @return string|null The PCRE pattern, or NULL when invalid.
+	 */
+	private function regexp_compile_pattern( $pattern, $match_type ) {
+		$pattern = (string) $pattern;
+		if ( false !== strpos( $pattern, "\x01" ) ) {
+			return null;
+		}
+
+		$modifiers = 'i';
+		if ( null !== $match_type ) {
+			$flags = (string) $match_type;
+			if ( '' !== $flags && 1 !== preg_match( '/^[cimnu]+$/', $flags ) ) {
+				return null;
+			}
+			$last_c = strrpos( $flags, 'c' );
+			$last_i = strrpos( $flags, 'i' );
+			if ( false !== $last_c && ( false === $last_i || $last_c > $last_i ) ) {
+				$modifiers = '';
+			} else {
+				$modifiers = 'i';
+			}
+			if ( false !== strpos( $flags, 'm' ) ) {
+				$modifiers .= 'm';
+			}
+			if ( false !== strpos( $flags, 'n' ) ) {
+				$modifiers .= 's';
+			}
+		}
+
+		/*
+		 * Match by character, not byte: the position helpers below measure
+		 * with mb_strlen()/mb_substr(), and MySQL's ICU implementation is
+		 * character-based. A subject that is not valid UTF-8 makes the
+		 * preg call fail, which the callers already turn into NULL.
+		 */
+		$pcre = "\x01" . $pattern . "\x01" . $modifiers . 'u';
+		if ( false === $this->regexp_preg( 'preg_match', array( $pcre, '' ) ) ) {
+			return null;
+		}
+		return $pcre;
+	}
+
+	/**
+	 * Call a PCRE function without letting an invalid pattern warn.
+	 *
+	 * Patterns come straight from user queries, so PCRE raises a warning for
+	 * every pattern that does not compile. The callers only need the FALSE
+	 * return value that follows the warning, so a temporary error handler
+	 * swallows it and leaves the previous handler in place afterwards.
+	 *
+	 * @param string $preg_function The preg_* function to call.
+	 * @param array  $args          Positional arguments for $preg_function.
+	 *
+	 * @return mixed The function result, or FALSE when PCRE rejected the pattern.
+	 */
+	private function regexp_preg( $preg_function, array $args ) {
+		set_error_handler(
+			static function () {
+				return true;
+			}
+		);
+		try {
+			return call_user_func_array( $preg_function, $args );
+		} finally {
+			restore_error_handler();
+		}
+	}
+
+	/**
+	 * Expand $n and $0 references in a REGEXP_REPLACE() replacement string.
+	 *
+	 * @param string $replacement The replacement string.
+	 * @param array  $all_matches preg_match_all() result with PREG_OFFSET_CAPTURE.
+	 * @param int    $match_index Which match the references apply to.
+	 *
+	 * @return string|null The expanded replacement, or NULL when a reference
+	 *                     points at a group that does not exist.
+	 */
+	private function regexp_expand_replacement( $replacement, $all_matches, $match_index ) {
+		$group_count = count( $all_matches ) - 1;
+		$expanded    = '';
+		$length      = strlen( $replacement );
+		for ( $i = 0; $i < $length; $i++ ) {
+			$char = $replacement[ $i ];
+			if ( '\\' === $char ) {
+				if ( $i + 1 < $length ) {
+					$expanded .= $replacement[ $i + 1 ];
+					++$i;
+				} else {
+					$expanded .= '\\';
+				}
+				continue;
+			}
+			if ( '$' !== $char ) {
+				$expanded .= $char;
+				continue;
+			}
+			if ( $i + 1 >= $length || $replacement[ $i + 1 ] < '0' || $replacement[ $i + 1 ] > '9' ) {
+				$expanded .= '$';
+				continue;
+			}
+			/*
+			 * ICU, like MySQL, takes the first digit as the group number and
+			 * only claims a second digit when that two-digit group exists.
+			 * So $10 with one group is group 1 followed by a literal "0".
+			 */
+			$group = (int) $replacement[ $i + 1 ];
+			$j     = $i + 2;
+			if ( $j < $length && $replacement[ $j ] >= '0' && $replacement[ $j ] <= '9' ) {
+				$two = $group * 10 + (int) $replacement[ $j ];
+				if ( $two <= $group_count && isset( $all_matches[ $two ][ $match_index ] ) ) {
+					$group = $two;
+					++$j;
+				}
+			}
+			if ( ! isset( $all_matches[ $group ][ $match_index ] ) ) {
+				return null;
+			}
+			$expanded .= $all_matches[ $group ][ $match_index ][0];
+			$i         = $j - 1;
+		}
+		return $expanded;
+	}
+
+	/**
+	 * Measure a string in characters, falling back to bytes.
+	 *
+	 * MySQL positions are 1-based character indexes; preg offsets are bytes,
+	 * so byte offsets are converted with this helper.
+	 *
+	 * @param string $value The string to measure.
+	 *
+	 * @return int The character (or byte) length.
+	 */
+	private function regexp_char_length( $value ) {
+		if ( function_exists( 'mb_strlen' ) ) {
+			return mb_strlen( $value, 'UTF-8' );
+		}
+		return strlen( $value );
+	}
+
+	/**
+	 * Take a 0-based character substring, falling back to bytes.
+	 *
+	 * @param string   $value  The string to slice.
+	 * @param int      $start  0-based character offset.
+	 * @param int|null $length Optional character length.
+	 *
+	 * @return string The substring.
+	 */
+	private function regexp_char_substr( $value, $start, $length = null ) {
+		if ( function_exists( 'mb_substr' ) ) {
+			if ( null === $length ) {
+				return mb_substr( $value, $start, null, 'UTF-8' );
+			}
+			return mb_substr( $value, $start, $length, 'UTF-8' );
+		}
+		if ( null === $length ) {
+			return substr( $value, $start );
+		}
+		return substr( $value, $start, $length );
 	}
 
 	/**
