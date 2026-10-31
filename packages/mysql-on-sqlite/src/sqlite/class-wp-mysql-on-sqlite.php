@@ -5185,6 +5185,9 @@ class WP_MySQL_On_SQLite extends PDO {
 	private function translate_runtime_function_call( WP_Parser_Node $node ): string {
 		$child = $node->get_first_child();
 		if ( $child instanceof WP_Parser_Node ) {
+			if ( 'trimFunction' === $child->rule_name ) {
+				return $this->translate_trim_function( $child );
+			}
 			return $this->translate( $child );
 		}
 
@@ -5222,9 +5225,150 @@ class WP_MySQL_On_SQLite extends PDO {
 					$this->translate( $nodes[0] ),
 					$this->translate( $nodes[1] )
 				);
+			case WP_MySQL_Lexer::RIGHT_SYMBOL:
+				/*
+				 * RIGHT is parsed as a keyword, and it is a join keyword in
+				 * newer SQLite versions, where it cannot be called as a
+				 * function. Route it to a UDF with a non-reserved name.
+				 */
+				$nodes = $node->get_child_nodes();
+				return sprintf(
+					'right_str(%s, %s)',
+					$this->translate( $nodes[0] ),
+					$this->translate( $nodes[1] )
+				);
+			case WP_MySQL_Lexer::POSITION_SYMBOL:
+				// POSITION(substr IN str) is LOCATE() with swapped arguments.
+				$nodes = $node->get_child_nodes();
+				return sprintf(
+					'locate(%s, %s)',
+					$this->translate( $nodes[0] ),
+					$this->translate( $nodes[1] )
+				);
+			case WP_MySQL_Lexer::INSERT_SYMBOL:
+				// The string function INSERT(). Emitted under a different
+				// name because SQLite will not accept INSERT as a function.
+				$nodes = $node->get_child_nodes();
+				return sprintf(
+					'insert_str(%s, %s, %s, %s)',
+					$this->translate( $nodes[0] ),
+					$this->translate( $nodes[1] ),
+					$this->translate( $nodes[2] ),
+					$this->translate( $nodes[3] )
+				);
+			case WP_MySQL_Lexer::EXTRACT_SYMBOL:
+				$nodes = $node->get_child_nodes();
+				return $this->translate_extract_function( $nodes[0], $nodes[1] );
 			default:
 				return $this->translate_sequence( $node->get_children() );
 		}
+	}
+
+	/**
+	 * Translate a MySQL EXTRACT(part FROM date) call to SQLite.
+	 *
+	 * @param  WP_Parser_Node $part_node The "interval" AST node holding the unit.
+	 * @param  WP_Parser_Node $date_node The date expression AST node.
+	 * @return string                    The translated value.
+	 * @throws WP_MySQL_On_SQLite_Exception When the translation fails.
+	 */
+	private function translate_extract_function( WP_Parser_Node $part_node, WP_Parser_Node $date_node ): string {
+		$unit_token = $part_node->get_first_descendant_token();
+		$date       = $this->translate( $date_node );
+
+		switch ( $unit_token->id ) {
+			case WP_MySQL_Lexer::YEAR_SYMBOL:
+				return sprintf( 'year(%s)', $date );
+			case WP_MySQL_Lexer::QUARTER_SYMBOL:
+				return sprintf(
+					'CAST(((CAST(STRFTIME(%s, %s) AS INTEGER) + 2) / 3) AS INTEGER)',
+					$this->quote_sqlite_value( '%m' ),
+					$date
+				);
+			case WP_MySQL_Lexer::MONTH_SYMBOL:
+				return sprintf( 'month(%s)', $date );
+			case WP_MySQL_Lexer::WEEK_SYMBOL:
+				return sprintf( 'week(%s, 0)', $date );
+			case WP_MySQL_Lexer::DAY_SYMBOL:
+				return sprintf( 'day(%s)', $date );
+			case WP_MySQL_Lexer::HOUR_SYMBOL:
+				return sprintf( 'hour(%s)', $date );
+			case WP_MySQL_Lexer::MINUTE_SYMBOL:
+				return sprintf( 'minute(%s)', $date );
+			case WP_MySQL_Lexer::SECOND_SYMBOL:
+				return sprintf( 'second(%s)', $date );
+			case WP_MySQL_Lexer::MICROSECOND_SYMBOL:
+				return sprintf(
+					'CASE WHEN (%1$s) IS NULL THEN NULL WHEN INSTR((%1$s), %2$s) > 0 THEN CAST(SUBSTR((%1$s) || %3$s, INSTR((%1$s), %2$s) + 1, 6) AS INTEGER) ELSE 0 END',
+					$date,
+					$this->quote_sqlite_value( '.' ),
+					$this->quote_sqlite_value( '000000' )
+				);
+			default:
+				throw $this->new_not_supported_exception(
+					sprintf( 'EXTRACT unit: %s', $unit_token->get_value() )
+				);
+		}
+	}
+
+	/**
+	 * Translate a MySQL TRIM() call to SQLite.
+	 *
+	 * Handles the extended TRIM([{BOTH | LEADING | TRAILING} [remstr] FROM] str)
+	 * syntax. The plain TRIM(str) and TRIM(remstr FROM str) forms are covered
+	 * by the same mapping.
+	 *
+	 * @param  WP_Parser_Node $node The "trimFunction" AST node.
+	 * @return string               The translated value.
+	 * @throws WP_MySQL_On_SQLite_Exception When the translation fails.
+	 */
+	private function translate_trim_function( WP_Parser_Node $node ): string {
+		$spec  = null;
+		$exprs = array();
+		foreach ( $node->get_children() as $child ) {
+			if ( $child instanceof WP_MySQL_Token ) {
+				if ( WP_MySQL_Lexer::LEADING_SYMBOL === $child->id ) {
+					$spec = 'LEADING';
+				} elseif ( WP_MySQL_Lexer::TRAILING_SYMBOL === $child->id ) {
+					$spec = 'TRAILING';
+				} elseif ( WP_MySQL_Lexer::BOTH_SYMBOL === $child->id ) {
+					$spec = 'BOTH';
+				}
+				continue;
+			}
+			if ( $child instanceof WP_Parser_Node ) {
+				$exprs[] = $this->translate( $child );
+			}
+		}
+
+		if ( 0 === count( $exprs ) || 2 < count( $exprs ) ) {
+			throw $this->new_invalid_input_exception();
+		}
+
+		if ( 2 === count( $exprs ) ) {
+			$str    = $exprs[1];
+			$remstr = $exprs[0];
+		} else {
+			$str    = $exprs[0];
+			$remstr = null;
+		}
+
+		if ( 'LEADING' === $spec ) {
+			if ( null === $remstr ) {
+				return sprintf( 'LTRIM(%s)', $str );
+			}
+			return sprintf( 'LTRIM(%s, %s)', $str, $remstr );
+		}
+		if ( 'TRAILING' === $spec ) {
+			if ( null === $remstr ) {
+				return sprintf( 'RTRIM(%s)', $str );
+			}
+			return sprintf( 'RTRIM(%s, %s)', $str, $remstr );
+		}
+		if ( null === $remstr ) {
+			return sprintf( 'TRIM(%s)', $str );
+		}
+		return sprintf( 'TRIM(%s, %s)', $str, $remstr );
 	}
 
 	/**
@@ -5367,6 +5511,29 @@ class WP_MySQL_On_SQLite extends PDO {
 			case 'CHAR_LENGTH':
 				// @TODO LENGTH and CHAR_LENGTH aren't always the same in MySQL for utf8 characters.
 				return 'LENGTH(' . $args[0] . ')';
+			case 'LCASE':
+				if ( 1 === count( $args ) ) {
+					return 'LOWER(' . $args[0] . ')';
+				}
+				return $this->translate_sequence( $node->get_children() );
+			case 'UCASE':
+				if ( 1 === count( $args ) ) {
+					return 'UPPER(' . $args[0] . ')';
+				}
+				return $this->translate_sequence( $node->get_children() );
+			case 'TRUNCATE':
+				/*
+				 * SQLite's TRUNC() takes a single argument, and POW() is only
+				 * available when SQLite is built with math functions, which
+				 * older supported builds are not. Delegate to a UDF instead.
+				 */
+				if ( 1 === count( $args ) ) {
+					$args[1] = '0';
+				}
+				if ( 2 === count( $args ) ) {
+					return sprintf( 'truncate(%s, %s)', $args[0], $args[1] );
+				}
+				return $this->translate_sequence( $node->get_children() );
 			case 'CONCAT':
 				return '(' . implode( ' || ', $args ) . ')';
 			case 'FOUND_ROWS':

@@ -38,6 +38,15 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 *
 	 * @var array
 	 */
+	/**
+	 * Maximum size of a string a UDF will allocate, in bytes.
+	 *
+	 * Matches the MySQL 8.0 default max_allowed_packet. MySQL returns NULL
+	 * for results above the limit; doing the same here avoids a fatal
+	 * out-of-memory error inside str_repeat().
+	 */
+	private const MAX_STRING_RESULT_BYTES = 67108864;
+
 	private $functions = array(
 		'throw'                        => 'throw',
 		'month'                        => 'month',
@@ -67,8 +76,6 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'greatest'                     => 'greatest',
 		'get_lock'                     => 'get_lock',
 		'release_lock'                 => 'release_lock',
-		'ucase'                        => 'ucase',
-		'lcase'                        => 'lcase',
 		'unhex'                        => 'unhex',
 		'from_base64'                  => 'from_base64',
 		'to_base64'                    => 'to_base64',
@@ -81,6 +88,22 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'utc_timestamp'                => 'utc_timestamp',
 		'version'                      => 'version',
 		'reverse'                      => 'reverse',
+		'repeat'                       => 'repeat',
+		'right_str'                    => 'right',
+		'lpad'                         => 'lpad',
+		'rpad'                         => 'rpad',
+		'space'                        => 'space',
+		'ascii'                        => 'ascii',
+		'ord'                          => 'ord',
+		'strcmp'                       => 'strcmp',
+		'find_in_set'                  => 'find_in_set',
+		'elt'                          => 'elt',
+		'make_set'                     => 'make_set',
+		'export_set'                   => 'export_set',
+		'soundex'                      => 'soundex',
+		'format'                       => 'format',
+		'insert_str'                   => 'insert_str',
+		'truncate'                     => 'truncate',
 
 		// Internal helper functions.
 		'_helper_like_to_glob_pattern' => '_helper_like_to_glob_pattern',
@@ -714,34 +737,6 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	}
 
 	/**
-	 * Method to emulate MySQL UCASE() function.
-	 *
-	 * This is MySQL alias for upper() function. This function rewrites it
-	 * to SQLite compatible name upper().
-	 *
-	 * @param string $content String to be converted to uppercase.
-	 *
-	 * @return string SQLite compatible function name.
-	 */
-	public function ucase( $content ) {
-		return "upper($content)";
-	}
-
-	/**
-	 * Method to emulate MySQL LCASE() function.
-	 *
-	 * This is MySQL alias for lower() function. This function rewrites it
-	 * to SQLite compatible name lower().
-	 *
-	 * @param string $content String to be converted to lowercase.
-	 *
-	 * @return string SQLite compatible function name.
-	 */
-	public function lcase( $content ) {
-		return "lower($content)";
-	}
-
-	/**
 	 * Method to emulate MySQL UNHEX() function.
 	 *
 	 * For a string argument str, UNHEX(str) interprets each pair of characters
@@ -847,23 +842,47 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 *
 	 * @param string  $substr Needle.
 	 * @param string  $str    Haystack.
-	 * @param integer $pos    Position.
+	 * @param integer $pos    1-based position to start the search from.
 	 *
-	 * @return integer
+	 * @return integer|null
 	 */
-	public function locate( $substr, $str, $pos = 0 ) {
-		if ( ! extension_loaded( 'mbstring' ) ) {
-			$val = strpos( $str, $substr, $pos );
-			if ( false !== $val ) {
-				return $val + 1;
-			}
+	public function locate( $substr, $str, $pos = 1 ) {
+		if ( null === $substr || null === $str || null === $pos ) {
+			return null;
+		}
+		$substr = (string) $substr;
+		$str    = (string) $str;
+
+		// MySQL positions are 1-based; clamp invalid values to the start.
+		$offset = (int) round( (float) $pos ) - 1;
+		if ( 0 > $offset ) {
+			$offset = 0;
+		}
+
+		/*
+		 * strpos()/mb_strpos() throw when the offset is past the end of the
+		 * haystack, and an empty needle returns false with a warning on
+		 * older PHP. MySQL returns 0 and the start position respectively.
+		 */
+		if ( $offset > $this->char_strlen( $str ) ) {
 			return 0;
 		}
-		$val = mb_strpos( $str, $substr, $pos );
-		if ( false !== $val ) {
+		if ( '' === $substr ) {
+			return $offset + 1;
+		}
+
+		if ( extension_loaded( 'mbstring' ) ) {
+			$val = mb_strpos( $str, $substr, $offset, 'UTF-8' );
+			if ( false === $val ) {
+				return 0;
+			}
 			return $val + 1;
 		}
-		return 0;
+		$val = strpos( $str, $substr, $offset );
+		if ( false === $val ) {
+			return 0;
+		}
+		return $val + 1;
 	}
 
 	/**
@@ -925,6 +944,644 @@ class WP_SQLite_PDO_User_Defined_Functions {
 			return implode( '', array_reverse( $matches[0] ) );
 		}
 		return strrev( $str );
+	}
+
+	/**
+	 * Get the length of a string in characters.
+	 *
+	 * Uses mb_strlen() when the mbstring extension is loaded, so that
+	 * multi-byte characters are counted like MySQL does. Falls back to a
+	 * byte count otherwise.
+	 *
+	 * @param string $str The string to measure.
+	 *
+	 * @return int The character length.
+	 */
+	private function char_strlen( $str ) {
+		if ( extension_loaded( 'mbstring' ) ) {
+			$length = mb_strlen( $str, 'UTF-8' );
+			if ( false !== $length ) {
+				return $length;
+			}
+		}
+		return strlen( $str );
+	}
+
+	/**
+	 * Get a substring counted in characters, not bytes.
+	 *
+	 * Uses mb_substr() when the mbstring extension is loaded, so that
+	 * multi-byte characters are not split like MySQL does. Falls back to a
+	 * byte-based substr() otherwise.
+	 *
+	 * @param string   $str    The input string.
+	 * @param int      $start  0-based start offset in characters.
+	 * @param int|null $length Optional length in characters.
+	 *
+	 * @return string The substring, or an empty string when out of range.
+	 */
+	private function char_substr( $str, $start, $length = null ) {
+		if ( extension_loaded( 'mbstring' ) ) {
+			if ( null === $length ) {
+				$result = mb_substr( $str, $start, null, 'UTF-8' );
+			} else {
+				$result = mb_substr( $str, $start, $length, 'UTF-8' );
+			}
+			if ( false !== $result ) {
+				return $result;
+			}
+		}
+		if ( null === $length ) {
+			$result = substr( $str, $start );
+		} else {
+			$result = substr( $str, $start, $length );
+		}
+		if ( false === $result ) {
+			return '';
+		}
+		return $result;
+	}
+
+	/**
+	 * Build a padding string of an exact character length.
+	 *
+	 * Repeats $padstr and truncates it to $length characters, counting
+	 * multi-byte characters like MySQL does.
+	 *
+	 * @param string $padstr The padding string, must not be empty.
+	 * @param int    $length The number of characters to build.
+	 *
+	 * @return string The padding string.
+	 */
+	private function build_pad_string( $padstr, $length ) {
+		$pad_length = $this->char_strlen( $padstr );
+		$repeat     = (int) ceil( $length / $pad_length );
+		if ( 1 > $repeat ) {
+			$repeat = 1;
+		}
+		if ( ! $this->string_size_within_limit( strlen( $padstr ), $repeat ) ) {
+			return null;
+		}
+		return $this->char_substr( str_repeat( $padstr, $repeat ), 0, $length );
+	}
+
+	/**
+	 * Whether a generated string stays within the maximum result size.
+	 *
+	 * MySQL returns NULL with a warning when a string result exceeds
+	 * max_allowed_packet. Here an unbounded str_repeat() would exhaust the
+	 * PHP memory limit and end the request, so the same limit is applied
+	 * before allocating.
+	 *
+	 * @param int $unit_length Length of one unit in bytes.
+	 * @param int $units       Number of units to concatenate.
+	 *
+	 * @return bool Whether the result fits.
+	 */
+	private function string_size_within_limit( $unit_length, $units ) {
+		return ( $unit_length * $units ) <= self::MAX_STRING_RESULT_BYTES;
+	}
+
+	/**
+	 * Method to emulate MySQL REPEAT() function.
+	 *
+	 * Returns a string consisting of $str repeated $count times. Returns an
+	 * empty string when $count is less than 1, and NULL when any argument
+	 * is NULL.
+	 *
+	 * @param string|null $str   The string to repeat.
+	 * @param mixed       $count The repeat count.
+	 *
+	 * @return string|null The repeated string, or NULL.
+	 */
+	public function repeat( $str, $count ) {
+		if ( null === $str || null === $count ) {
+			return null;
+		}
+		$count = (int) round( (float) $count );
+		if ( 1 > $count ) {
+			return '';
+		}
+		$str = (string) $str;
+		if ( ! $this->string_size_within_limit( strlen( $str ), $count ) ) {
+			return null;
+		}
+		return str_repeat( $str, $count );
+	}
+
+	/**
+	 * Method to emulate MySQL RIGHT() function.
+	 *
+	 * Returns the rightmost $len characters of $str. Returns an empty string
+	 * when $len is less than 1, and NULL when any argument is NULL.
+	 *
+	 * @param string|null $str The input string.
+	 * @param mixed       $len The number of characters.
+	 *
+	 * @return string|null The rightmost characters, or NULL.
+	 */
+	public function right( $str, $len ) {
+		if ( null === $str || null === $len ) {
+			return null;
+		}
+		$len = (int) round( (float) $len );
+		if ( 1 > $len ) {
+			return '';
+		}
+		$str = (string) $str;
+		if ( $len >= $this->char_strlen( $str ) ) {
+			return $str;
+		}
+		if ( extension_loaded( 'mbstring' ) ) {
+			return mb_substr( $str, -$len, null, 'UTF-8' );
+		}
+		return substr( $str, -$len );
+	}
+
+	/**
+	 * Method to emulate MySQL LPAD() function.
+	 *
+	 * Left-pads $str with $padstr to a length of $len characters. Longer
+	 * strings are truncated. Returns NULL when any argument is NULL, when
+	 * $len is negative, or when padding is needed but $padstr is empty.
+	 *
+	 * @param string|null $str    The input string.
+	 * @param mixed       $len    The target length in characters.
+	 * @param string|null $padstr The padding string.
+	 *
+	 * @return string|null The padded string, or NULL.
+	 */
+	public function lpad( $str, $len, $padstr ) {
+		if ( null === $str || null === $len || null === $padstr ) {
+			return null;
+		}
+		$len = (int) round( (float) $len );
+		if ( 0 > $len ) {
+			return null;
+		}
+		if ( 0 === $len ) {
+			return '';
+		}
+		$str    = (string) $str;
+		$padstr = (string) $padstr;
+		if ( $this->char_strlen( $str ) >= $len ) {
+			return $this->char_substr( $str, 0, $len );
+		}
+		if ( '' === $padstr ) {
+			return null;
+		}
+		$pad = $this->build_pad_string( $padstr, $len - $this->char_strlen( $str ) );
+		if ( null === $pad || ! $this->string_size_within_limit( strlen( $pad ) + strlen( $str ), 1 ) ) {
+			return null;
+		}
+		return $pad . $str;
+	}
+
+	/**
+	 * Method to emulate MySQL RPAD() function.
+	 *
+	 * Right-pads $str with $padstr to a length of $len characters. Longer
+	 * strings are truncated. Returns NULL when any argument is NULL, when
+	 * $len is negative, or when padding is needed but $padstr is empty.
+	 *
+	 * @param string|null $str    The input string.
+	 * @param mixed       $len    The target length in characters.
+	 * @param string|null $padstr The padding string.
+	 *
+	 * @return string|null The padded string, or NULL.
+	 */
+	public function rpad( $str, $len, $padstr ) {
+		if ( null === $str || null === $len || null === $padstr ) {
+			return null;
+		}
+		$len = (int) round( (float) $len );
+		if ( 0 > $len ) {
+			return null;
+		}
+		if ( 0 === $len ) {
+			return '';
+		}
+		$str    = (string) $str;
+		$padstr = (string) $padstr;
+		if ( $this->char_strlen( $str ) >= $len ) {
+			return $this->char_substr( $str, 0, $len );
+		}
+		if ( '' === $padstr ) {
+			return null;
+		}
+		$pad = $this->build_pad_string( $padstr, $len - $this->char_strlen( $str ) );
+		if ( null === $pad || ! $this->string_size_within_limit( strlen( $pad ) + strlen( $str ), 1 ) ) {
+			return null;
+		}
+		return $str . $pad;
+	}
+
+	/**
+	 * Method to emulate MySQL SPACE() function.
+	 *
+	 * Returns a string of $n spaces, or an empty string when $n is less
+	 * than 1. Returns NULL when $n is NULL.
+	 *
+	 * @param mixed $n The number of spaces.
+	 *
+	 * @return string|null The spaces, or NULL.
+	 */
+	public function space( $n ) {
+		if ( null === $n ) {
+			return null;
+		}
+		$n = (int) round( (float) $n );
+		if ( 1 > $n ) {
+			return '';
+		}
+		if ( ! $this->string_size_within_limit( 1, $n ) ) {
+			return null;
+		}
+		return str_repeat( ' ', $n );
+	}
+
+	/**
+	 * Method to emulate MySQL ASCII() function.
+	 *
+	 * Returns the numeric value of the first byte of $str. Returns 0 when
+	 * $str is the empty string, and NULL when $str is NULL.
+	 *
+	 * @param string|null $str The input string.
+	 *
+	 * @return int|null The byte value, 0, or NULL.
+	 */
+	public function ascii( $str ) {
+		if ( null === $str ) {
+			return null;
+		}
+		$str = (string) $str;
+		if ( '' === $str ) {
+			return 0;
+		}
+		return ord( $str[0] );
+	}
+
+	/**
+	 * Method to emulate MySQL ORD() function.
+	 *
+	 * Returns the code of the leftmost character of $str. Multi-byte
+	 * characters are decoded as UTF-8. Returns 0 when $str is the empty
+	 * string, and NULL when $str is NULL.
+	 *
+	 * @param string|null $str The input string.
+	 *
+	 * @return int|null The character code, 0, or NULL.
+	 */
+	public function ord( $str ) {
+		if ( null === $str ) {
+			return null;
+		}
+		$str = (string) $str;
+		if ( '' === $str ) {
+			return 0;
+		}
+		/*
+		 * MySQL computes ORD() from the bytes of the leftmost character,
+		 * not from its Unicode code point: ORD('é') in utf8mb4 is
+		 * (0xC3 * 256) + 0xA9 = 50089, not 233.
+		 */
+		$char = $this->char_substr( $str, 0, 1 );
+		if ( '' === $char ) {
+			return ord( $str[0] );
+		}
+		$code = 0;
+		foreach ( unpack( 'C*', $char ) as $byte ) {
+			$code = $code * 256 + $byte;
+		}
+		return $code;
+	}
+
+	/**
+	 * Decode the first UTF-8 character of a string into its codepoint.
+	 *
+	 * Returns NULL when the string does not start with a valid UTF-8
+	 * sequence. Used only when the mbstring extension is not loaded.
+	 *
+	 * @param string $str The input string.
+	 *
+	 * @return int|null The codepoint, or NULL.
+	 */
+	private function utf8_codepoint( $str ) {
+		$b0 = ord( $str[0] );
+		if ( 0x80 > $b0 ) {
+			return $b0;
+		}
+		if ( 0xC0 === ( $b0 & 0xE0 ) ) {
+			$code     = $b0 & 0x1F;
+			$expected = 1;
+			$min      = 0x80;
+		} elseif ( 0xE0 === ( $b0 & 0xF0 ) ) {
+			$code     = $b0 & 0x0F;
+			$expected = 2;
+			$min      = 0x800;
+		} elseif ( 0xF0 === ( $b0 & 0xF8 ) ) {
+			$code     = $b0 & 0x07;
+			$expected = 3;
+			$min      = 0x10000;
+		} else {
+			return null;
+		}
+		if ( strlen( $str ) < $expected + 1 ) {
+			return null;
+		}
+		for ( $i = 1; $i <= $expected; $i++ ) {
+			$b = ord( $str[ $i ] );
+			if ( 0x80 !== ( $b & 0xC0 ) ) {
+				return null;
+			}
+			$code = ( $code << 6 ) | ( $b & 0x3F );
+		}
+		if ( $code < $min || 0x10FFFF < $code || ( 0xD800 <= $code && 0xDFFF >= $code ) ) {
+			return null;
+		}
+		return $code;
+	}
+
+	/**
+	 * Method to emulate MySQL STRCMP() function.
+	 *
+	 * Returns -1, 0, or 1 depending on whether $a is smaller than, equal
+	 * to, or greater than $b. The comparison is byte-wise. Returns NULL
+	 * when any argument is NULL.
+	 *
+	 * @param mixed $a The first string.
+	 * @param mixed $b The second string.
+	 *
+	 * @return int|null -1, 0, 1, or NULL.
+	 */
+	public function strcmp( $a, $b ) {
+		if ( null === $a || null === $b ) {
+			return null;
+		}
+		$result = strcmp( (string) $a, (string) $b );
+		if ( 0 > $result ) {
+			return -1;
+		}
+		if ( 0 < $result ) {
+			return 1;
+		}
+		return 0;
+	}
+
+	/**
+	 * Method to emulate MySQL FIND_IN_SET() function.
+	 *
+	 * Returns the 1-based position of $str in the comma-separated $strlist,
+	 * or 0 when not found. Returns NULL when any argument is NULL.
+	 *
+	 * @param mixed $str     The string to find.
+	 * @param mixed $strlist The comma-separated list.
+	 *
+	 * @return int|null The position, 0, or NULL.
+	 */
+	public function find_in_set( $str, $strlist ) {
+		if ( null === $str || null === $strlist ) {
+			return null;
+		}
+		$str = (string) $str;
+		if ( false !== strpos( $str, ',' ) ) {
+			return 0;
+		}
+		$strlist = (string) $strlist;
+		if ( '' === $strlist ) {
+			return 0;
+		}
+		// MySQL compares with the column collation, which is
+		// case-insensitive by default.
+		foreach ( explode( ',', $strlist ) as $index => $part ) {
+			if ( 0 === strcasecmp( $part, $str ) ) {
+				return $index + 1;
+			}
+		}
+		return 0;
+	}
+
+	/**
+	 * Method to emulate MySQL ELT() function.
+	 *
+	 * Returns the Nth string of the argument list, counting from 1. Returns
+	 * NULL when N is NULL, less than 1, or greater than the number of
+	 * strings.
+	 *
+	 * @return mixed The Nth string, or NULL.
+	 */
+	public function elt() {
+		$args = func_get_args();
+		$n    = array_shift( $args );
+		if ( null === $n ) {
+			return null;
+		}
+		$n = (int) round( (float) $n );
+		if ( 1 > $n || $n > count( $args ) ) {
+			return null;
+		}
+		return $args[ $n - 1 ];
+	}
+
+	/**
+	 * Method to emulate MySQL MAKE_SET() function.
+	 *
+	 * Returns a comma-separated string of the arguments that have a
+	 * corresponding bit set in $bits. NULL arguments are skipped. Returns
+	 * NULL when $bits is NULL.
+	 *
+	 * @return string|null The set string, or NULL.
+	 */
+	public function make_set() {
+		$args = func_get_args();
+		$bits = array_shift( $args );
+		if ( null === $bits ) {
+			return null;
+		}
+		$bits   = (int) $bits;
+		$result = array();
+		foreach ( $args as $index => $str ) {
+			if ( null === $str ) {
+				continue;
+			}
+			if ( ( $bits >> $index ) & 1 ) {
+				$result[] = $str;
+			}
+		}
+		return implode( ',', $result );
+	}
+
+	/**
+	 * Method to emulate MySQL EXPORT_SET() function.
+	 *
+	 * Returns a string with one $on/$off word per examined bit, lowest bit
+	 * first, joined with $separator. Examines $number_of_bits bits, 64 by
+	 * default. Returns NULL when any argument is NULL.
+	 *
+	 * @param mixed  $bits           The bit vector.
+	 * @param mixed  $on             The word for set bits.
+	 * @param mixed  $off            The word for clear bits.
+	 * @param mixed  $separator      The separator, defaults to ','.
+	 * @param mixed  $number_of_bits The number of bits, defaults to 64.
+	 *
+	 * @return string|null The bit string, or NULL.
+	 */
+	public function export_set( $bits, $on, $off, $separator = ',', $number_of_bits = 64 ) {
+		if ( 4 < func_num_args() && null === $number_of_bits ) {
+			return null;
+		}
+		if ( null === $bits || null === $on || null === $off || null === $separator ) {
+			return null;
+		}
+		$number_of_bits = (int) round( (float) $number_of_bits );
+		if ( 1 > $number_of_bits ) {
+			return '';
+		}
+		// MySQL clips the bit count to the width of a BIGINT.
+		if ( 64 < $number_of_bits ) {
+			$number_of_bits = 64;
+		}
+		$bits  = (int) $bits;
+		$words = array();
+		for ( $i = 0; $i < $number_of_bits; $i++ ) {
+			if ( ( $bits >> $i ) & 1 ) {
+				$words[] = $on;
+			} else {
+				$words[] = $off;
+			}
+		}
+		return implode( (string) $separator, $words );
+	}
+
+	/**
+	 * Method to emulate MySQL TRUNCATE() function.
+	 *
+	 * Truncates toward zero to $decimals decimal places; a negative value
+	 * zeroes digits to the left of the decimal point. Returns an integer
+	 * when no fractional part remains, mirroring MySQL's result type.
+	 *
+	 * @param mixed $x        The number to truncate.
+	 * @param mixed $decimals The number of decimal places.
+	 *
+	 * @return int|float|null The truncated value, or NULL.
+	 */
+	public function truncate( $x, $decimals ) {
+		if ( null === $x || null === $decimals ) {
+			return null;
+		}
+		$decimals = (int) round( (float) $decimals );
+		if ( is_bool( $x ) ) {
+			$x = (int) $x;
+		}
+		if ( ! is_numeric( $x ) ) {
+			$x = 0;
+		}
+		$value = (float) $x;
+		if ( ! is_finite( $value ) ) {
+			return null;
+		}
+		$factor = pow( 10, abs( $decimals ) );
+		if ( ! is_finite( $factor ) ) {
+			return null;
+		}
+		$sign = $value < 0 ? -1 : 1;
+		$abs  = abs( $value );
+		if ( 0 <= $decimals ) {
+			$result = floor( $abs * $factor ) / $factor;
+		} else {
+			$result = floor( $abs / $factor ) * $factor;
+		}
+		$result *= $sign;
+		if ( 0 >= $decimals ) {
+			if ( $result > PHP_INT_MAX || $result < PHP_INT_MIN ) {
+				return $result;
+			}
+			return (int) $result;
+		}
+		return $result;
+	}
+
+	/**
+	 * Method to emulate MySQL SOUNDEX() function.
+	 *
+	 * Returns a soundex string of $str. Returns NULL when $str is NULL.
+	 *
+	 * @param string|null $str The input string.
+	 *
+	 * @return string|null The soundex string, or NULL.
+	 */
+	public function soundex( $str ) {
+		if ( null === $str ) {
+			return null;
+		}
+		return soundex( (string) $str );
+	}
+
+	/**
+	 * Method to emulate MySQL FORMAT() function.
+	 *
+	 * Formats $number with thousands separators and $decimals decimals,
+	 * rounding half away from zero. The optional $locale argument is
+	 * accepted but only the default separators are produced. Returns NULL
+	 * when any given argument is NULL.
+	 *
+	 * @param mixed      $number   The number to format.
+	 * @param mixed      $decimals The number of decimals.
+	 * @param mixed|null $locale   An optional locale name, ignored.
+	 *
+	 * @return string|null The formatted number, or NULL.
+	 */
+	public function format( $number, $decimals, $locale = null ) {
+		if ( 2 < func_num_args() && null === $locale ) {
+			return null;
+		}
+		if ( null === $number || null === $decimals ) {
+			return null;
+		}
+		$decimals = (int) round( (float) $decimals );
+		if ( 0 > $decimals ) {
+			$decimals = 0;
+		}
+		return number_format( (float) $number, $decimals, '.', ',' );
+	}
+
+	/**
+	 * Method to emulate the MySQL string function INSERT().
+	 *
+	 * Returns $str with the substring beginning at 1-based position $pos
+	 * and $len characters long replaced by $newstr. Returns the original
+	 * $str when $pos is outside the string. A $len beyond the rest of the
+	 * string replaces everything from $pos. Returns NULL when any argument
+	 * is NULL.
+	 *
+	 * Registered as "insert_str" because INSERT is a reserved word that
+	 * SQLite will not accept as a function name.
+	 *
+	 * @param string|null $str    The input string.
+	 * @param mixed       $pos    The 1-based position.
+	 * @param mixed       $len    The number of characters to replace.
+	 * @param string|null $newstr The replacement string.
+	 *
+	 * @return string|null The resulting string, or NULL.
+	 */
+	public function insert_str( $str, $pos, $len, $newstr ) {
+		if ( null === $str || null === $pos || null === $len || null === $newstr ) {
+			return null;
+		}
+		$str    = (string) $str;
+		$newstr = (string) $newstr;
+		$pos    = (int) round( (float) $pos );
+		$len    = (int) round( (float) $len );
+		if ( 0 > $len ) {
+			$len = 0;
+		}
+		$strlen = $this->char_strlen( $str );
+		if ( 1 > $pos || $pos > $strlen ) {
+			return $str;
+		}
+		return $this->char_substr( $str, 0, $pos - 1 )
+			. $newstr
+			. $this->char_substr( $str, $pos - 1 + $len );
 	}
 
 	/**
