@@ -15999,6 +15999,24 @@ END;
 		);
 	}
 
+	public function testNegativeValuesAsUnsigned(): void {
+		// Negative values are treated as their 64-bit two's complement, also
+		// for REAL columns, so small negative floats must not collapse to 2^64.
+		$result = $this->assertQuery( 'SELECT BIT_COUNT(-1.5) AS n' );
+		$this->assertSame( '64', $result[0]->n );
+
+		$result = $this->assertQuery( 'SELECT BIT_COUNT(-1) AS n' );
+		$this->assertSame( '64', $result[0]->n );
+
+		// -12.5 truncates toward zero to -12, whose 64-bit two's complement is
+		// 60 one bits followed by 0100.
+		$result = $this->assertQuery( 'SELECT BIN(-12.5) AS n' );
+		$this->assertSame( str_repeat( '1', 60 ) . '0100', $result[0]->n );
+
+		$result = $this->assertQuery( 'SELECT OCT(-12.5) AS n' );
+		$this->assertSame( '1777777777777777777764', $result[0]->n );
+	}
+
 	/**
 	 * @dataProvider ifFunctionResults
 	 */
@@ -16092,6 +16110,313 @@ END;
 		// Round-trip: TO_BASE64(FROM_BASE64(x)) = x.
 		$result = $this->assertQuery( "SELECT TO_BASE64(FROM_BASE64('dGVzdA==')) AS encoded" );
 		$this->assertSame( 'dGVzdA==', $result[0]->encoded );
+	}
+
+	public function testSha1Function(): void {
+		// FIPS 180-1 test vector, cross-checked with sha1sum and hashlib.
+		$result = $this->assertQuery( "SELECT SHA1('abc') AS hashed" );
+		$this->assertSame( 'a9993e364706816aba3e25717850c26c9cd0d89d', $result[0]->hashed );
+
+		// Empty string vector.
+		$result = $this->assertQuery( "SELECT SHA1('') AS hashed" );
+		$this->assertSame( 'da39a3ee5e6b4b0d3255bfef95601890afd80709', $result[0]->hashed );
+
+		// NULL input returns NULL.
+		$result = $this->assertQuery( 'SELECT SHA1(NULL) AS hashed' );
+		$this->assertNull( $result[0]->hashed );
+	}
+
+	public function testSha2Function(): void {
+		// Vectors cross-checked with sha224sum and Python hashlib.
+		$result = $this->assertQuery( "SELECT SHA2('abc', 224) AS hashed" );
+		$this->assertSame( '23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7', $result[0]->hashed );
+
+		$result = $this->assertQuery( "SELECT SHA2('abc', 256) AS hashed" );
+		$this->assertSame( 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad', $result[0]->hashed );
+
+		$result = $this->assertQuery( "SELECT SHA2('abc', 384) AS hashed" );
+		$this->assertSame( 'cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7', $result[0]->hashed );
+
+		$result = $this->assertQuery( "SELECT SHA2('abc', 512) AS hashed" );
+		$this->assertSame( 'ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f', $result[0]->hashed );
+
+		// A hash length of 0 is equivalent to 256.
+		$result = $this->assertQuery( "SELECT SHA2('abc', 0) AS hashed" );
+		$this->assertSame( 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad', $result[0]->hashed );
+
+		// Unsupported hash lengths return NULL.
+		$result = $this->assertQuery( "SELECT SHA2('abc', 123) AS hashed" );
+		$this->assertNull( $result[0]->hashed );
+
+		// NULL input returns NULL.
+		$result = $this->assertQuery( 'SELECT SHA2(NULL, 256) AS hashed' );
+		$this->assertNull( $result[0]->hashed );
+
+		$result = $this->assertQuery( "SELECT SHA2('abc', NULL) AS hashed" );
+		$this->assertNull( $result[0]->hashed );
+	}
+
+	public function testCrc32Function(): void {
+		// Known vector: MySQL CRC32('hello') = 907060870.
+		$result = $this->assertQuery( "SELECT CRC32('hello') AS crc" );
+		$this->assertSame( '907060870', $result[0]->crc );
+
+		// Empty string checksums to zero.
+		$result = $this->assertQuery( "SELECT CRC32('') AS crc" );
+		$this->assertSame( '0', $result[0]->crc );
+
+		// Values at or above 2^31 stay unsigned (the UDF returns a string).
+		$result = $this->assertQuery( "SELECT CRC32('The quick brown fox') AS crc" );
+		$this->assertSame( '3074782430', $result[0]->crc );
+
+		// NULL input returns NULL.
+		$result = $this->assertQuery( 'SELECT CRC32(NULL) AS crc' );
+		$this->assertNull( $result[0]->crc );
+	}
+
+	public function testConvFunction(): void {
+		// MySQL documentation examples.
+		$result = $this->assertQuery( "SELECT CONV('a', 16, 2) AS converted" );
+		$this->assertSame( '1010', $result[0]->converted );
+
+		$result = $this->assertQuery( "SELECT CONV('6E', 18, 8) AS converted" );
+		$this->assertSame( '172', $result[0]->converted );
+
+		$result = $this->assertQuery( 'SELECT CONV(-17, 10, -18) AS converted' );
+		$this->assertSame( '-H', $result[0]->converted );
+
+		// Exact past 2^53, where PHP base_convert() loses precision.
+		$result = $this->assertQuery( "SELECT CONV('18446744073709551615', 10, 16) AS converted" );
+		$this->assertSame( 'FFFFFFFFFFFFFFFF', $result[0]->converted );
+
+		// Negative input with a positive from_base wraps as unsigned 64-bit.
+		$result = $this->assertQuery( "SELECT CONV('-9223372036854775808', 10, 16) AS converted" );
+		$this->assertSame( '8000000000000000', $result[0]->converted );
+
+		// Values with no valid digits convert as zero.
+		$result = $this->assertQuery( "SELECT CONV('xyz', 10, 10) AS converted" );
+		$this->assertSame( '0', $result[0]->converted );
+
+		// Invalid bases return NULL.
+		$result = $this->assertQuery( "SELECT CONV('a', 1, 10) AS converted" );
+		$this->assertNull( $result[0]->converted );
+
+		$result = $this->assertQuery( "SELECT CONV('a', 16, 37) AS converted" );
+		$this->assertNull( $result[0]->converted );
+
+		// NULL input returns NULL.
+		$result = $this->assertQuery( 'SELECT CONV(NULL, 16, 10) AS converted' );
+		$this->assertNull( $result[0]->converted );
+
+		$result = $this->assertQuery( "SELECT CONV('a', NULL, 10) AS converted" );
+		$this->assertNull( $result[0]->converted );
+
+		$result = $this->assertQuery( "SELECT CONV('a', 16, NULL) AS converted" );
+		$this->assertNull( $result[0]->converted );
+	}
+
+	public function testOctFunction(): void {
+		$result = $this->assertQuery( 'SELECT OCT(12) AS octal' );
+		$this->assertSame( '14', $result[0]->octal );
+
+		// Negative values wrap as unsigned 64-bit integers.
+		$result = $this->assertQuery( 'SELECT OCT(-12) AS octal' );
+		$this->assertSame( '1777777777777777777764', $result[0]->octal );
+
+		$result = $this->assertQuery( 'SELECT OCT(0) AS octal' );
+		$this->assertSame( '0', $result[0]->octal );
+
+		// NULL input returns NULL.
+		$result = $this->assertQuery( 'SELECT OCT(NULL) AS octal' );
+		$this->assertNull( $result[0]->octal );
+	}
+
+	public function testBinFunction(): void {
+		$result = $this->assertQuery( 'SELECT BIN(12) AS binary_value' );
+		$this->assertSame( '1100', $result[0]->binary_value );
+
+		// Negative values wrap as unsigned 64-bit integers (64 digits).
+		$result = $this->assertQuery( 'SELECT BIN(-12) AS binary_value' );
+		$this->assertSame( '1111111111111111111111111111111111111111111111111111111111110100', $result[0]->binary_value );
+
+		$result = $this->assertQuery( 'SELECT BIN(0) AS binary_value' );
+		$this->assertSame( '0', $result[0]->binary_value );
+
+		// NULL input returns NULL.
+		$result = $this->assertQuery( 'SELECT BIN(NULL) AS binary_value' );
+		$this->assertNull( $result[0]->binary_value );
+	}
+
+	public function testBitCountFunction(): void {
+		$result = $this->assertQuery( 'SELECT BIT_COUNT(29) AS bits' );
+		$this->assertSame( '4', $result[0]->bits );
+
+		$result = $this->assertQuery( 'SELECT BIT_COUNT(0) AS bits' );
+		$this->assertSame( '0', $result[0]->bits );
+
+		$result = $this->assertQuery( 'SELECT BIT_COUNT(255) AS bits' );
+		$this->assertSame( '8', $result[0]->bits );
+
+		// All 64 bits set.
+		$result = $this->assertQuery( 'SELECT BIT_COUNT(-1) AS bits' );
+		$this->assertSame( '64', $result[0]->bits );
+
+		// NULL input returns NULL.
+		$result = $this->assertQuery( 'SELECT BIT_COUNT(NULL) AS bits' );
+		$this->assertNull( $result[0]->bits );
+	}
+
+	public function testUuidFunction(): void {
+		$result = $this->assertQuery( 'SELECT UUID() AS uuid' );
+		$this->assertSame(
+			1,
+			preg_match( '/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/', $result[0]->uuid ),
+			'UUID() must return a lowercase version 4 UUID.'
+		);
+
+		// Two calls return different values.
+		$first  = $result[0]->uuid;
+		$result = $this->assertQuery( 'SELECT UUID() AS uuid' );
+		$this->assertNotSame( $first, $result[0]->uuid );
+	}
+
+	public function testUuidShortFunction(): void {
+		$result = $this->assertQuery( 'SELECT UUID_SHORT() AS id' );
+		$first  = (int) $result[0]->id;
+		$this->assertGreaterThan( 0, $first );
+
+		// Values increase across calls.
+		$result = $this->assertQuery( 'SELECT UUID_SHORT() AS id' );
+		$this->assertGreaterThan( $first, (int) $result[0]->id );
+
+		/*
+		 * A second connection gets its own UDF instance. MySQL keeps one
+		 * counter for the whole server, so two connections never share a
+		 * sequence; the counter is randomly seeded here to make that
+		 * collision unlikely rather than guaranteed.
+		 */
+		$other = new WP_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname=wp' );
+		$other->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
+		$statement = $other->query( 'SELECT UUID_SHORT() AS id', PDO::FETCH_OBJ );
+		$other_id  = (int) $statement->fetchAll()[0]->id;
+		$this->assertNotSame( $first, $other_id );
+	}
+
+	public function testUuidToBinFunction(): void {
+		// Without swap flag: plain hex decoding of the UUID.
+		$result = $this->assertQuery( "SELECT HEX(UUID_TO_BIN('6ccd780c-baba-1026-9564-5b8c656024db')) AS binned" );
+		$this->assertSame( '6CCD780CBABA102695645B8C656024DB', $result[0]->binned );
+
+		// With swap flag 1: time-high moves ahead of time-low (MySQL docs).
+		$result = $this->assertQuery( "SELECT HEX(UUID_TO_BIN('6ccd780c-baba-1026-9564-5b8c656024db', 1)) AS binned" );
+		$this->assertSame( '1026BABA6CCD780C95645B8C656024DB', $result[0]->binned );
+
+		// Invalid UUID strings return NULL.
+		$result = $this->assertQuery( "SELECT UUID_TO_BIN('not-a-uuid') AS binned" );
+		$this->assertNull( $result[0]->binned );
+
+		// NULL input returns NULL.
+		$result = $this->assertQuery( 'SELECT UUID_TO_BIN(NULL) AS binned' );
+		$this->assertNull( $result[0]->binned );
+	}
+
+	public function testBinToUuidFunction(): void {
+		// Round-trip with and without the swap flag.
+		$result = $this->assertQuery( "SELECT BIN_TO_UUID(UUID_TO_BIN('6CCD780C-BABA-1026-9564-5B8C656024DB')) AS uuid" );
+		$this->assertSame( '6ccd780c-baba-1026-9564-5b8c656024db', $result[0]->uuid );
+
+		$result = $this->assertQuery( "SELECT BIN_TO_UUID(UUID_TO_BIN('6ccd780c-baba-1026-9564-5b8c656024db', 1), 1) AS uuid" );
+		$this->assertSame( '6ccd780c-baba-1026-9564-5b8c656024db', $result[0]->uuid );
+
+		// Values that are not 16 bytes long return NULL.
+		$result = $this->assertQuery( "SELECT BIN_TO_UUID('short') AS uuid" );
+		$this->assertNull( $result[0]->uuid );
+
+		// NULL input returns NULL.
+		$result = $this->assertQuery( 'SELECT BIN_TO_UUID(NULL) AS uuid' );
+		$this->assertNull( $result[0]->uuid );
+	}
+
+	public function testIsUuidFunction(): void {
+		$result = $this->assertQuery( "SELECT IS_UUID('6ccd780c-baba-1026-9564-5b8c656024db') AS valid" );
+		$this->assertSame( '1', $result[0]->valid );
+
+		$result = $this->assertQuery( "SELECT IS_UUID('not-a-uuid') AS valid" );
+		$this->assertSame( '0', $result[0]->valid );
+
+		// NULL input returns NULL.
+		$result = $this->assertQuery( 'SELECT IS_UUID(NULL) AS valid' );
+		$this->assertNull( $result[0]->valid );
+	}
+
+	public function testRandomBytesFunction(): void {
+		// Measured via HEX() because SQLite LENGTH() stops at the first
+		// zero byte of the TEXT-typed random bytes.
+		$result = $this->assertQuery( 'SELECT LENGTH(HEX(RANDOM_BYTES(16))) AS len' );
+		$this->assertSame( '32', $result[0]->len );
+
+		// Lengths outside MySQL's 1-1024 range return NULL.
+		$result = $this->assertQuery( 'SELECT RANDOM_BYTES(0) AS bytes' );
+		$this->assertNull( $result[0]->bytes );
+
+		$result = $this->assertQuery( 'SELECT RANDOM_BYTES(1025) AS bytes' );
+		$this->assertNull( $result[0]->bytes );
+
+		// NULL input returns NULL.
+		$result = $this->assertQuery( 'SELECT RANDOM_BYTES(NULL) AS bytes' );
+		$this->assertNull( $result[0]->bytes );
+	}
+
+	public function testCompressFunctions(): void {
+		$text = 'hello world, hello world, hello world';
+
+		// Round-trip: UNCOMPRESS(COMPRESS(x)) = x.
+		$result = $this->assertQuery( "SELECT UNCOMPRESS(COMPRESS('$text')) AS text" );
+		$this->assertSame( $text, $result[0]->text );
+
+		// The stored header reports the original length.
+		$result = $this->assertQuery( "SELECT UNCOMPRESSED_LENGTH(COMPRESS('$text')) AS len" );
+		$this->assertSame( (string) strlen( $text ), $result[0]->len );
+
+		// MySQL docs example: LENGTH(COMPRESS(REPEAT('a', 1000))) = 21.
+		// Measured via HEX() because SQLite LENGTH() stops at the first
+		// zero byte of the TEXT-typed compressed value.
+		$long   = str_repeat( 'a', 1000 );
+		$result = $this->assertQuery( "SELECT LENGTH(HEX(COMPRESS('$long'))) AS len" );
+		$this->assertSame( '42', $result[0]->len );
+
+		// The fetched value carries all 21 bytes.
+		$result = $this->assertQuery( "SELECT COMPRESS('$long') AS compressed" );
+		$this->assertSame( 21, strlen( $result[0]->compressed ) );
+
+		// Invalid compressed data returns NULL without emitting a PHP warning.
+		$warnings = array();
+		set_error_handler(
+			static function ( $level, $message ) use ( &$warnings ) {
+				if ( E_WARNING === $level || E_NOTICE === $level ) {
+					$warnings[] = $message;
+					return true;
+				}
+				return false;
+			}
+		);
+		try {
+			$result = $this->assertQuery( "SELECT UNCOMPRESS('zzzzzzzzzzzzzzzz') AS text" );
+		} finally {
+			restore_error_handler();
+		}
+		$this->assertNull( $result[0]->text );
+		$this->assertSame( array(), $warnings );
+
+		// NULL input returns NULL.
+		$result = $this->assertQuery( 'SELECT UNCOMPRESS(NULL) AS text' );
+		$this->assertNull( $result[0]->text );
+
+		$result = $this->assertQuery( 'SELECT UNCOMPRESSED_LENGTH(NULL) AS len' );
+		$this->assertNull( $result[0]->len );
+
+		$result = $this->assertQuery( 'SELECT COMPRESS(NULL) AS compressed' );
+		$this->assertNull( $result[0]->compressed );
 	}
 
 	public function testSubstringFunction(): void {

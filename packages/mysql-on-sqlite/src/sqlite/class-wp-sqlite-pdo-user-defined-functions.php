@@ -79,6 +79,22 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'utc_date'                     => 'utc_date',
 		'utc_time'                     => 'utc_time',
 		'utc_timestamp'                => 'utc_timestamp',
+		'sha1'                         => 'sha1',
+		'sha2'                         => 'sha2',
+		'crc32'                        => 'crc32',
+		'conv'                         => 'conv',
+		'oct'                          => 'oct',
+		'bin'                          => 'bin',
+		'bit_count'                    => 'bit_count',
+		'uuid'                         => 'uuid',
+		'uuid_short'                   => 'uuid_short',
+		'uuid_to_bin'                  => 'uuid_to_bin',
+		'bin_to_uuid'                  => 'bin_to_uuid',
+		'is_uuid'                      => 'is_uuid',
+		'random_bytes'                 => 'random_bytes',
+		'compress'                     => 'compress',
+		'uncompress'                   => 'uncompress',
+		'uncompressed_length'          => 'uncompressed_length',
 		'version'                      => 'version',
 		'reverse'                      => 'reverse',
 
@@ -109,6 +125,20 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * @var int|null
 	 */
 	private $rand_last_seed = null;
+
+	/**
+	 * Last-seen server startup time for UUID_SHORT().
+	 *
+	 * @var int|null
+	 */
+	private $uuid_short_boot_time = null;
+
+	/**
+	 * Per-connection counter for UUID_SHORT().
+	 *
+	 * @var int
+	 */
+	private $uuid_short_counter = 0;
 
 	/**
 	 * Clear any per-statement state held by the UDFs.
@@ -891,6 +921,637 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 */
 	public function utc_timestamp() {
 		return gmdate( 'Y-m-d H:i:s', time() );
+	}
+
+	/**
+	 * Method to emulate MySQL SHA1() function.
+	 *
+	 * Returns the 40-character hexadecimal SHA-1 digest of the argument.
+	 * Returns NULL if the argument is NULL.
+	 *
+	 * @param string|null $str The string to hash.
+	 *
+	 * @return string|null SHA-1 hex digest, or NULL.
+	 */
+	public function sha1( $str ) {
+		if ( null === $str ) {
+			return null;
+		}
+		return sha1( (string) $str );
+	}
+
+	/**
+	 * Method to emulate MySQL SHA2() function.
+	 *
+	 * Returns the hexadecimal SHA-2 digest of the argument using the given
+	 * hash length in bits. A hash length of 0 is equivalent to 256, matching
+	 * MySQL. Any other value than 224, 256, 384, 512, or 0 returns NULL,
+	 * as does a NULL argument.
+	 *
+	 * @param string|null $str         The string to hash.
+	 * @param int|null    $hash_length One of 224, 256, 384, 512, or 0.
+	 *
+	 * @return string|null SHA-2 hex digest, or NULL.
+	 */
+	public function sha2( $str, $hash_length ) {
+		if ( null === $str || null === $hash_length ) {
+			return null;
+		}
+		switch ( (int) $hash_length ) {
+			case 224:
+				$algo = 'sha224';
+				break;
+			case 0:
+			case 256:
+				$algo = 'sha256';
+				break;
+			case 384:
+				$algo = 'sha384';
+				break;
+			case 512:
+				$algo = 'sha512';
+				break;
+			default:
+				return null;
+		}
+		return hash( $algo, (string) $str );
+	}
+
+	/**
+	 * Method to emulate MySQL CRC32() function.
+	 *
+	 * Computes a cyclic redundancy check value and returns it as an
+	 * unsigned 32-bit integer. Returns NULL if the argument is NULL.
+	 *
+	 * The value is returned as a numeric string: the SQLite UDF bridge
+	 * truncates PHP integers to 32-bit signed values, which would corrupt
+	 * checksums at or above 2^31.
+	 *
+	 * @param string|null $str The string to checksum.
+	 *
+	 * @return string|null CRC32 value, or NULL.
+	 */
+	public function crc32( $str ) {
+		if ( null === $str ) {
+			return null;
+		}
+		return (string) crc32( (string) $str );
+	}
+
+	/**
+	 * Method to emulate MySQL CONV() function.
+	 *
+	 * Converts numbers between different number bases, returning a string
+	 * representation of the number N converted from base from_base to base
+	 * to_base. Bases range from -36 to 36, excluding -1, 0, and 1; anything
+	 * else returns NULL, as does a NULL argument.
+	 *
+	 * A negative from_base treats N as a signed number: positive values past
+	 * INT64_MAX saturate, matching MySQL's strtoll-style parsing. A negative
+	 * to_base renders the value as signed, prefixing '-' for values with the
+	 * high bit set. Digits past the first invalid character are ignored, and
+	 * a value with no valid digits converts as 0, matching MySQL.
+	 *
+	 * The conversion walks digits in 32-bit halves so results stay exact
+	 * past 2^53, where PHP's base_convert() loses precision.
+	 *
+	 * @param mixed $n         The number, as an integer or string.
+	 * @param mixed $from_base The base to convert from.
+	 * @param mixed $to_base   The base to convert to.
+	 *
+	 * @return string|null Converted number, or NULL.
+	 */
+	public function conv( $n, $from_base, $to_base ) {
+		if ( null === $n || null === $from_base || null === $to_base ) {
+			return null;
+		}
+		$from     = (int) $from_base;
+		$to       = (int) $to_base;
+		$from_abs = $from < 0 ? -$from : $from;
+		$to_abs   = $to < 0 ? -$to : $to;
+		if ( $from_abs < 2 || $from_abs > 36 || $to_abs < 2 || $to_abs > 36 ) {
+			return null;
+		}
+
+		$s        = trim( (string) $n );
+		$negative = false;
+		if ( '' !== $s && ( '-' === $s[0] || '+' === $s[0] ) ) {
+			$negative = '-' === $s[0];
+			$s        = substr( $s, 1 );
+		}
+
+		$digits = array();
+		$length = strlen( $s );
+		for ( $i = 0; $i < $length; $i++ ) {
+			$c = $s[ $i ];
+			if ( $c >= '0' && $c <= '9' ) {
+				$d = ord( $c ) - 48;
+			} elseif ( $c >= 'a' && $c <= 'z' ) {
+				$d = ord( $c ) - 87;
+			} elseif ( $c >= 'A' && $c <= 'Z' ) {
+				$d = ord( $c ) - 55;
+			} else {
+				break;
+			}
+			if ( $d >= $from_abs ) {
+				break;
+			}
+			$digits[] = $d;
+		}
+
+		list( $hi, $lo ) = $this->uint64_parse_digits( $digits, $from_abs );
+		if ( $negative ) {
+			list( $hi, $lo ) = $this->uint64_neg( $hi, $lo );
+		} elseif ( $from < 0 && $hi >= 2147483648 ) {
+			// Signed interpretation saturates positive overflow at INT64_MAX.
+			$hi = 2147483647;
+			$lo = 4294967295;
+		}
+
+		if ( $to < 0 && $hi >= 2147483648 ) {
+			list( $magnitude_hi, $magnitude_lo ) = $this->uint64_neg( $hi, $lo );
+			return '-' . $this->uint64_to_base( $magnitude_hi, $magnitude_lo, $to_abs );
+		}
+		return $this->uint64_to_base( $hi, $lo, $to_abs );
+	}
+
+	/**
+	 * Method to emulate MySQL OCT() function.
+	 *
+	 * Returns an octal representation of N, equivalent to CONV(N, 10, 8).
+	 * Negative values wrap as unsigned 64-bit integers. Returns NULL if N
+	 * is NULL. Fractional values truncate toward zero.
+	 *
+	 * @param mixed $n The number to convert.
+	 *
+	 * @return string|null Octal representation, or NULL.
+	 */
+	public function oct( $n ) {
+		if ( null === $n ) {
+			return null;
+		}
+		list( $hi, $lo ) = $this->coerce_to_uint64( $n );
+		return $this->uint64_to_base( $hi, $lo, 8 );
+	}
+
+	/**
+	 * Method to emulate MySQL BIN() function.
+	 *
+	 * Returns a binary representation of N, equivalent to CONV(N, 10, 2).
+	 * Negative values wrap as unsigned 64-bit integers. Returns NULL if N
+	 * is NULL. Fractional values truncate toward zero.
+	 *
+	 * @param mixed $n The number to convert.
+	 *
+	 * @return string|null Binary representation, or NULL.
+	 */
+	public function bin( $n ) {
+		if ( null === $n ) {
+			return null;
+		}
+		list( $hi, $lo ) = $this->coerce_to_uint64( $n );
+		return $this->uint64_to_base( $hi, $lo, 2 );
+	}
+
+	/**
+	 * Method to emulate MySQL BIT_COUNT() function.
+	 *
+	 * Returns the number of bits set in the argument as an unsigned
+	 * 64-bit integer. Returns NULL if the argument is NULL.
+	 *
+	 * @param mixed $n The value to count bits in.
+	 *
+	 * @return int|null Number of set bits, or NULL.
+	 */
+	public function bit_count( $n ) {
+		if ( null === $n ) {
+			return null;
+		}
+		list( $hi, $lo ) = $this->coerce_to_uint64( $n );
+		return substr_count( decbin( $hi ), '1' ) + substr_count( decbin( $lo ), '1' );
+	}
+
+	/**
+	 * Method to emulate MySQL UUID() function.
+	 *
+	 * Returns a version 4 universally unique identifier as a 36-character
+	 * lowercase string, generated from cryptographic randomness. Returns
+	 * NULL if no randomness is available.
+	 *
+	 * @return string|null UUID string, or NULL.
+	 */
+	public function uuid() {
+		try {
+			$bytes = random_bytes( 16 );
+		} catch ( Exception $e ) {
+			return null;
+		}
+		$hex = bin2hex( $bytes );
+		// Set the version (4) and RFC 4122 variant (10xx) bits.
+		$hex[12] = '4';
+		$hex[16] = dechex( 8 + ( hexdec( $hex[16] ) & 3 ) );
+		return substr( $hex, 0, 8 ) . '-' . substr( $hex, 8, 4 ) . '-' . substr( $hex, 12, 4 ) . '-' . substr( $hex, 16, 4 ) . '-' . substr( $hex, 20, 12 );
+	}
+
+	/**
+	 * Method to emulate MySQL UUID_SHORT() function.
+	 *
+	 * Returns a 64-bit unsigned integer built the way MySQL documents it:
+	 * (server_id & 255) << 56 plus (server startup time in seconds << 24)
+	 * plus a counter that increments on every call. The server id is 1
+	 * here since this driver has no MySQL server id of its own, and the
+	 * startup time is captured on first use per connection, and the counter
+	 * starts at a random 24-bit value so two connections whose first call
+	 * lands in the same second are unlikely to collide. That is weaker than
+	 * MySQL, which keeps one counter for the whole server; a strict
+	 * guarantee would need a counter shared through the database. Values
+	 * increase across calls and are not stable across restarts, matching
+	 * MySQL's documented nondeterminism.
+	 *
+	 * The value is returned as a numeric string: the SQLite UDF bridge
+	 * truncates PHP integers to 32-bit signed values, which cannot carry
+	 * a 64-bit identifier.
+	 *
+	 * @return string Universal short id.
+	 */
+	public function uuid_short() {
+		if ( null === $this->uuid_short_boot_time ) {
+			$this->uuid_short_boot_time = time();
+			/*
+			 * MySQL keeps one startup time and one counter for the whole
+			 * server, so its values are unique across connections. Each
+			 * connection here gets its own UDF instance, and most requests
+			 * open their own connection, so two requests whose first call
+			 * lands in the same second would otherwise produce identical
+			 * sequences. Seeding the counter randomly makes that collision
+			 * unlikely without pretending to guarantee it.
+			 */
+			if ( function_exists( 'random_int' ) ) {
+				try {
+					$this->uuid_short_counter = random_int( 0, 0xFFFFFF );
+				} catch ( Exception $e ) {
+					$this->uuid_short_counter = mt_rand( 0, 0xFFFFFF );
+				}
+			} else {
+				$this->uuid_short_counter = mt_rand( 0, 0xFFFFFF );
+			}
+		}
+		$value = ( ( 1 & 255 ) << 56 ) + ( ( $this->uuid_short_boot_time & 0xFFFFFF ) << 24 ) + ( $this->uuid_short_counter & 0xFFFFFF );
+		++$this->uuid_short_counter;
+		return (string) $value;
+	}
+
+	/**
+	 * Method to emulate MySQL UUID_TO_BIN() function.
+	 *
+	 * Converts a 36-character UUID string to its 16-byte binary form.
+	 * A nonzero swap flag moves the time-high field ahead of the time-low
+	 * field, matching MySQL's index-friendly layout. Returns NULL for NULL
+	 * input or for strings that are not valid UUIDs.
+	 *
+	 * @param string|null $uuid      UUID string.
+	 * @param mixed       $swap_flag Nonzero to swap the time fields.
+	 *
+	 * @return string|null 16-byte binary UUID, or NULL.
+	 */
+	public function uuid_to_bin( $uuid, $swap_flag = 0 ) {
+		if ( null === $uuid || null === $swap_flag ) {
+			return null;
+		}
+		$hex = strtolower( str_replace( '-', '', (string) $uuid ) );
+		if ( 32 !== strlen( $hex ) || 1 !== preg_match( '/^[0-9a-f]{32}$/', $hex ) ) {
+			return null;
+		}
+		if ( 0 !== (int) $swap_flag ) {
+			$hex = substr( $hex, 12, 4 ) . substr( $hex, 8, 4 ) . substr( $hex, 0, 8 ) . substr( $hex, 16, 16 );
+		}
+		$bin = hex2bin( $hex );
+		if ( false === $bin ) {
+			return null;
+		}
+		return $bin;
+	}
+
+	/**
+	 * Method to emulate MySQL BIN_TO_UUID() function.
+	 *
+	 * Converts a 16-byte binary UUID back to its 36-character lowercase
+	 * string form. A nonzero swap flag reverses the UUID_TO_BIN() time
+	 * field swap. Returns NULL for NULL input or for values that are not
+	 * exactly 16 bytes long.
+	 *
+	 * @param string|null $bin       16-byte binary UUID.
+	 * @param mixed       $swap_flag Nonzero to reverse the time field swap.
+	 *
+	 * @return string|null UUID string, or NULL.
+	 */
+	public function bin_to_uuid( $bin, $swap_flag = 0 ) {
+		if ( null === $bin || null === $swap_flag ) {
+			return null;
+		}
+		$bin = (string) $bin;
+		if ( 16 !== strlen( $bin ) ) {
+			return null;
+		}
+		$hex = bin2hex( $bin );
+		if ( 0 !== (int) $swap_flag ) {
+			$hex = substr( $hex, 8, 8 ) . substr( $hex, 4, 4 ) . substr( $hex, 0, 4 ) . substr( $hex, 16, 16 );
+		}
+		return substr( $hex, 0, 8 ) . '-' . substr( $hex, 8, 4 ) . '-' . substr( $hex, 12, 4 ) . '-' . substr( $hex, 16, 4 ) . '-' . substr( $hex, 20, 12 );
+	}
+
+	/**
+	 * Method to emulate MySQL IS_UUID() function.
+	 *
+	 * Returns 1 when the argument is a valid string-format UUID
+	 * (32 hexadecimal digits in 8-4-4-4-12 groups), 0 when it is not, and
+	 * NULL when the argument is NULL.
+	 *
+	 * @param string|null $str The value to check.
+	 *
+	 * @return int|null 1 or 0, or NULL.
+	 */
+	public function is_uuid( $str ) {
+		if ( null === $str ) {
+			return null;
+		}
+		return 1 === preg_match( '/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/', (string) $str ) ? 1 : 0;
+	}
+
+	/**
+	 * Method to emulate MySQL RANDOM_BYTES() function.
+	 *
+	 * Returns a binary string of the requested number of cryptographically
+	 * secure random bytes. MySQL accepts lengths from 1 to 1024; anything
+	 * else returns NULL here instead of raising an error, as does NULL
+	 * input or unavailable randomness.
+	 *
+	 * @param mixed $len Number of bytes to generate.
+	 *
+	 * @return string|null Random bytes, or NULL.
+	 */
+	public function random_bytes( $len ) {
+		if ( null === $len ) {
+			return null;
+		}
+		$len = (int) $len;
+		if ( $len < 1 || $len > 1024 ) {
+			return null;
+		}
+		try {
+			return random_bytes( $len );
+		} catch ( Exception $e ) {
+			return null;
+		}
+	}
+
+	/**
+	 * Method to emulate MySQL COMPRESS() function.
+	 *
+	 * Compresses a string with zlib and prefixes it with the 4-byte
+	 * little-endian uncompressed length, matching MySQL's byte layout so
+	 * UNCOMPRESS() and UNCOMPRESSED_LENGTH() can read it back. An empty
+	 * string compresses to an empty string, matching MySQL. Returns NULL
+	 * for NULL input.
+	 *
+	 * Note that the SQLite UDF bridge returns the compressed bytes as TEXT,
+	 * so SQLite LENGTH() stops at the first zero byte of the 4-byte header.
+	 * Measure compressed sizes with LENGTH(HEX(...)) or in PHP instead.
+	 *
+	 * @param string|null $str The string to compress.
+	 *
+	 * @return string|null Compressed binary string, or NULL.
+	 */
+	public function compress( $str ) {
+		if ( null === $str ) {
+			return null;
+		}
+		$str = (string) $str;
+		if ( '' === $str ) {
+			return '';
+		}
+		$compressed = gzcompress( $str );
+		if ( false === $compressed ) {
+			return null;
+		}
+		return pack( 'V', strlen( $str ) ) . $compressed;
+	}
+
+	/**
+	 * Method to emulate MySQL UNCOMPRESS() function.
+	 *
+	 * Uncompresses a string compressed by COMPRESS(). Returns NULL for NULL
+	 * input, for inputs shorter than the 4-byte length header, and for
+	 * inputs that fail zlib decompression.
+	 *
+	 * @param string|null $str The compressed string.
+	 *
+	 * @return string|null Uncompressed string, or NULL.
+	 */
+	public function uncompress( $str ) {
+		if ( null === $str ) {
+			return null;
+		}
+		$str = (string) $str;
+		if ( '' === $str ) {
+			return '';
+		}
+		if ( strlen( $str ) < 4 ) {
+			return null;
+		}
+		$failed = false;
+		set_error_handler(
+			static function () use ( &$failed ) {
+				$failed = true;
+				return true;
+			}
+		);
+		try {
+			$uncompressed = gzuncompress( substr( $str, 4 ) );
+		} finally {
+			restore_error_handler();
+		}
+		if ( $failed || false === $uncompressed ) {
+			return null;
+		}
+		return $uncompressed;
+	}
+
+	/**
+	 * Method to emulate MySQL UNCOMPRESSED_LENGTH() function.
+	 *
+	 * Returns the uncompressed length stored in the 4-byte header of a
+	 * string compressed by COMPRESS(), without decompressing it. Returns
+	 * NULL for NULL input and for inputs shorter than the header.
+	 *
+	 * @param string|null $str The compressed string.
+	 *
+	 * @return int|null Uncompressed length, or NULL.
+	 */
+	public function uncompressed_length( $str ) {
+		if ( null === $str ) {
+			return null;
+		}
+		$str = (string) $str;
+		if ( strlen( $str ) < 4 ) {
+			return null;
+		}
+		$length = unpack( 'V', substr( $str, 0, 4 ) );
+		return $length[1];
+	}
+
+	/**
+	 * Parse digit values into an unsigned 64-bit integer.
+	 *
+	 * The value is kept as two 32-bit words so the arithmetic stays exact
+	 * past 2^53. Overflow wraps modulo 2^64, matching MySQL's unsigned
+	 * 64-bit conversions.
+	 *
+	 * @param array $digits Digit values, most significant first.
+	 * @param int   $base   Number base, 2 to 36.
+	 *
+	 * @return array Array of two ints: high and low 32-bit words.
+	 */
+	private function uint64_parse_digits( $digits, $base ) {
+		$hi = 0;
+		$lo = 0;
+		foreach ( $digits as $d ) {
+			list( $hi, $lo ) = $this->uint64_mul_add( $hi, $lo, $base, $d );
+		}
+		return array( $hi, $lo );
+	}
+
+	/**
+	 * Compute (value * mult + add) modulo 2^64 on a hi/lo word pair.
+	 *
+	 * The multiplier and addend are small (at most 36 and 35), so the
+	 * intermediate low-word product always fits in a PHP integer exactly.
+	 *
+	 * @param int $hi   High 32-bit word.
+	 * @param int $lo   Low 32-bit word.
+	 * @param int $mult Multiplier.
+	 * @param int $add  Addend.
+	 *
+	 * @return array Array of two ints: high and low 32-bit words.
+	 */
+	private function uint64_mul_add( $hi, $lo, $mult, $add ) {
+		$total  = $lo * $mult + $add;
+		$carry  = intdiv( $total, 4294967296 );
+		$new_lo = $total % 4294967296;
+		$new_hi = ( $hi * $mult + $carry ) % 4294967296;
+		return array( $new_hi, $new_lo );
+	}
+
+	/**
+	 * Negate an unsigned 64-bit integer, i.e. compute 2^64 - value.
+	 *
+	 * @param int $hi High 32-bit word.
+	 * @param int $lo Low 32-bit word.
+	 *
+	 * @return array Array of two ints: high and low 32-bit words.
+	 */
+	private function uint64_neg( $hi, $lo ) {
+		if ( 0 === $hi && 0 === $lo ) {
+			return array( 0, 0 );
+		}
+		$new_lo = ( 4294967296 - $lo ) % 4294967296;
+		$borrow = 0 === $lo ? 0 : 1;
+		$new_hi = ( 4294967296 - $hi - $borrow ) % 4294967296;
+		return array( $new_hi, $new_lo );
+	}
+
+	/**
+	 * Render an unsigned 64-bit integer in the given base.
+	 *
+	 * Divides the hi/lo word pair down by repeated 64-by-32-bit division,
+	 * staying exact for the full 64-bit range.
+	 *
+	 * @param int $hi   High 32-bit word.
+	 * @param int $lo   Low 32-bit word.
+	 * @param int $base Number base, 2 to 36.
+	 *
+	 * @return string Uppercase digits in the given base.
+	 */
+	private function uint64_to_base( $hi, $lo, $base ) {
+		$digits = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+		if ( 0 === $hi && 0 === $lo ) {
+			return '0';
+		}
+		$out = '';
+		while ( 0 !== $hi || 0 !== $lo ) {
+			$quotient_hi = intdiv( $hi, $base );
+			$remainder   = $hi % $base;
+			// At most 35 * 2^32 + (2^32 - 1): fits exactly in an integer.
+			$combined    = $remainder * 4294967296 + $lo;
+			$quotient_lo = intdiv( $combined, $base );
+			$out         = $digits[ $combined % $base ] . $out;
+			$hi          = $quotient_hi;
+			$lo          = $quotient_lo;
+		}
+		return $out;
+	}
+
+	/**
+	 * Coerce a value to an unsigned 64-bit integer, like MySQL does when
+	 * OCT(), BIN(), or BIT_COUNT() receive their argument.
+	 *
+	 * Integers map to their two's complement bit pattern, floats truncate
+	 * toward zero, and strings parse as a decimal prefix (an optional sign
+	 * followed by digits; anything else converts as 0). Values wrap modulo
+	 * 2^64. Floats past 2^53 may lose precision; that is documented rather
+	 * than fixed, since SQL floats cannot carry 64-bit integers exactly.
+	 *
+	 * @param mixed $value The value to coerce.
+	 *
+	 * @return array Array of two ints: high and low 32-bit words.
+	 */
+	private function coerce_to_uint64( $value ) {
+		if ( is_int( $value ) ) {
+			if ( $value >= 0 ) {
+				return array( intdiv( $value, 4294967296 ), $value % 4294967296 );
+			}
+			return array( ( $value >> 32 ) & 0xFFFFFFFF, $value & 0xFFFFFFFF );
+		}
+		if ( is_float( $value ) ) {
+			if ( ! is_finite( $value ) ) {
+				return array( 0, 0 );
+			}
+			/*
+			 * Work on the magnitude and negate afterwards. Adding 2^64 to a
+			 * small negative value is inexact in double precision and rounds
+			 * to exactly 2^64, which produced a bogus high word (for example
+			 * BIT_COUNT(-1.5) reported 1 instead of 64).
+			 */
+			$negative  = $value < 0;
+			$magnitude = $negative ? -$value : $value;
+			$truncated = floor( $magnitude );
+			$truncated = fmod( $truncated, 18446744073709551616 );
+			$hi        = (int) floor( $truncated / 4294967296 );
+			$lo        = (int) ( $truncated - $hi * 4294967296 );
+			if ( $negative ) {
+				list( $hi, $lo ) = $this->uint64_neg( $hi, $lo );
+			}
+			return array( $hi, $lo );
+		}
+		$s        = trim( (string) $value );
+		$negative = false;
+		if ( '' !== $s && ( '-' === $s[0] || '+' === $s[0] ) ) {
+			$negative = '-' === $s[0];
+			$s        = substr( $s, 1 );
+		}
+		$digits = array();
+		$length = strlen( $s );
+		for ( $i = 0; $i < $length; $i++ ) {
+			if ( $s[ $i ] < '0' || $s[ $i ] > '9' ) {
+				break;
+			}
+			$digits[] = ord( $s[ $i ] ) - 48;
+		}
+		list( $hi, $lo ) = $this->uint64_parse_digits( $digits, 10 );
+		if ( $negative ) {
+			list( $hi, $lo ) = $this->uint64_neg( $hi, $lo );
+		}
+		return array( $hi, $lo );
 	}
 
 	/**
