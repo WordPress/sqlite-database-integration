@@ -7413,7 +7413,11 @@ class WP_MySQL_On_SQLite extends PDO {
 					$ast            = $this->create_parser( 'SELECT ' . $column['COLUMN_DEFAULT'] )->parse();
 					$expr           = $ast->get_first_descendant_node( 'selectItem' )->get_first_child_node();
 					$default_clause = $this->translate( $expr );
-					$query         .= sprintf( ' DEFAULT (%s)', $default_clause );
+					if ( 'BLOB' === $type ) {
+						// STRICT tables reject a TEXT default in a BLOB column.
+						$default_clause = sprintf( 'CAST(%s AS BLOB)', $default_clause );
+					}
+					$query .= sprintf( ' DEFAULT (%s)', $default_clause );
 				} else {
 					$query .= ' DEFAULT ' . $this->format_sqlite_column_default( $column );
 				}

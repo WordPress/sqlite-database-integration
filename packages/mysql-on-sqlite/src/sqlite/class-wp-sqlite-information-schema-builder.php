@@ -3381,6 +3381,9 @@ class WP_SQLite_Information_Schema_Builder {
 						}
 					}
 				}
+			} elseif ( WP_MySQL_Lexer::UNDERSCORE_CHARSET === $child->id ) {
+				// A charset introducer isn't part of the value.
+				continue;
 			} else {
 				$value = $child->get_value();
 			}

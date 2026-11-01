@@ -29,6 +29,11 @@ class WP_MySQL_Token_Tests extends TestCase {
 		$this->assertSame( "new\nline", self::first_token( "SELECT 'new\\nline'", 'TEXT_STRING' )->get_value() );
 	}
 
+	public function test_get_value_unquotes_national_strings(): void {
+		$this->assertSame( "a'b", self::first_token( "SELECT N'a''b'", 'NCHAR_STRING' )->get_value() );
+		$this->assertSame( "new\nline", self::first_token( "SELECT n'new\\nline'", 'NCHAR_STRING' )->get_value() );
+	}
+
 	public function test_get_value_honors_no_backslash_escapes_mode(): void {
 		$token = self::first_token( "SELECT 'a\\nb'", 'TEXT_STRING', array( 'NO_BACKSLASH_ESCAPES' ) );
 		$this->assertSame( 'a\\nb', $token->get_value() );

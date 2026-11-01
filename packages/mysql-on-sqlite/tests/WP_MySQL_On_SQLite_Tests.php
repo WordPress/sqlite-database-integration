@@ -818,6 +818,11 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			'empty text'         => array( 'varbinary(4)', "''", "''", '', '' ),
 			'text like a number' => array( 'varbinary(4)', "'0x41'", "'0x41'", '0x30783431', '30783431' ),
 			'text like a string' => array( 'varbinary(8)', "'x''41'''", "'x''41'''", '0x7827343127', '7827343127' ),
+			'binary introducer'  => array( 'varbinary(4)', "_binary'abc'", "'abc'", '0x616263', '616263' ),
+			'charset introducer' => array( 'varbinary(4)', "_utf8mb4'abc'", "'abc'", '0x616263', '616263' ),
+			'hex introducer'     => array( 'varbinary(4)', '_binary 0x616263', "'abc'", '0x616263', '616263' ),
+			'national string'    => array( 'varbinary(4)', "N'abc'", "'abc'", '0x616263', '616263' ),
+			'national quoted'    => array( 'varbinary(4)', "n'it''s'", "'it''s'", '0x69742773', '69742773' ),
 			'number'             => array( 'varbinary(4)', '5', "'5'", '0x35', '35' ),
 			'negative number'    => array( 'varbinary(4)', '-5', "'-5'", '0x2D35', '2D35' ),
 			'true'               => array( 'varbinary(4)', 'TRUE', "'1'", '0x31', '31' ),
@@ -838,6 +843,45 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$this->assertQuery( 'INSERT INTO t (id) VALUES (1)' );
 		$this->assertQuery( 'SELECT HEX(v) AS v FROM t' );
 		$this->assertSame( 'DEADBEEF', $this->last_result[0]->v );
+	}
+
+	/**
+	 * @dataProvider data_binary_column_generated_defaults
+	 */
+	public function testBinaryColumnGeneratedDefaults( string $column_type, string $default_value, string $expected_value ): void {
+		$this->assertQuery( "CREATE TABLE t (id INT PRIMARY KEY, v $column_type NOT NULL DEFAULT $default_value)" );
+
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (1)' );
+
+		$this->assertQuery( 'SELECT HEX(v) AS v FROM t' );
+		$this->assertSame( $expected_value, $this->last_result[0]->v );
+	}
+
+	public static function data_binary_column_generated_defaults(): array {
+		return array(
+			'varbinary text' => array( 'varbinary(4)', "('abc')", '616263' ),
+			'binary text'    => array( 'binary(3)', "('abc')", '616263' ),
+			'blob text'      => array( 'blob', "('abc')", '616263' ),
+			'hex'            => array( 'varbinary(4)', '(0x616263)', '616263' ),
+			'function'       => array( 'longblob', "(CONCAT('a', 'bc'))", '616263' ),
+			'number'         => array( 'varbinary(4)', '(1 + 1)', '32' ),
+		);
+	}
+
+	public function testTextColumnDefaultsWithPrefixes(): void {
+		$this->assertQuery(
+			"CREATE TABLE t (
+				id INT PRIMARY KEY,
+				a VARCHAR(8) NOT NULL DEFAULT _utf8mb4'abc',
+				b VARCHAR(8) NOT NULL DEFAULT N'it''s'
+			)"
+		);
+
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (1)' );
+
+		$this->assertQuery( 'SELECT a, b FROM t' );
+		$this->assertSame( 'abc', $this->last_result[0]->a );
+		$this->assertSame( "it's", $this->last_result[0]->b );
 	}
 
 	/**

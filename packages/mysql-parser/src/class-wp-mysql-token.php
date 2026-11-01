@@ -62,7 +62,15 @@ final class WP_MySQL_Token extends WP_Parser_Token {
 	 */
 	public function get_value(): string {
 		$value = $this->get_bytes();
-		if ( WP_MySQL_Lexer::TEXT_STRING === $this->id || WP_MySQL_Lexer::IDENT_QUOTED === $this->id ) {
+		if ( WP_MySQL_Lexer::NCHAR_STRING === $this->id ) {
+			// Remove the national string prefix.
+			$value = substr( $value, 1 );
+		}
+		if (
+			WP_MySQL_Lexer::TEXT_STRING === $this->id
+			|| WP_MySQL_Lexer::NCHAR_STRING === $this->id
+			|| WP_MySQL_Lexer::IDENT_QUOTED === $this->id
+		) {
 			// Remove bounding quotes.
 			$quote = $value[0];
 			$value = substr( $value, 1, -1 );
