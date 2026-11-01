@@ -258,8 +258,8 @@ class WP_MySQL_Session_Command_Test extends TestCase {
 		$current_message   = '';
 		$expected_sequence = 1;
 		while ( $offset < $total ) {
-			$length            = unpack( 'V', substr( $response, $offset, 3 ) . "\0" )[1];
-			$sequence_id       = ord( $response[ $offset + 3 ] );
+			$length      = unpack( 'V', substr( $response, $offset, 3 ) . "\0" )[1];
+			$sequence_id = ord( $response[ $offset + 3 ] );
 			$this->assertSame( $expected_sequence, $sequence_id );
 			$expected_sequence   = ( $expected_sequence + 1 ) & 0xff;
 			$wire_sequence_ids[] = $sequence_id;
