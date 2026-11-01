@@ -211,6 +211,89 @@ class WP_MySQL_Session_Command_Test extends TestCase {
 		$this->assertSame( MySQL_Session::CLOSE_LOGIN_FAILED, $session->get_close_reason() );
 	}
 
+	public function test_large_result_rows_are_split_across_packets(): void {
+		$this->iniSet( 'memory_limit', '512M' );
+
+		// 16,777,211 bytes + 4-byte 0xfd length prefix = 16,777,215 (exact MAX_PACKET_LENGTH).
+		$exact_value = str_repeat( 'a', MySQL_Protocol::MAX_PACKET_LENGTH - 4 );
+
+		// 16,777,212 bytes + 4-byte 0xfd length prefix = 16,777,216 (MAX_PACKET_LENGTH + 1).
+		$over_value = str_repeat( 'b', MySQL_Protocol::MAX_PACKET_LENGTH - 4 ) . 'Z';
+
+		$column  = array(
+			'name'     => 'v',
+			'length'   => MySQL_Protocol::MAX_PACKET_LENGTH + 16,
+			'type'     => MySQL_Protocol::FIELD_TYPE_LONG_BLOB,
+			'flags'    => 0,
+			'decimals' => 0,
+		);
+		$rows    = array(
+			(object) array( 'v' => $exact_value ),
+			(object) array( 'v' => $over_value ),
+		);
+		$result  = MySQL_Result::from_data( 0, 0, array( $column ), $rows );
+		$adapter = new class( $result ) implements Adapter {
+			/** @var MySQL_Result */
+			private $result;
+
+			public function __construct( MySQL_Result $result ) {
+				$this->result = $result;
+			}
+
+			public function handle_query( string $query ): MySQL_Result {
+				return $this->result;
+			}
+		};
+
+		$session  = $this->authenticated_session( $adapter );
+		$response = $session->receive_bytes(
+			MySQL_Protocol::build_packet( 0, chr( MySQL_Protocol::COM_QUERY ) . 'SELECT v FROM t' )
+		);
+
+		// Reassemble split MySQL logical messages from the wire stream.
+		$messages          = array();
+		$wire_sequence_ids = array();
+		$offset            = 0;
+		$total             = strlen( $response );
+		$current_message   = '';
+		$expected_sequence = 1;
+		while ( $offset < $total ) {
+			$length            = unpack( 'V', substr( $response, $offset, 3 ) . "\0" )[1];
+			$sequence_id       = ord( $response[ $offset + 3 ] );
+			$this->assertSame( $expected_sequence, $sequence_id );
+			$expected_sequence   = ( $expected_sequence + 1 ) & 0xff;
+			$wire_sequence_ids[] = $sequence_id;
+			$current_message    .= substr( $response, $offset + 4, $length );
+			$offset             += 4 + $length;
+			if ( MySQL_Protocol::MAX_PACKET_LENGTH !== $length ) {
+				$messages[]      = $current_message;
+				$current_message = '';
+			}
+		}
+
+		// Wire packets without CLIENT_DEPRECATE_EOF:
+		// 1=column count, 2=column def, 3=columns EOF, 4+5=row 1 (0xffffff + 0), 6+7=row 2 (0xffffff + 1), 8=rows EOF.
+		$this->assertSame( array( 1, 2, 3, 4, 5, 6, 7, 8 ), $wire_sequence_ids );
+		$this->assertCount( 6, $messages );
+		$this->assertSame( MySQL_Protocol::EOF_PACKET_HEADER, ord( $messages[2][0] ) );
+
+		$row1_offset = 0;
+		$this->assertSame( $exact_value, MySQL_Protocol::read_length_encoded_string( $messages[3], $row1_offset ) );
+		$this->assertSame( strlen( $messages[3] ), $row1_offset );
+
+		$row2_offset = 0;
+		$this->assertSame( $over_value, MySQL_Protocol::read_length_encoded_string( $messages[4], $row2_offset ) );
+		$this->assertSame( strlen( $messages[4] ), $row2_offset );
+
+		// Trailing packet is the EOF terminator (0xfe), not swallowed into row 1 or row 2.
+		$this->assertSame( MySQL_Protocol::EOF_PACKET_HEADER, ord( $messages[5][0] ) );
+
+		// A subsequent command on the same session remains synchronized.
+		$ping_response = $session->receive_bytes( MySQL_Protocol::build_packet( 0, chr( MySQL_Protocol::COM_PING ) ) );
+		$this->assertSame( 1, ord( $ping_response[3] ) );
+		$this->assertSame( MySQL_Protocol::OK_PACKET_HEADER, ord( $ping_response[4] ) );
+	}
+
 	private function authenticated_session( Adapter $adapter, ?Logger $logger = null ): MySQL_Session {
 		$session   = new MySQL_Session( $adapter, 1, new MySQL_Authentication( 'user', 'password' ), $logger );
 		$challenge = MySQL_Test_Client::challenge( $session->get_initial_handshake() );
