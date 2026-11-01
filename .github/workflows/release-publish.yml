@@ -84,6 +84,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CHANGELOG: ${{ steps.changelog.outputs.body }}
+          REPO_OWNER: ${{ github.repository_owner }}
+          REPO_NAME: ${{ github.event.repository.name }}
         run: |
           # Extract PR numbers from changelog links like [#123](...).
           # A changelog without matching links has no contributors to fetch.
@@ -92,7 +94,7 @@ jobs:
           CONTRIBUTORS=""
           if [ -n "$PR_NUMBERS" ]; then
             # Build a single GraphQL query to fetch all PR authors.
-            QUERY='{ repository(owner: "${{ github.repository_owner }}", name: "${{ github.event.repository.name }}") {'
+            QUERY="{ repository(owner: \"$REPO_OWNER\", name: \"$REPO_NAME\") {"
             while IFS= read -r PR; do
               [ -n "$PR" ] && QUERY="$QUERY pr$PR: pullRequest(number: $PR) { author { login } }"
             done <<< "$PR_NUMBERS"
@@ -110,9 +112,10 @@ jobs:
           MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
           BODY: ${{ steps.changelog.outputs.body }}
           CONTRIBUTORS: ${{ steps.contributors.outputs.list }}
+          PRERELEASE: ${{ steps.version.outputs.prerelease }}
         run: |
           PRERELEASE_FLAG=""
-          if [[ "${{ steps.version.outputs.prerelease }}" == "true" ]]; then
+          if [[ "$PRERELEASE" == "true" ]]; then
             PRERELEASE_FLAG="--prerelease"
           fi
 

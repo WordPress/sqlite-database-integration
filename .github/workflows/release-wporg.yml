@@ -53,7 +53,7 @@ jobs:
           TAG: ${{ steps.resolve.outputs.tag }}
         run: |
           gh release download "$TAG" \
-            --repo "${{ github.repository }}" \
+            --repo "$GITHUB_REPOSITORY" \
             --pattern "plugin-sqlite-database-integration.zip" \
             --dir .
           unzip plugin-sqlite-database-integration.zip
