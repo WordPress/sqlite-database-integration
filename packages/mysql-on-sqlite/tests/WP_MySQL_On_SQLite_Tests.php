@@ -1402,6 +1402,44 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		);
 	}
 
+	public function testShowTablesWithQuotedDatabaseIdentifier(): void {
+		$pdo_class    = PHP_VERSION_ID >= 80400 ? Pdo\Sqlite::class : PDO::class;
+		$this->sqlite = new $pdo_class( 'sqlite::memory:' );
+		$this->engine = new WP_MySQL_On_SQLite(
+			'mysql-on-sqlite:dbname=db`name',
+			null,
+			null,
+			array( 'sqlite_pdo' => $this->sqlite )
+		);
+		$this->engine->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
+
+		$this->assertQuery( 'CREATE TABLE `table name` (id INT)' );
+
+		$result = $this->assertQuery( 'SHOW TABLES' );
+		$this->assertSame( 'Tables_in_db`name', $this->last_statement->getColumnMeta( 0 )['name'] );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Tables_in_db`name' => 'table name',
+				),
+			),
+			$result
+		);
+
+		$result = $this->assertQuery( 'SHOW FULL TABLES FROM `db``name`' );
+		$this->assertSame( 'Tables_in_db`name', $this->last_statement->getColumnMeta( 0 )['name'] );
+		$this->assertSame( 'Table_type', $this->last_statement->getColumnMeta( 1 )['name'] );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Tables_in_db`name' => 'table name',
+					'Table_type'        => 'BASE TABLE',
+				),
+			),
+			$result
+		);
+	}
+
 	public function testShowTableStatusFrom() {
 		// Created in setUp() function
 		$this->assertQuery( 'DROP TABLE _options' );
@@ -8161,6 +8199,44 @@ QUERY
 		);
 	}
 
+	public function testCompoundPrimaryKeyWithAutoincrementAndQuotedIdentifiers(): void {
+		$this->assertQuery(
+			'CREATE TABLE `table ``name` (`id ``col` INT AUTO_INCREMENT, `name ``col` VARCHAR(32), PRIMARY KEY(`id ``col`, `name ``col`))'
+		);
+
+		$this->assertQuery( "INSERT INTO `table ``name` (`name ``col`) VALUES ('A'), ('B')" );
+
+		// Rebuilding the table via ALTER TABLE must also quote the generated index identifier.
+		$this->assertQuery( 'ALTER TABLE `table ``name` ADD COLUMN extra INT DEFAULT 0' );
+		$this->assertQuery( "INSERT INTO `table ``name` (`name ``col`) VALUES ('C')" );
+
+		$results = $this->assertQuery( 'SELECT `id ``col`, `name ``col` FROM `table ``name` ORDER BY `id ``col`' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id `col'   => '1',
+					'name `col' => 'A',
+				),
+				(object) array(
+					'id `col'   => '2',
+					'name `col' => 'B',
+				),
+				(object) array(
+					'id `col'   => '3',
+					'name `col' => 'C',
+				),
+			),
+			$results
+		);
+
+		$result = $this->engine
+			->execute_sqlite_query( "SELECT * FROM pragma_index_list('table `name')" )
+			->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertCount( 1, $result );
+		$this->assertSame( '_wp_sqlite_table `name__primary', $result[0]['name'] );
+		$this->assertSame( '1', (string) $result[0]['unique'] );
+	}
+
 	/**
 	 * @dataProvider getReservedPrefixTestData
 	 */
@@ -10544,6 +10620,19 @@ END;
 		$this->assertQuery( 'CREATE TEMPORARY TABLE t3 (id INT)' );
 		$this->assertQuery( 'LOCK TABLES t1 READ, t2 READ, t3 WRITE' );
 		$this->assertQuery( 'UNLOCK TABLES' );
+	}
+
+	public function testLockTablesWithQuotedIdentifiers(): void {
+		$this->assertQuery( 'CREATE TABLE `table name` (id INT)' );
+		$this->assertQuery( 'CREATE TABLE `select` (id INT)' );
+		$this->assertQuery( 'CREATE TEMPORARY TABLE `temp``table` (id INT)' );
+
+		$this->assertQuery( 'LOCK TABLES `table name` READ, `select` WRITE, `temp``table` WRITE' );
+		$this->assertQuery( 'UNLOCK TABLES' );
+
+		$this->expectException( 'WP_MySQL_On_SQLite_Exception' );
+		$this->expectExceptionMessage( "Table 'wp.missing table' doesn't exist" );
+		$this->assertQuery( 'LOCK TABLES `missing table` READ' );
 	}
 
 	public function testTransactionSavepoints(): void {
