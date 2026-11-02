@@ -600,8 +600,8 @@ class WP_SQLite_Information_Schema_Reconstructor {
 		// BLOB literals (string). E.g.: x'1a2f', X'1A2F'
 		// Checking the prefix is enough as SQLite doesn't allow malformed values.
 		if ( str_starts_with( $uppercase_default_value, "X'" ) ) {
-			// Convert the hex string to ASCII bytes.
-			return "'" . pack( 'H*', substr( $default_value, 2, -1 ) ) . "'";
+			// Convert the hex string to bytes, and quote them as a string literal.
+			return $this->quote_mysql_utf8_string_literal( pack( 'H*', substr( $default_value, 2, -1 ) ) );
 		}
 
 		// Unquoted string literal. E.g.: abc
