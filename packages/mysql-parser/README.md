@@ -37,6 +37,30 @@ $tokens = ( new WP_MySQL_Lexer( 'SELECT 1 + 2' ) )->remaining_tokens();
 $ast    = $parser->parse( $tokens );
 ```
 
+## Tokens and AST nodes
+AST nodes and tokens use the names from the official MySQL grammar (`sql/sql_yacc.yy`):
+
+- **Nodes** are named after grammar rules, such as `select_item` or `simple_expr`.
+- **Keywords** are looked up by their SQL spelling in `WP_MySQL_Lexer::KEYWORDS`,
+  which is generated from the MySQL keyword list (`sql/lex.h`). Like MySQL, the lexer
+  emits a few of them as other terminals: `||` as `OR2_SYM` (without `PIPES_AS_CONCAT`),
+  `NOT` as `NOT2_SYM` (with `HIGH_NOT_PRECEDENCE`), and `WITH ROLLUP` as `WITH_ROLLUP_SYM`.
+- **Other tokens** are `WP_MySQL_Lexer` constants named after their grammar terminals,
+  such as `IDENT`, `TEXT_STRING`, `NUM`, or `EQ` (`=`).
+- **Single-character terminals**, which the grammar writes as a quoted character
+  like `'('`, are named after the character, such as `LEFT_PAREN`, `COMMA`, or `ASTERISK`.
+
+```php
+$ast->get_descendant_nodes( 'select_item' );                               // A grammar rule.
+$ast->get_first_descendant_token( WP_MySQL_Lexer::KEYWORDS['DISTINCT'] ); // A keyword.
+$ast->get_first_descendant_token( WP_MySQL_Lexer::IDENT );                 // A grammar terminal.
+$ast->get_first_descendant_token( WP_MySQL_Lexer::ASTERISK );              // A single character.
+```
+
+Token IDs are the grammar's own token numbers. Like in MySQL, the token stream of
+valid input ends with `END_OF_INPUT` and `YYEOF`. For debugging, `$token->get_name()`
+returns a readable token name.
+
 ## Development
 This package includes the full grammar compilation pipeline. The generated artifacts
 are committed to the repository, and they only need to be regenerated on grammar
