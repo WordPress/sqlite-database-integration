@@ -2301,7 +2301,10 @@ class WP_MySQL_On_SQLite extends PDO {
 							* can handle persistent and temporary tables in one query.
 							*/
 							$this->execute_sqlite_query(
-								sprintf( 'SELECT 1 FROM %s LIMIT 0', $table_name )
+								sprintf(
+									'SELECT 1 FROM %s LIMIT 0',
+									$this->quote_sqlite_identifier( $table_name )
+								)
 							);
 						} catch ( PDOException $e ) {
 							throw $this->new_table_not_found_exception(
@@ -3722,19 +3725,20 @@ class WP_MySQL_On_SQLite extends PDO {
 		$is_full      = $command_type && $command_type->has_child_token( WP_MySQL_Lexer::FULL_SYMBOL );
 
 		// Fetch table information.
-		$table_tables = $this->information_schema_builder->get_table_name(
+		$table_tables        = $this->information_schema_builder->get_table_name(
 			false, // SHOW TABLES lists only non-temporary tables.
 			'tables'
 		);
-		$query        = sprintf(
+		$tables_column_alias = $this->quote_sqlite_identifier( 'Tables_in_' . $database );
+		$query               = sprintf(
 			'SELECT %s FROM %s WHERE table_schema = ? %s ORDER BY table_name',
 			$is_full
-				? sprintf( 'table_name AS `Tables_in_%s`, table_type AS `Table_type`', $database )
-				: sprintf( 'table_name AS `Tables_in_%s`', $database ),
+				? sprintf( 'table_name AS %s, table_type AS `Table_type`', $tables_column_alias )
+				: sprintf( 'table_name AS %s', $tables_column_alias ),
 			$this->quote_sqlite_identifier( $table_tables ),
 			$condition ?? ''
 		);
-		$params       = array(
+		$params              = array(
 			$this->get_saved_db_name( $database ),
 		);
 
@@ -7451,7 +7455,7 @@ class WP_MySQL_On_SQLite extends PDO {
 						$sqlite_index_name      = $this->get_sqlite_index_name( $table_name, 'primary' );
 						$create_index_queries[] = sprintf(
 							'CREATE UNIQUE INDEX %s ON %s (%s)',
-							self::RESERVED_PREFIX . $sqlite_index_name,
+							$this->quote_sqlite_identifier( self::RESERVED_PREFIX . $sqlite_index_name ),
 							$this->quote_sqlite_identifier( $table_name ),
 							implode( ', ', $column_list )
 						);
