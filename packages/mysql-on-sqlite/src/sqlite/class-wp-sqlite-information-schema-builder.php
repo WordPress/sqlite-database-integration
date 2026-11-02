@@ -3347,23 +3347,21 @@ class WP_SQLite_Information_Schema_Builder {
 		}
 
 		$value         = '';
-		$last_token_id = null;
-		foreach ( $node->get_descendant_tokens() as $i => $token ) {
-			// Do not insert whitespace around parentheses. This is primarily to
-			// avoid inserting whitespace before '(', which may break function
-			// calls, depending on the value of the "IGNORE_SPACE" SQL mode.
-			if (
-				0 === $i
-				|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $token->id
+		$last_no_space = true;
+		foreach ( $node->get_descendant_tokens() as $token ) {
+			// Do not insert whitespace around parentheses and dots. Before '(',
+			// whitespace may break function calls, depending on the value of the
+			// "IGNORE_SPACE" SQL mode. Around '.', it changes how qualified names
+			// are lexed: "t . 1" has a number, and "order . id" has a keyword.
+			$no_space = WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $token->id
 				|| WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $token->id
-				|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $last_token_id
-				|| WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $last_token_id
-			) {
-				$value .= $token->get_bytes();
-			} else {
-				$value .= ' ' . $token->get_bytes();
+				|| WP_MySQL_Lexer::DOT_SYMBOL === $token->id;
+
+			if ( ! $no_space && ! $last_no_space ) {
+				$value .= ' ';
 			}
-			$last_token_id = $token->id;
+			$value        .= $token->get_bytes();
+			$last_no_space = $no_space;
 		}
 		return $value;
 	}
