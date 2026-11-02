@@ -879,13 +879,12 @@ class WP_SQLite_Information_Schema_Builder {
 	}
 
 	/**
-	 * Get the bytes of a BINARY or VARBINARY column default.
+	 * Get the bytes of a BINARY or VARBINARY default from a hex or bit literal.
 	 *
-	 * Defaults are stored as "0x..." hex literals. In tables from older versions,
-	 * they can also be any other hex or bit literal as written, or the bytes of
-	 * a text default.
+	 * Older driver versions stored these defaults as written, so this also reads
+	 * any other value as the bytes of a text default, for their migration.
 	 *
-	 * @param  string $default_value A stored default, or a hex or bit literal.
+	 * @param  string $default_value A hex or bit literal, or a default stored by an older version.
 	 * @return string                The default value bytes.
 	 */
 	public static function get_binary_default_bytes( string $default_value ): string {

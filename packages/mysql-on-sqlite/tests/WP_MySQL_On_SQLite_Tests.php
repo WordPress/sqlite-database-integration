@@ -948,14 +948,14 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		);
 		$statement->execute( array( $stored_default ) );
 
+		// The driver upgrade migrates the default and recreates the table.
+		$this->reconnectAfterDriverUpgrade();
+
 		$this->assertQuery( 'SHOW CREATE TABLE t' );
 		$this->assertStringContainsString(
 			"`v` varbinary(16) NOT NULL DEFAULT $expected_create_default,",
 			$this->last_result[0]->{'Create Table'}
 		);
-
-		// A table rebuild writes the column default to SQLite as bytes.
-		$this->assertQuery( 'ALTER TABLE t MODIFY COLUMN id BIGINT' );
 		$this->assertQuery( 'INSERT INTO t (id) VALUES (1)' );
 		$this->assertQuery( 'SELECT HEX(v) AS v FROM t' );
 		$this->assertSame( $expected_value, $this->last_result[0]->v );

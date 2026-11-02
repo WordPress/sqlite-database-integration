@@ -7906,8 +7906,8 @@ class WP_MySQL_On_SQLite extends PDO {
 		}
 
 		// A BLOB column in a STRICT table only accepts a BLOB default.
-		if ( 'binary' === $column['DATA_TYPE'] || 'varbinary' === $column['DATA_TYPE'] ) {
-			$bytes = WP_SQLite_Information_Schema_Builder::get_binary_default_bytes( $column['COLUMN_DEFAULT'] );
+		$bytes = $this->get_binary_column_default_bytes( $column );
+		if ( null !== $bytes ) {
 			return sprintf( "x'%s'", bin2hex( $bytes ) );
 		}
 
@@ -7926,16 +7926,36 @@ class WP_MySQL_On_SQLite extends PDO {
 			return $column['COLUMN_DEFAULT'];
 		}
 
-		// Like MySQL, use a hex literal for bytes that aren't valid utf8mb3,
+		// Like MySQL, keep the hex literal for bytes that aren't valid utf8mb3,
 		// i.e., UTF-8 with no characters above U+FFFF.
-		if ( 'binary' === $column['DATA_TYPE'] || 'varbinary' === $column['DATA_TYPE'] ) {
-			$bytes = WP_SQLite_Information_Schema_Builder::get_binary_default_bytes( $column['COLUMN_DEFAULT'] );
+		$bytes = $this->get_binary_column_default_bytes( $column );
+		if ( null !== $bytes ) {
 			return 1 === preg_match( '/\A[\x{0}-\x{FFFF}]*\z/u', $bytes )
 				? $this->quote_mysql_utf8_string_literal( $bytes )
-				: '0x' . strtoupper( bin2hex( $bytes ) );
+				: $column['COLUMN_DEFAULT'];
 		}
 
 		return $this->quote_mysql_utf8_string_literal( $column['COLUMN_DEFAULT'] );
+	}
+
+	/**
+	 * Get the bytes of a BINARY or VARBINARY column default.
+	 *
+	 * These defaults are stored as "0x..." hex literals, or as an empty string.
+	 * The forms that older driver versions stored are migrated to this format.
+	 *
+	 * @param  array       $column The information schema column data.
+	 * @return string|null         The default value bytes, or null when the column
+	 *                             is not binary or its default is not migrated.
+	 */
+	private function get_binary_column_default_bytes( array $column ): ?string {
+		if (
+			( 'binary' !== $column['DATA_TYPE'] && 'varbinary' !== $column['DATA_TYPE'] )
+			|| 1 !== preg_match( '/\A(?:0x((?:[0-9A-F]{2})+))?\z/', $column['COLUMN_DEFAULT'], $matches )
+		) {
+			return null;
+		}
+		return hex2bin( $matches[1] ?? '' );
 	}
 
 	/**
