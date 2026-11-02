@@ -813,6 +813,8 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			'bit number'         => array( 'varbinary(4)', '0b01000001', "'A'", '0x41', '41' ),
 			'zero bytes'         => array( 'binary(2)', "x'0000'", "'\\0\\0'", '0x0000', '0000' ),
 			'escaped zero bytes' => array( 'binary(2)', "'\\0\\0'", "'\\0\\0'", '0x0000', '0000' ),
+			'3-byte utf-8'       => array( 'varbinary(4)', '0xE282AC', "'€'", '0xE282AC', 'E282AC' ),
+			'4-byte utf-8'       => array( 'varbinary(4)', '0xF09F9880', '0xF09F9880', '0xF09F9880', 'F09F9880' ),
 			'text'               => array( 'varbinary(4)', "'F'", "'F'", '0x46', '46' ),
 			'quoted text'        => array( 'varbinary(4)', "'it''s'", "'it''s'", '0x69742773', '69742773' ),
 			'empty text'         => array( 'varbinary(4)', "''", "''", '', '' ),

@@ -7926,10 +7926,11 @@ class WP_MySQL_On_SQLite extends PDO {
 			return $column['COLUMN_DEFAULT'];
 		}
 
-		// Like MySQL, use a hex literal for bytes that aren't valid UTF-8.
+		// Like MySQL, use a hex literal for bytes that aren't valid utf8mb3,
+		// i.e., UTF-8 with no characters above U+FFFF.
 		if ( 'binary' === $column['DATA_TYPE'] || 'varbinary' === $column['DATA_TYPE'] ) {
 			$bytes = WP_SQLite_Information_Schema_Builder::get_binary_default_bytes( $column['COLUMN_DEFAULT'] );
-			return 1 === preg_match( '//u', $bytes )
+			return 1 === preg_match( '/\A[\x{0}-\x{FFFF}]*\z/u', $bytes )
 				? $this->quote_mysql_utf8_string_literal( $bytes )
 				: '0x' . strtoupper( bin2hex( $bytes ) );
 		}
