@@ -6437,6 +6437,15 @@ class WP_MySQL_On_SQLite extends PDO {
 			if ( null === $expr ) {
 				// Emulate "column = DEFAULT".
 				$value = null === $default ? 'NULL' : $this->format_sqlite_column_default( $column_info );
+
+				/*
+				 * A stored YEAR default is already a year, such as '2000' or '0000',
+				 * so don't read it as a string, which would turn '0' into 2000.
+				 * Older driver versions stored both DEFAULT 0 and DEFAULT '0' as '0'.
+				 */
+				if ( null !== $default && 'year' === strtolower( $data_type ) ) {
+					$value = sprintf( 'CAST(%s AS INTEGER)', $value );
+				}
 			} else {
 				$value = $this->translate( $expr );
 			}
@@ -7079,20 +7088,38 @@ class WP_MySQL_On_SQLite extends PDO {
 					 * The YEAR type in MySQL only uses 1 byte and therefore
 					 * covers only 256 values from 1901 to 2155 included.
 					 * Additionally:
-					 *   - Numbers from 0 to 69 correspond to years 2000 to 2069.
+					 *   - Numbers from 1 to 69 correspond to years 2001 to 2069.
 					 *   - Numbers from 70 to 99 correspond to years 1970 to 1999.
+					 *   - The number 0 is the year 0000.
+					 *   - A string whose number rounds to 0 is the year 2000, unless
+					 *     it is 4 bytes long. E.g., '0', '00', or '0.0' is 2000, but
+					 *     '0000' is 0000. Like MySQL, the conversion skips leading
+					 *     spaces and tabs, and it needs a number at the start.
 					 */
 					return sprintf(
 						"(
 							SELECT CASE
 								WHEN value IS NULL THEN NULL
+								WHEN typeof(raw) = 'text'
+									AND ROUND(CAST(raw AS REAL)) = 0
+									AND LENGTH(CAST(raw AS BLOB)) <> 4
+									AND (
+										trimmed GLOB '[0-9]*'
+										OR trimmed GLOB '.[0-9]*'
+										OR trimmed GLOB '[+-][0-9]*'
+										OR trimmed GLOB '[+-].[0-9]*'
+									)
+									THEN 2000
 								WHEN value = 0 THEN '0000'
 								WHEN value BETWEEN 1901 AND 2155 THEN value
 								WHEN value BETWEEN 1 AND 69 THEN 2000 + value
 								WHEN value BETWEEN 70 AND 99 THEN 1900 + value
 								ELSE %s
 							END
-							FROM (SELECT CAST(%s AS INTEGER) AS value)
+							FROM (
+								SELECT raw, CAST(raw AS INTEGER) AS value, LTRIM(raw, ' ' || CHAR(9)) AS trimmed
+								FROM (SELECT %s AS raw)
+							)
 						)",
 						$is_strict_mode
 							? sprintf( "THROW('Out of range value: ''' || %s || '''')", $translated_value )

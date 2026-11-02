@@ -93,7 +93,7 @@ class WP_SQLite_Information_Schema_Reconstructor {
 			 */
 			$this->record_drop_table( $table );
 
-			$this->schema_builder->record_create_table( $ast );
+			$this->schema_builder->record_reconstructed_table( $ast );
 		}
 
 		// Remove information schema records for tables that don't exist.

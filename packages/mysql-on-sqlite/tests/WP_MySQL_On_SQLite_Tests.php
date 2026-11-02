@@ -7154,8 +7154,8 @@ QUERY
 					"  `col_string_zero` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',",
 					"  `col_time_string_zero` time NOT NULL DEFAULT '00:00:00',",
 					"  `col_year_false` year NOT NULL DEFAULT '0000',",
-					"  `col_year_string_zero` year NOT NULL DEFAULT '0',",
-					"  `col_year_string_double_zero` year NOT NULL DEFAULT '00',",
+					"  `col_year_string_zero` year NOT NULL DEFAULT '2000',",
+					"  `col_year_string_double_zero` year NOT NULL DEFAULT '2000',",
 					'  `col_expression` datetime NOT NULL DEFAULT (0),',
 					"  `col_int` int NOT NULL DEFAULT '0',",
 					"  `col_varchar` varchar(10) NOT NULL DEFAULT '0',",
@@ -7225,6 +7225,193 @@ QUERY
 		);
 	}
 
+	/**
+	 * @dataProvider yearZeroValues
+	 */
+	public function testSavesYearZeroValues( string $value, string $expected_year ): void {
+		$this->assertQuery( 'CREATE TABLE _tmp_table (id INT NOT NULL, y YEAR, source VARCHAR(10))' );
+
+		// A number stored in the VARCHAR column becomes a string, so only strings are read from it.
+		$is_string = "'" === $value[0] || 0 === strpos( $value, 'CONCAT(' );
+
+		foreach ( array( 'STRICT_TRANS_TABLES', '' ) as $sql_mode ) {
+			$this->assertQuery( "SET sql_mode = '$sql_mode'" );
+			$this->assertQuery( 'DELETE FROM _tmp_table' );
+
+			// INSERT and UPDATE with the value.
+			$this->assertQuery( "INSERT INTO _tmp_table (id, y) VALUES (1, $value)" );
+			$this->assertQuery( 'INSERT INTO _tmp_table (id, y) VALUES (2, 1999)' );
+			$this->assertQuery( "UPDATE _tmp_table SET y = $value WHERE id = 2" );
+
+			// INSERT ... SELECT and UPDATE with the value read from a column.
+			if ( $is_string ) {
+				$this->assertQuery( "INSERT INTO _tmp_table (id, y, source) VALUES (3, 1999, $value)" );
+				$this->assertQuery( 'UPDATE _tmp_table SET y = source WHERE id = 3' );
+				$this->assertQuery( 'INSERT INTO _tmp_table (id, y) SELECT 4, source FROM _tmp_table WHERE id = 3' );
+			}
+
+			$this->assertQuery( 'SELECT y FROM _tmp_table ORDER BY id' );
+			$this->assertSame(
+				array_fill( 0, $is_string ? 4 : 2, $expected_year ),
+				array_column( $this->last_result, 'y' ),
+				"SQL mode: '$sql_mode'"
+			);
+		}
+	}
+
+	public static function yearZeroValues(): array {
+		/*
+		 * MySQL stores a string whose number rounds to 0 as the year 2000, unless
+		 * the string is 4 bytes long. The number 0 is the year 0000.
+		 * The expected values are from MySQL 8.0.46.
+		 */
+		return array(
+			'number 0'        => array( '0', '0000' ),
+			'number 0.4'      => array( '0.4', '0000' ),
+			'number 0e0'      => array( '0e0', '0000' ),
+			'FALSE'           => array( 'FALSE', '0000' ),
+			"'0'"             => array( "'0'", '2000' ),
+			"'00'"            => array( "'00'", '2000' ),
+			"'000'"           => array( "'000'", '2000' ),
+			"'00000'"         => array( "'00000'", '2000' ),
+			"'0.0'"           => array( "'0.0'", '2000' ),
+			"'.0'"            => array( "'.0'", '2000' ),
+			"'0.4'"           => array( "'0.4'", '2000' ),
+			"'0e0'"           => array( "'0e0'", '2000' ),
+			"'-0'"            => array( "'-0'", '2000' ),
+			"'+0'"            => array( "'+0'", '2000' ),
+			"' 0'"            => array( "' 0'", '2000' ),
+			"'0 '"            => array( "'0 '", '2000' ),
+			'tab and 0'       => array( "CONCAT(CHAR(9), '0')", '2000' ),
+			"CONCAT('0', '')" => array( "CONCAT('0', '')", '2000' ),
+			"'0000'"          => array( "'0000'", '0000' ),
+			"'0.00'"          => array( "'0.00'", '0000' ),
+			"'5'"             => array( "'5'", '2005' ),
+			"'70'"            => array( "'70'", '1970' ),
+		);
+	}
+
+	public function testSavesYearStringsWithoutNumberAsZero(): void {
+		$this->assertQuery( 'CREATE TABLE _tmp_table (id INT NOT NULL, y YEAR)' );
+
+		// MySQL reads these as 0000 in non-strict mode, as no number starts the string.
+		$this->assertQuery( "SET sql_mode = ''" );
+		$this->assertQuery(
+			"INSERT INTO _tmp_table (id, y) VALUES
+				(1, 'abc'),
+				(2, ''),
+				(3, '-'),
+				(4, CONCAT(CHAR(10), '0')),
+				(5, '0abc'),
+				(6, '00abc')"
+		);
+
+		$this->assertQuery( 'SELECT y FROM _tmp_table ORDER BY id' );
+		$this->assertSame(
+			array( '0000', '0000', '0000', '0000', '0000', '2000' ),
+			array_column( $this->last_result, 'y' )
+		);
+	}
+
+	public function testYearStringZeroDefaults(): void {
+		$this->assertQuery(
+			"CREATE TABLE _tmp_table (
+				id INT NOT NULL,
+				year_zero YEAR NOT NULL DEFAULT '0',
+				year_double_zero YEAR NOT NULL DEFAULT '00',
+				year_decimal_zero YEAR NOT NULL DEFAULT '0.0',
+				year_padded_zero YEAR NOT NULL DEFAULT ' 0',
+				year_four_zeros YEAR NOT NULL DEFAULT '0000',
+				year_four_char_zero YEAR NOT NULL DEFAULT '0.00',
+				year_number_zero YEAR NOT NULL DEFAULT 0,
+				year_altered YEAR NOT NULL DEFAULT '1999'
+			)"
+		);
+		$this->assertQuery( "ALTER TABLE _tmp_table ALTER COLUMN year_altered SET DEFAULT '0'" );
+
+		$this->assertQuery( 'SHOW CREATE TABLE _tmp_table' );
+		$this->assertSame(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `_tmp_table` (',
+					'  `id` int NOT NULL,',
+					"  `year_zero` year NOT NULL DEFAULT '2000',",
+					"  `year_double_zero` year NOT NULL DEFAULT '2000',",
+					"  `year_decimal_zero` year NOT NULL DEFAULT '2000',",
+					"  `year_padded_zero` year NOT NULL DEFAULT '2000',",
+					"  `year_four_zeros` year NOT NULL DEFAULT '0000',",
+					"  `year_four_char_zero` year NOT NULL DEFAULT '0000',",
+					"  `year_number_zero` year NOT NULL DEFAULT '0000',",
+					"  `year_altered` year NOT NULL DEFAULT '2000'",
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$this->last_result[0]->{'Create Table'}
+		);
+
+		$this->assertQuery(
+			"SELECT column_name, column_default FROM information_schema.columns
+			WHERE table_name = '_tmp_table' AND column_name IN ('year_zero', 'year_four_zeros')
+			ORDER BY ordinal_position"
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'COLUMN_NAME'    => 'year_zero',
+					'COLUMN_DEFAULT' => '2000',
+				),
+				(object) array(
+					'COLUMN_NAME'    => 'year_four_zeros',
+					'COLUMN_DEFAULT' => '0000',
+				),
+			),
+			$this->last_result
+		);
+
+		// New rows get the defaults, and so does "column = DEFAULT".
+		$this->assertQuery( 'INSERT INTO _tmp_table (id) VALUES (1)' );
+		$this->assertQuery( "INSERT INTO _tmp_table (id, year_zero) VALUES (2, '1999')" );
+		$this->assertQuery( 'UPDATE _tmp_table SET year_zero = DEFAULT WHERE id = 2' );
+		$this->assertQuery( 'SELECT * FROM _tmp_table ORDER BY id' );
+		$expected_row = array(
+			'year_zero'           => '2000',
+			'year_double_zero'    => '2000',
+			'year_decimal_zero'   => '2000',
+			'year_padded_zero'    => '2000',
+			'year_four_zeros'     => '0000',
+			'year_four_char_zero' => '0000',
+			'year_number_zero'    => '0000',
+			'year_altered'        => '2000',
+		);
+		$this->assertEquals(
+			array(
+				(object) array_merge( array( 'id' => '1' ), $expected_row ),
+				(object) array_merge( array( 'id' => '2' ), $expected_row ),
+			),
+			$this->last_result
+		);
+	}
+
+	public function testUpdateToStoredYearZeroDefault(): void {
+		// Driver 3.1.x and older stored both DEFAULT 0 and DEFAULT '0' of a YEAR column as '0'.
+		$this->assertQuery( 'CREATE TABLE _tmp_table (id INT PRIMARY KEY, y YEAR NOT NULL DEFAULT 0)' );
+		$this->sqlite->exec(
+			"UPDATE _wp_sqlite_mysql_information_schema_columns
+			SET column_default = '0'
+			WHERE table_name = '_tmp_table' AND column_name = 'y'"
+		);
+		$this->assertQuery( 'OPTIMIZE TABLE _tmp_table' );
+
+		// Setting the column to its default still stores 0000, not 2000.
+		$this->assertQuery( 'INSERT INTO _tmp_table (id, y) VALUES (1, 1999), (2, 1999)' );
+		$this->assertQuery( 'UPDATE _tmp_table SET y = DEFAULT WHERE id = 1' );
+		$this->assertQuery( 'INSERT INTO _tmp_table (id, y) VALUES (2, 1999) ON DUPLICATE KEY UPDATE y = DEFAULT' );
+
+		$this->assertQuery( 'SELECT y FROM _tmp_table ORDER BY id' );
+		$this->assertSame( array( '0000', '0000' ), array_column( $this->last_result, 'y' ) );
+	}
+
 	public function testAlterTableWithTemporalZeroDefaults(): void {
 		$this->assertQuery(
 			'CREATE TABLE _tmp_table (
@@ -7266,7 +7453,7 @@ QUERY
 					"  `updated_on` date NOT NULL DEFAULT '0000-00-00',",
 					"  `duration` time(2) NOT NULL DEFAULT '00:00:00.00',",
 					"  `year_number` year NOT NULL DEFAULT '0000',",
-					"  `year_string` year NOT NULL DEFAULT '0',",
+					"  `year_string` year NOT NULL DEFAULT '2000',",
 					"  `parenthesized_zero` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',",
 					"  `false_value` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',",
 					"  `string_zero` time NOT NULL DEFAULT '00:00:00',",
