@@ -935,7 +935,6 @@ end"
 "select ""stmt 1"";select ""stmt 2 terminated"";"
 "select ""stmt 1"";select ""stmt 2 terminated, comment""; /* comment */"
 "select ""stmt 1"";select ""stmt 2 terminated, space"";      "
-"select 1ea10.1a20,1e+ 1e+10 from 1ea10"
 "select 2;
 select 3;
 select 4"
