@@ -1754,6 +1754,21 @@ class WP_MySQL_On_SQLite_Translation_Tests extends TestCase {
 		);
 	}
 
+	public function testNationalStringLiterals(): void {
+		$this->assertQuery(
+			"SELECT 'abc' AS `abc`",
+			"SELECT N'abc'"
+		);
+		$this->assertQuery(
+			"SELECT 'it''s' AS `it's`",
+			"SELECT n'it''s'"
+		);
+		$this->assertQuery(
+			"SELECT '0 OR 1=1' AS `0 OR 1=1`",
+			"SELECT N'0 OR 1=1'"
+		);
+	}
+
 	public function testSystemVariables(): void {
 		$this->assertQuery(
 			"SELECT 'ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION' AS `@@sql_mode`",

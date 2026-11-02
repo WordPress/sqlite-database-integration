@@ -4383,7 +4383,7 @@ class WP_MySQL_On_SQLite extends PDO {
 				}
 				return $value;
 			case 'textStringLiteral':
-				return $this->translate_string_literal( $node );
+				return $this->translate_string_literal( $node->get_first_child_token() );
 			case 'dataType':
 			case 'nchar':
 				$child = $node->get_first_child();
@@ -4607,6 +4607,9 @@ class WP_MySQL_On_SQLite extends PDO {
 					return sprintf( "x'%s'", $hex );
 				}
 				return $value;
+			case WP_MySQL_Lexer::NCHAR_TEXT:
+				// A national string, such as N'abc', is a regular string in SQLite.
+				return $this->translate_string_literal( $token );
 			case WP_MySQL_Lexer::AUTO_INCREMENT_SYMBOL:
 				return 'AUTOINCREMENT';
 			case WP_MySQL_Lexer::BINARY_SYMBOL:
@@ -4657,11 +4660,10 @@ class WP_MySQL_On_SQLite extends PDO {
 	/**
 	 * Translate a MySQL string literal to SQLite.
 	 *
-	 * @param  WP_Parser_Node $node The "textStringLiteral" AST node.
-	 * @return string               The translated value.
+	 * @param  WP_MySQL_Token $token The string literal token.
+	 * @return string                The translated value.
 	 */
-	private function translate_string_literal( WP_Parser_Node $node ): string {
-		$token = $node->get_first_child_token();
+	private function translate_string_literal( WP_MySQL_Token $token ): string {
 		$value = $token->get_value();
 
 		/*
@@ -5591,6 +5593,7 @@ class WP_MySQL_On_SQLite extends PDO {
 		 *
 		 * Descend the AST until we reach a textStringLiteral. If at any level
 		 * we don't have a single child node, bail out; it's not a bare literal.
+		 * A national string, such as N'abc', is a single NCHAR_TEXT token.
 		 */
 		$current = $node;
 		while ( 'textStringLiteral' !== $current->rule_name ) {
@@ -5600,7 +5603,10 @@ class WP_MySQL_On_SQLite extends PDO {
 			}
 			$current = $children[0];
 		}
-		if ( 'textStringLiteral' === $current->rule_name ) {
+		if (
+			'textStringLiteral' === $current->rule_name
+			|| ( 1 === count( $current->get_children() ) && $current->has_child_token( WP_MySQL_Lexer::NCHAR_TEXT ) )
+		) {
 			$alias = $current->get_first_child_token()->get_value();
 
 			// When the literal value contains a NULL byte, MySQL truncates the
@@ -7413,7 +7419,11 @@ class WP_MySQL_On_SQLite extends PDO {
 					$ast            = $this->create_parser( 'SELECT ' . $column['COLUMN_DEFAULT'] )->parse();
 					$expr           = $ast->get_first_descendant_node( 'selectItem' )->get_first_child_node();
 					$default_clause = $this->translate( $expr );
-					$query         .= sprintf( ' DEFAULT (%s)', $default_clause );
+					if ( 'BLOB' === $type ) {
+						// STRICT tables reject a TEXT default in a BLOB column.
+						$default_clause = sprintf( 'CAST(%s AS BLOB)', $default_clause );
+					}
+					$query .= sprintf( ' DEFAULT (%s)', $default_clause );
 				} else {
 					$query .= ' DEFAULT ' . $this->format_sqlite_column_default( $column );
 				}
@@ -7899,6 +7909,12 @@ class WP_MySQL_On_SQLite extends PDO {
 			return (string) bindec( substr( $column['COLUMN_DEFAULT'], 2, -1 ) );
 		}
 
+		// A BLOB column in a STRICT table only accepts a BLOB default.
+		$bytes = $this->get_binary_column_default_bytes( $column );
+		if ( null !== $bytes ) {
+			return sprintf( "x'%s'", bin2hex( $bytes ) );
+		}
+
 		return $this->quote_sqlite_value( $column['COLUMN_DEFAULT'] );
 	}
 
@@ -7914,7 +7930,36 @@ class WP_MySQL_On_SQLite extends PDO {
 			return $column['COLUMN_DEFAULT'];
 		}
 
+		// Like MySQL, keep the hex literal for bytes that aren't valid utf8mb3,
+		// i.e., UTF-8 with no characters above U+FFFF.
+		$bytes = $this->get_binary_column_default_bytes( $column );
+		if ( null !== $bytes ) {
+			return 1 === preg_match( '/\A[\x{0}-\x{FFFF}]*\z/u', $bytes )
+				? $this->quote_mysql_utf8_string_literal( $bytes )
+				: $column['COLUMN_DEFAULT'];
+		}
+
 		return $this->quote_mysql_utf8_string_literal( $column['COLUMN_DEFAULT'] );
+	}
+
+	/**
+	 * Get the bytes of a BINARY or VARBINARY column default.
+	 *
+	 * These defaults are stored as "0x..." hex literals, or as an empty string.
+	 * The forms that older driver versions stored are migrated to this format.
+	 *
+	 * @param  array       $column The information schema column data.
+	 * @return string|null         The default value bytes, or null when the column
+	 *                             is not binary or its default is not migrated.
+	 */
+	private function get_binary_column_default_bytes( array $column ): ?string {
+		if (
+			( 'binary' !== $column['DATA_TYPE'] && 'varbinary' !== $column['DATA_TYPE'] )
+			|| 1 !== preg_match( '/\A(?:0x((?:[0-9A-F]{2})+))?\z/', $column['COLUMN_DEFAULT'], $matches )
+		) {
+			return null;
+		}
+		return hex2bin( $matches[1] ?? '' );
 	}
 
 	/**

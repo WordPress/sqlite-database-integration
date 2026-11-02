@@ -504,6 +504,38 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 		);
 	}
 
+	public function testBlobDefaultValueEscaping(): void {
+		$this->engine->get_connection()->query(
+			"
+			CREATE TABLE t (
+				col1 blob DEFAULT x'69742773', -- it's
+				col2 blob DEFAULT x'615c6e62', -- a\\nb
+				col3 blob DEFAULT x'610a62',   -- a, newline, b
+				col4 blob DEFAULT x'00ff',     -- not UTF-8
+				last blob -- See the comment in testDefaultValueEscaping().
+			)
+		"
+		);
+
+		$this->reconstructor->ensure_correct_information_schema();
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertSame(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `t` (',
+					"  `col1` varbinary(65535) DEFAULT 'it''s',",
+					"  `col2` varbinary(65535) DEFAULT 'a\\\\nb',",
+					"  `col3` varbinary(65535) DEFAULT 'a\\nb',",
+					'  `col4` varbinary(65535) DEFAULT 0x00FF,',
+					'  `last` blob DEFAULT NULL',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$result[0]->{'Create Table'}
+		);
+	}
+
 	public function testInvalidDataTypeCacheDataForDecimalDefinition(): void {
 		// Recreate the invalid database state before the following fix:
 		//   https://github.com/WordPress/sqlite-database-integration/pull/126

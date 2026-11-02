@@ -345,6 +345,11 @@ class WP_SQLite_Configurator {
 			$this->migrate_datetime_precision();
 			$this->migrate_temporal_zero_defaults();
 		}
+
+		// Fix binary column defaults stored by versions <= 3.1.2.
+		if ( version_compare( $saved_version, '3.1.2', '<=' ) ) {
+			$this->migrate_binary_defaults();
+		}
 	}
 
 	/**
@@ -484,7 +489,7 @@ class WP_SQLite_Configurator {
 				);
 			}
 
-			$alter_list = array();
+			$defaults = array();
 			foreach ( $repaired_columns as $column ) {
 				// Preserve numeric and string types so comparisons apply the same
 				// SQLite conversion as when the defaults were stored.
@@ -502,26 +507,95 @@ class WP_SQLite_Configurator {
 						: array( $column['zero_value'] )
 				);
 
-				$alter_list[] = sprintf(
-					'ALTER COLUMN `%s` SET DEFAULT %s',
-					str_replace( '`', '``', $column['name'] ),
-					$this->driver->quote( $column['zero_value'] )
-				);
+				$defaults[ $column['name'] ] = $this->driver->quote( $column['zero_value'] );
 			}
+			$this->recreate_table( $table_name, $defaults );
+		}
+	}
 
-			// ALTER TABLE stores the new defaults, and it recreates the table to apply them.
-			try {
-				$this->driver->query(
-					sprintf( 'ALTER TABLE `%s` %s', str_replace( '`', '``', $table_name ), implode( ', ', $alter_list ) )
-				);
-			} catch ( WP_MySQL_On_SQLite_Exception $e ) {
-				throw new WP_MySQL_On_SQLite_Exception(
-					$this->driver,
-					sprintf( 'Failed to recreate table "%s": %s', $table_name, $e->getMessage() ),
-					$e->getCode(),
-					$e
-				);
+	/**
+	 * Migrate binary column defaults stored by older driver versions.
+	 *
+	 * Older driver versions stored BINARY and VARBINARY defaults as written, such
+	 * as x'00', while MySQL stores their bytes in hex, such as 0x00. They also gave
+	 * the SQLite tables TEXT defaults for these and for binary expression defaults,
+	 * which STRICT tables reject in BLOB columns, so inserts omitting them failed.
+	 */
+	private function migrate_binary_defaults(): void {
+		$columns_table = $this->driver->get_connection()->quote_identifier(
+			$this->schema_builder->get_table_name( false, 'columns' )
+		);
+
+		$columns = $this->driver->execute_sqlite_query(
+			sprintf(
+				"SELECT c.TABLE_NAME, c.COLUMN_NAME, c.DATA_TYPE, c.COLUMN_DEFAULT, c.EXTRA, p.dflt_value
+				FROM %s AS c
+				JOIN pragma_table_info(c.TABLE_NAME, 'main') AS p ON c.COLUMN_NAME = p.name
+				WHERE c.TABLE_SCHEMA = ?
+				AND c.DATA_TYPE IN ('binary', 'varbinary', 'tinyblob', 'blob', 'mediumblob', 'longblob')
+				AND c.COLUMN_DEFAULT IS NOT NULL",
+				$columns_table
+			),
+			array( WP_SQLite_Information_Schema_Builder::SAVED_DATABASE_NAME )
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$table_defaults = array();
+		foreach ( $columns as $column ) {
+			$table_name     = $column['TABLE_NAME'];
+			$sqlite_default = (string) $column['dflt_value'];
+			if ( str_contains( $column['EXTRA'], 'DEFAULT_GENERATED' ) ) {
+				// Recreating the table casts the expression to BLOB.
+				if ( 1 !== preg_match( '/\ACAST\(.* AS BLOB\)\z/s', $sqlite_default ) ) {
+					$table_defaults[ $table_name ] = $table_defaults[ $table_name ] ?? array();
+				}
+			} elseif ( 'binary' === $column['DATA_TYPE'] || 'varbinary' === $column['DATA_TYPE'] ) {
+				// A literal default is stored as "0x..." and used as "x'...'" in SQLite.
+				if (
+					1 !== preg_match( '/\A(?:0x(?:[0-9A-F]{2})+)?\z/', $column['COLUMN_DEFAULT'] )
+					|| 1 !== preg_match( "/\A[xX]'[0-9a-fA-F]*'\z/", $sqlite_default )
+				) {
+					$bytes = WP_SQLite_Information_Schema_Builder::get_binary_default_bytes( $column['COLUMN_DEFAULT'] );
+
+					$table_defaults[ $table_name ][ $column['COLUMN_NAME'] ] = '' === $bytes ? "''" : '0x' . bin2hex( $bytes );
+				}
 			}
+		}
+
+		foreach ( $table_defaults as $table_name => $defaults ) {
+			$this->recreate_table( $table_name, $defaults );
+		}
+	}
+
+	/**
+	 * Recreate a table with new column defaults.
+	 *
+	 * ALTER TABLE stores the new defaults, and it recreates the table to apply them.
+	 * Without new defaults, ALTER TABLE ... FORCE only recreates the table.
+	 *
+	 * @param string $table_name The table name.
+	 * @param array  $defaults   The new defaults as MySQL literals, keyed by column name.
+	 */
+	private function recreate_table( string $table_name, array $defaults ): void {
+		$alter_list = array();
+		foreach ( $defaults as $column_name => $default ) {
+			$alter_list[] = sprintf( 'ALTER COLUMN `%s` SET DEFAULT %s', str_replace( '`', '``', $column_name ), $default );
+		}
+
+		try {
+			$this->driver->query(
+				sprintf(
+					'ALTER TABLE `%s` %s',
+					str_replace( '`', '``', $table_name ),
+					count( $alter_list ) > 0 ? implode( ', ', $alter_list ) : 'FORCE'
+				)
+			);
+		} catch ( WP_MySQL_On_SQLite_Exception $e ) {
+			throw new WP_MySQL_On_SQLite_Exception(
+				$this->driver,
+				sprintf( 'Failed to recreate table "%s": %s', $table_name, $e->getMessage() ),
+				$e->getCode(),
+				$e
+			);
 		}
 	}
 }

@@ -165,6 +165,54 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		);
 	}
 
+	/**
+	 * Create tables with binary column defaults, as driver versions <= 3.1.2 did.
+	 *
+	 * These versions stored BINARY and VARBINARY defaults as written, and they used
+	 * them and the expression defaults of binary columns as TEXT defaults in SQLite.
+	 */
+	private function createBinaryDefaultTablesFromOlderVersion(): void {
+		$this->assertQuery(
+			"CREATE TABLE t (
+				id INT PRIMARY KEY,
+				hex_string BINARY(2) NOT NULL DEFAULT x'0000',
+				hex_number VARBINARY(4) NOT NULL DEFAULT 0xDEADBEEF,
+				bit_string VARBINARY(4) NOT NULL DEFAULT b'01000001',
+				plain_text VARBINARY(4) NOT NULL DEFAULT 'abcd',
+				empty_text VARBINARY(4) NOT NULL DEFAULT '',
+				expression BLOB DEFAULT ('abc')
+			)"
+		);
+		$this->assertQuery( "CREATE TABLE t_expression (id INT PRIMARY KEY, expression BLOB DEFAULT ('abc'))" );
+
+		$statement = $this->sqlite->prepare(
+			"UPDATE _wp_sqlite_mysql_information_schema_columns SET column_default = ? WHERE table_name = 't' AND column_name = ?"
+		);
+		$statement->execute( array( "x'0000'", 'hex_string' ) );
+		$statement->execute( array( '0xdeadbeef', 'hex_number' ) );
+		$statement->execute( array( "b'01000001'", 'bit_string' ) );
+		$statement->execute( array( 'abcd', 'plain_text' ) );
+
+		$is_legacy_sqlite = version_compare( $this->engine->get_sqlite_version(), WP_MySQL_On_SQLite::MINIMUM_SQLITE_VERSION, '<' );
+		$strict           = $is_legacy_sqlite ? '' : ' STRICT';
+
+		$this->sqlite->exec( 'DROP TABLE t' );
+		$this->sqlite->exec(
+			"CREATE TABLE `t` (
+				`id` INT NOT NULL,
+				`hex_string` BLOB NOT NULL DEFAULT 'x''0000''',
+				`hex_number` BLOB NOT NULL DEFAULT '0xdeadbeef',
+				`bit_string` BLOB NOT NULL DEFAULT 'b''01000001''',
+				`plain_text` BLOB NOT NULL DEFAULT 'abcd',
+				`empty_text` BLOB NOT NULL DEFAULT '',
+				`expression` BLOB DEFAULT ('abc'),
+				PRIMARY KEY (`id`)
+			)$strict"
+		);
+		$this->sqlite->exec( 'DROP TABLE t_expression' );
+		$this->sqlite->exec( "CREATE TABLE `t_expression` (`id` INT NOT NULL, `expression` BLOB DEFAULT ('abc'), PRIMARY KEY (`id`))$strict" );
+	}
+
 	public function testRegexp() {
 		$this->assertQuery(
 			"INSERT INTO _options (option_name, option_value) VALUES ('rss_0123456789abcdef0123456789abcdef', '1');"
@@ -769,6 +817,254 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 				)
 			),
 			$results[0]->{'Create Table'}
+		);
+	}
+
+	/**
+	 * @dataProvider data_binary_column_defaults
+	 */
+	public function testBinaryColumnDefaults(
+		string $column_type,
+		string $default_value,
+		string $expected_create_default,
+		string $expected_information_schema_default,
+		string $expected_value
+	): void {
+		$this->assertQuery( "CREATE TABLE t (id INT PRIMARY KEY, v $column_type NOT NULL DEFAULT $default_value)" );
+
+		$this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertStringContainsString(
+			"`v` $column_type NOT NULL DEFAULT $expected_create_default,",
+			$this->last_result[0]->{'Create Table'}
+		);
+
+		$this->assertQuery( "SELECT COLUMN_DEFAULT FROM information_schema.columns WHERE table_name = 't' AND column_name = 'v'" );
+		$this->assertSame( $expected_information_schema_default, $this->last_result[0]->COLUMN_DEFAULT );
+
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (1)' );
+		$this->assertQuery( "INSERT INTO t VALUES (2, 'z')" );
+		$this->assertQuery( 'UPDATE t SET v = DEFAULT WHERE id = 2' );
+		$this->assertQuery( 'SELECT HEX(v) AS v FROM t ORDER BY id' );
+		$this->assertSame(
+			array( $expected_value, $expected_value ),
+			array_column( $this->last_result, 'v' )
+		);
+	}
+
+	public static function data_binary_column_defaults(): array {
+		return array(
+			'hex number'         => array( 'varbinary(4)', '0xDEADBEEF', '0xDEADBEEF', '0xDEADBEEF', 'DEADBEEF' ),
+			'hex string'         => array( 'varbinary(4)', "x'deadbeef'", '0xDEADBEEF', '0xDEADBEEF', 'DEADBEEF' ),
+			'uppercase string'   => array( 'varbinary(4)', "X'deadbeef'", '0xDEADBEEF', '0xDEADBEEF', 'DEADBEEF' ),
+			'odd-length hex'     => array( 'varbinary(4)', '0xa', "'\\n'", '0x0A', '0A' ),
+			'bit string'         => array( 'varbinary(4)', "b'01000001'", "'A'", '0x41', '41' ),
+			'bit number'         => array( 'varbinary(4)', '0b01000001', "'A'", '0x41', '41' ),
+			'zero bytes'         => array( 'binary(2)', "x'0000'", "'\\0\\0'", '0x0000', '0000' ),
+			'escaped zero bytes' => array( 'binary(2)', "'\\0\\0'", "'\\0\\0'", '0x0000', '0000' ),
+			'3-byte utf-8'       => array( 'varbinary(4)', '0xE282AC', "'€'", '0xE282AC', 'E282AC' ),
+			'4-byte utf-8'       => array( 'varbinary(4)', '0xF09F9880', '0xF09F9880', '0xF09F9880', 'F09F9880' ),
+			'text'               => array( 'varbinary(4)', "'F'", "'F'", '0x46', '46' ),
+			'quoted text'        => array( 'varbinary(4)', "'it''s'", "'it''s'", '0x69742773', '69742773' ),
+			'empty text'         => array( 'varbinary(4)', "''", "''", '', '' ),
+			'text like a number' => array( 'varbinary(4)', "'0x41'", "'0x41'", '0x30783431', '30783431' ),
+			'text like a string' => array( 'varbinary(8)', "'x''41'''", "'x''41'''", '0x7827343127', '7827343127' ),
+			'binary introducer'  => array( 'varbinary(4)', "_binary'abc'", "'abc'", '0x616263', '616263' ),
+			'charset introducer' => array( 'varbinary(4)', "_utf8mb4'abc'", "'abc'", '0x616263', '616263' ),
+			'hex introducer'     => array( 'varbinary(4)', '_binary 0x616263', "'abc'", '0x616263', '616263' ),
+			'national string'    => array( 'varbinary(4)', "N'abc'", "'abc'", '0x616263', '616263' ),
+			'national quoted'    => array( 'varbinary(4)', "n'it''s'", "'it''s'", '0x69742773', '69742773' ),
+			'number'             => array( 'varbinary(4)', '5', "'5'", '0x35', '35' ),
+			'negative number'    => array( 'varbinary(4)', '-5', "'-5'", '0x2D35', '2D35' ),
+			'true'               => array( 'varbinary(4)', 'TRUE', "'1'", '0x31', '31' ),
+			'false'              => array( 'varbinary(4)', 'FALSE', "'0'", '0x30', '30' ),
+		);
+	}
+
+	public function testBinaryColumnSetDefault(): void {
+		$this->assertQuery( "CREATE TABLE t (id INT PRIMARY KEY, v VARBINARY(4) NOT NULL DEFAULT 'a')" );
+
+		$this->assertQuery( 'ALTER TABLE t ALTER COLUMN v SET DEFAULT 0xDEADBEEF' );
+
+		$this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertStringContainsString(
+			'`v` varbinary(4) NOT NULL DEFAULT 0xDEADBEEF,',
+			$this->last_result[0]->{'Create Table'}
+		);
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (1)' );
+		$this->assertQuery( 'SELECT HEX(v) AS v FROM t' );
+		$this->assertSame( 'DEADBEEF', $this->last_result[0]->v );
+	}
+
+	/**
+	 * @dataProvider data_binary_column_generated_defaults
+	 */
+	public function testBinaryColumnGeneratedDefaults( string $column_type, string $default_value, string $expected_value ): void {
+		$this->assertQuery( "CREATE TABLE t (id INT PRIMARY KEY, v $column_type NOT NULL DEFAULT $default_value)" );
+
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (1)' );
+
+		$this->assertQuery( 'SELECT HEX(v) AS v FROM t' );
+		$this->assertSame( $expected_value, $this->last_result[0]->v );
+	}
+
+	public static function data_binary_column_generated_defaults(): array {
+		return array(
+			'varbinary text' => array( 'varbinary(4)', "('abc')", '616263' ),
+			'binary text'    => array( 'binary(3)', "('abc')", '616263' ),
+			'blob text'      => array( 'blob', "('abc')", '616263' ),
+			'national text'  => array( 'varbinary(4)', "(N'abc')", '616263' ),
+			'hex'            => array( 'varbinary(4)', '(0x616263)', '616263' ),
+			'function'       => array( 'longblob', "(CONCAT('a', 'bc'))", '616263' ),
+			'number'         => array( 'varbinary(4)', '(1 + 1)', '32' ),
+		);
+	}
+
+	public function testTextColumnDefaultsWithPrefixes(): void {
+		$this->assertQuery(
+			"CREATE TABLE t (
+				id INT PRIMARY KEY,
+				a VARCHAR(8) NOT NULL DEFAULT _utf8mb4'abc',
+				b VARCHAR(8) NOT NULL DEFAULT N'it''s'
+			)"
+		);
+
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (1)' );
+
+		$this->assertQuery( 'SELECT a, b FROM t' );
+		$this->assertSame( 'abc', $this->last_result[0]->a );
+		$this->assertSame( "it's", $this->last_result[0]->b );
+	}
+
+	/**
+	 * Older versions stored most BINARY and VARBINARY defaults as written.
+	 *
+	 * @dataProvider data_binary_column_defaults_from_older_versions
+	 */
+	public function testBinaryColumnDefaultsFromOlderVersions(
+		string $stored_default,
+		string $expected_create_default,
+		string $expected_value
+	): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT PRIMARY KEY, v VARBINARY(16) NOT NULL)' );
+		$statement = $this->sqlite->prepare(
+			"UPDATE _wp_sqlite_mysql_information_schema_columns SET COLUMN_DEFAULT = ? WHERE TABLE_NAME = 't' AND COLUMN_NAME = 'v'"
+		);
+		$statement->execute( array( $stored_default ) );
+
+		// The driver upgrade migrates the default and recreates the table.
+		$this->reconnectAfterDriverUpgrade();
+
+		$this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertStringContainsString(
+			"`v` varbinary(16) NOT NULL DEFAULT $expected_create_default,",
+			$this->last_result[0]->{'Create Table'}
+		);
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (1)' );
+		$this->assertQuery( 'SELECT HEX(v) AS v FROM t' );
+		$this->assertSame( $expected_value, $this->last_result[0]->v );
+	}
+
+	public static function data_binary_column_defaults_from_older_versions(): array {
+		return array(
+			'hex string'           => array( "x'00000000000000000000000000000000'", "'\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0\\0'", '00000000000000000000000000000000' ),
+			'uppercase hex string' => array( "X'DEADBEEF'", '0xDEADBEEF', 'DEADBEEF' ),
+			'hex number'           => array( '0xdeadbeef', '0xDEADBEEF', 'DEADBEEF' ),
+			'bit string'           => array( "b'01000001'", "'A'", '41' ),
+			'bit number'           => array( '0b01000001', "'A'", '41' ),
+			'zero bytes'           => array( "\0\0", "'\\0\\0'", '0000' ),
+			'text'                 => array( 'abcd', "'abcd'", '61626364' ),
+			'empty text'           => array( '', "''", '' ),
+		);
+	}
+
+	public function testConfigurationMigratesBinaryDefaultsFromOlderVersions(): void {
+		$this->createBinaryDefaultTablesFromOlderVersion();
+		$this->assertQuery( "CREATE TABLE t_current (id INT PRIMARY KEY, v VARBINARY(4) NOT NULL DEFAULT 0x41, w BLOB DEFAULT ('abc'))" );
+		$tables_query = "SELECT name, sql FROM sqlite_master WHERE name IN ('t', 't_expression', 't_current') ORDER BY name";
+		$tables       = $this->sqlite->query( $tables_query )->fetchAll( PDO::FETCH_KEY_PAIR );
+
+		// STRICT tables reject the TEXT defaults of older versions.
+		$is_legacy_sqlite = version_compare( $this->engine->get_sqlite_version(), WP_MySQL_On_SQLite::MINIMUM_SQLITE_VERSION, '<' );
+		if ( ! $is_legacy_sqlite ) {
+			$this->assertQueryError(
+				'INSERT INTO t (id) VALUES (1)',
+				'SQLSTATE[23000]: Integrity constraint violation: 19 cannot store TEXT value in BLOB column t.hex_string'
+			);
+		}
+
+		$this->reconnectAfterDriverUpgrade();
+
+		$this->assertQuery( "SELECT COLUMN_NAME, COLUMN_DEFAULT FROM information_schema.columns WHERE table_name = 't' ORDER BY ordinal_position" );
+		$this->assertSame(
+			array(
+				'id'         => null,
+				'hex_string' => '0x0000',
+				'hex_number' => '0xDEADBEEF',
+				'bit_string' => '0x41',
+				'plain_text' => '0x61626364',
+				'empty_text' => '',
+				'expression' => "'abc'",
+			),
+			array_column( $this->last_result, 'COLUMN_DEFAULT', 'COLUMN_NAME' )
+		);
+
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (1)' );
+		$this->assertQuery( 'INSERT INTO t_expression (id) VALUES (1)' );
+		$this->assertQuery( 'SELECT HEX(hex_string) AS a, HEX(hex_number) AS b, HEX(bit_string) AS c, HEX(plain_text) AS d, HEX(empty_text) AS e, HEX(expression) AS f FROM t' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'a' => '0000',
+					'b' => 'DEADBEEF',
+					'c' => '41',
+					'd' => '61626364',
+					'e' => '',
+					'f' => '616263',
+				),
+			),
+			$this->last_result
+		);
+		$this->assertQuery( 'SELECT HEX(expression) AS expression FROM t_expression' );
+		$this->assertSame( '616263', $this->last_result[0]->expression );
+
+		// A table from the current version isn't recreated.
+		$migrated_tables = $this->sqlite->query( $tables_query )->fetchAll( PDO::FETCH_KEY_PAIR );
+		$this->assertSame( $tables['t_current'], $migrated_tables['t_current'] );
+
+		// Configuring the database again changes nothing.
+		$this->reconnectAfterDriverUpgrade();
+		$this->assertSame( $migrated_tables, $this->sqlite->query( $tables_query )->fetchAll( PDO::FETCH_KEY_PAIR ) );
+	}
+
+	/**
+	 * @dataProvider data_binary_default_migration_driver_versions
+	 */
+	public function testConfigurationMigratesBinaryDefaultsOnlyForOlderDriverVersions( string $saved_version, string $expected_default ): void {
+		$this->createBinaryDefaultTablesFromOlderVersion();
+
+		// Configure the database as if it was last configured by the given driver version.
+		$this->sqlite->exec(
+			sprintf(
+				"UPDATE %s SET value = '%s' WHERE name = '%s'",
+				WP_MySQL_On_SQLite::GLOBAL_VARIABLES_TABLE_NAME,
+				$saved_version,
+				WP_MySQL_On_SQLite::DRIVER_VERSION_VARIABLE_NAME
+			)
+		);
+		$configurator = new WP_SQLite_Configurator(
+			$this->engine,
+			new WP_SQLite_Information_Schema_Builder( WP_MySQL_On_SQLite::RESERVED_PREFIX, $this->engine->get_connection() )
+		);
+		$configurator->configure_database();
+
+		$this->assertQuery( "SELECT COLUMN_DEFAULT FROM information_schema.columns WHERE table_name = 't' AND column_name = 'hex_number'" );
+		$this->assertSame( $expected_default, $this->last_result[0]->COLUMN_DEFAULT );
+	}
+
+	public static function data_binary_default_migration_driver_versions(): array {
+		return array(
+			'migrated from 3.1.2'     => array( '3.1.2', '0xDEADBEEF' ),
+			'not migrated from 3.1.3' => array( '3.1.3', '0xdeadbeef' ),
 		);
 	}
 
@@ -9513,6 +9809,31 @@ QUERY
 		$this->assertSame( $backslash . '_', $result[0]->value_12 );
 	}
 
+	public function testNationalStringLiterals(): void {
+		$this->assertQuery(
+			"CREATE TABLE t (
+				id INT PRIMARY KEY,
+				name VARCHAR(20) NOT NULL DEFAULT (N'it''s'),
+				CHECK (name <> N'x')
+			)"
+		);
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (1)' );
+		$this->assertQuery( "INSERT INTO t VALUES (2, N'0 OR 1=1')" );
+		$this->assertQueryError(
+			"INSERT INTO t VALUES (3, N'x')",
+			'SQLSTATE[23000]: Integrity constraint violation: 19 CHECK constraint failed: t_chk_1'
+		);
+
+		$this->assertQuery( 'SELECT name FROM t ORDER BY id' );
+		$this->assertSame( array( "it's", '0 OR 1=1' ), array_column( $this->last_result, 'name' ) );
+
+		// The string value must not be evaluated as SQL.
+		$this->assertQuery( "SELECT id FROM t WHERE name = N'0 OR 1=1'" );
+		$this->assertSame( array( '2' ), array_column( $this->last_result, 'id' ) );
+		$this->assertQuery( "SELECT id FROM t WHERE 'z' = N'0 OR 1=1'" );
+		$this->assertSame( array(), $this->last_result );
+	}
+
 	public function testBackslashEscapesInPatternMatching(): void {
 		$backslash = chr( 92 );
 
@@ -10316,6 +10637,10 @@ END;
 		// Literal with a NULL byte (with an explicit alias).
 		$result = $this->assertQuery( "SELECT 'abc\0def' AS `col1`" );
 		$this->assertSame( array( 'col1' ), array_keys( (array) $result[0] ) );
+
+		// National string literals (no explicit alias).
+		$result = $this->assertQuery( "SELECT N'abc', n'it''s'" );
+		$this->assertSame( array( 'abc', "it's" ), array_keys( (array) $result[0] ) );
 
 		// Columns (no explicit alias).
 		$result = $this->assertQuery( 'SELECT id, name FROM t' );
