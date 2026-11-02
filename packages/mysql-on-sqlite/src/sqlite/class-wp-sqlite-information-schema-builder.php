@@ -2357,7 +2357,6 @@ class WP_SQLite_Information_Schema_Builder {
 		 * For example:
 		 *  - Hex and bit literals coerced to raw bytes for text columns and to
 		 *    their decimal value for numeric columns.
-		 *  - The charset introducer dropped from text-literal defaults.
 		 *  - Numeric defaults normalized, e.g. 1.0 to 1 or 1e3 to 1000.
 		 */
 		return $default_value;
