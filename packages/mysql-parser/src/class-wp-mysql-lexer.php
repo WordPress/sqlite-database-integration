@@ -550,23 +550,6 @@ class WP_MySQL_Lexer {
 	}
 
 	/**
-	 * Get the numeric token ID for a given token name.
-	 *
-	 * @param string $token_name The name of the token.
-	 * @return int|null The token ID for the given token name; null when not found.
-	 */
-	public static function get_token_id( string $token_name ): ?int {
-		// Token constants share the class with the lexer's own constants, so
-		// resolve only the grammar tokens: non-negative ints, never an SQL mode.
-		$constant_name = self::class . '::' . $token_name;
-		if ( 0 === strpos( $token_name, 'SQL_MODE_' ) || ! defined( $constant_name ) ) {
-			return null;
-		}
-		$value = constant( $constant_name );
-		return is_int( $value ) && $value >= 0 ? $value : null;
-	}
-
-	/**
 	 * Get the name of a token for a given token ID.
 	 *
 	 * Names are derived from the grammar data rather than stored: a keyword
