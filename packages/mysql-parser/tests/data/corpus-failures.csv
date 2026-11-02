@@ -653,10 +653,6 @@ UNLOCK TABLES"
 "SELECT 'a%' NOT LIKE 'a!%' ESCAPE '!', 'a%' NOT LIKE 'a!' || '%' ESCAPE '!'"
 "SELECT 'a%' NOT LIKE 'a!%' ESCAPE '$', 'a%' NOT LIKE 'a!' || '%' ESCAPE '$'"
 "SELECT * from ""full"""
-"SELECT 1 /*!080100	+1*/ AS should_return_2"
-"SELECT 1 /*!080100
-+1*/ AS should_return_2"
-"SELECT 1 /*!080100 +1*/ AS should_return_2"
 "SELECT 1 /*!99999 /* */ */"
 "SET sql_mode = 'NO_ENGINE_SUBSTITUTION';
 create procedure test_resignal()

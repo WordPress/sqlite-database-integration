@@ -15,7 +15,7 @@ class WP_MySQL_Token_Tests extends TestCase {
 	 * @return WP_MySQL_Token      The first matching token.
 	 */
 	private static function first_token( string $sql, string $name, array $sql_modes = array() ): WP_MySQL_Token {
-		foreach ( ( new WP_MySQL_Lexer( $sql, 80400, $sql_modes ) )->remaining_tokens() as $token ) {
+		foreach ( ( new WP_MySQL_Lexer( $sql, 80410, $sql_modes ) )->remaining_tokens() as $token ) {
 			if ( $token->get_name() === $name ) {
 				return $token;
 			}

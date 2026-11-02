@@ -363,7 +363,7 @@ class WP_MySQL_Lexer {
 	 */
 	public function __construct(
 		string $sql,
-		int $mysql_version = 80038,
+		int $mysql_version = 80410,
 		array $sql_modes = array()
 	) {
 		$this->sql           = $sql;

@@ -70,7 +70,7 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 	 * @return string[]            Terminal names, in input order.
 	 */
 	private static function token_names( string $sql, array $sql_modes = array() ): array {
-		$tokens = ( new WP_MySQL_Lexer( $sql, 80400, $sql_modes ) )->remaining_tokens();
+		$tokens = ( new WP_MySQL_Lexer( $sql, 80410, $sql_modes ) )->remaining_tokens();
 		$names  = array();
 		foreach ( $tokens as $token ) {
 			$names[] = $token->get_name();
@@ -88,28 +88,28 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 	public function test_ignore_space_preserves_function_name_ranges(): void {
 		// Without "(", COUNT is an identifier whose range excludes trailing whitespace.
 		$sql    = 'SELECT COUNT FROM t';
-		$tokens = ( new WP_MySQL_Lexer( $sql, 80400, array( 'IGNORE_SPACE' ) ) )->remaining_tokens();
+		$tokens = ( new WP_MySQL_Lexer( $sql, 80410, array( 'IGNORE_SPACE' ) ) )->remaining_tokens();
 		$this->assertSame( 'IDENT', $tokens[1]->get_name(), $sql );
 		$this->assertSame( 'COUNT', $tokens[1]->get_value(), $sql );
 		$this->assertSame( 5, $tokens[1]->length, $sql );
 		$this->assertSame( 13, $tokens[2]->start, $sql );
 
 		$sql    = "SELECT COUNT\t\n FROM t";
-		$tokens = ( new WP_MySQL_Lexer( $sql, 80400, array( 'IGNORE_SPACE' ) ) )->remaining_tokens();
+		$tokens = ( new WP_MySQL_Lexer( $sql, 80410, array( 'IGNORE_SPACE' ) ) )->remaining_tokens();
 		$this->assertSame( 'IDENT', $tokens[1]->get_name(), $sql );
 		$this->assertSame( 'COUNT', $tokens[1]->get_value(), $sql );
 		$this->assertSame( 5, $tokens[1]->length, $sql );
 		$this->assertSame( 15, $tokens[2]->start, $sql );
 
 		// With "(", COUNT is a function whose range still excludes the whitespace.
-		$tokens = ( new WP_MySQL_Lexer( 'SELECT COUNT (1)', 80400, array( 'IGNORE_SPACE' ) ) )->remaining_tokens();
+		$tokens = ( new WP_MySQL_Lexer( 'SELECT COUNT (1)', 80410, array( 'IGNORE_SPACE' ) ) )->remaining_tokens();
 		$this->assertSame( 5, $tokens[1]->length );
 		$this->assertSame( 'COUNT', $tokens[1]->get_name() );
 		$this->assertSame( 'LEFT_PAREN', $tokens[2]->get_name() );
 		$this->assertSame( 13, $tokens[2]->start );
 
 		$sql    = "SELECT COUNT \t\n";
-		$tokens = ( new WP_MySQL_Lexer( $sql, 80400, array( 'IGNORE_SPACE' ) ) )->remaining_tokens();
+		$tokens = ( new WP_MySQL_Lexer( $sql, 80410, array( 'IGNORE_SPACE' ) ) )->remaining_tokens();
 		$this->assertSame( 'IDENT', $tokens[1]->get_name(), $sql );
 		$this->assertSame( 'COUNT', $tokens[1]->get_value(), $sql );
 		$this->assertSame( 5, $tokens[1]->length, $sql );
@@ -188,6 +188,22 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 			}
 		}
 		return $cases;
+	}
+
+	public function test_mysql_version_defaults_to_mysql_8_4_10(): void {
+		$lexer = new WP_MySQL_Lexer( 'SELECT /*!080400 1 + */ 2' );
+		$this->assertSame( 80410, $lexer->get_mysql_version() );
+
+		// A six-digit MySQL 8.4 version comment is executed by default.
+		$this->assertSame(
+			array( 'SELECT', 'NUM', 'PLUS', 'NUM', 'END_OF_INPUT', 'YYEOF' ),
+			array_map(
+				static function ( WP_MySQL_Token $token ): string {
+					return $token->get_name();
+				},
+				$lexer->remaining_tokens()
+			)
+		);
 	}
 
 	public function test_at_name_splits_into_at_and_ident(): void {
@@ -749,7 +765,7 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 		array $sql_modes,
 		string $expected_token_name
 	): void {
-		$tokens = ( new WP_MySQL_Lexer( $sql, 80400, $sql_modes ) )->remaining_tokens();
+		$tokens = ( new WP_MySQL_Lexer( $sql, 80410, $sql_modes ) )->remaining_tokens();
 		$this->assertSame( $expected_token_name, $tokens[0]->get_name(), $sql );
 	}
 
@@ -782,17 +798,17 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 
 	public function test_composite_ansi_mode_expands_to_lexer_component_modes(): void {
 		// ANSI_QUOTES: a double-quoted sequence is a quoted identifier.
-		$lexer = new WP_MySQL_Lexer( '"foo"', 80400, array( 'ANSI' ) );
+		$lexer = new WP_MySQL_Lexer( '"foo"', 80410, array( 'ANSI' ) );
 		$this->assertTrue( $lexer->next_token() );
 		$this->assertSame( WP_MySQL_Lexer::IDENT_QUOTED, $lexer->get_token()->id );
 
 		// PIPES_AS_CONCAT: "||" is the string concatenation operator.
-		$lexer = new WP_MySQL_Lexer( '||', 80400, array( 'ANSI' ) );
+		$lexer = new WP_MySQL_Lexer( '||', 80410, array( 'ANSI' ) );
 		$this->assertTrue( $lexer->next_token() );
 		$this->assertSame( WP_MySQL_Lexer::OR_OR_SYM, $lexer->get_token()->id );
 
 		// IGNORE_SPACE: whitespace is permitted between a function name and "(".
-		$lexer = new WP_MySQL_Lexer( 'COUNT (1)', 80400, array( 'ANSI' ) );
+		$lexer = new WP_MySQL_Lexer( 'COUNT (1)', 80410, array( 'ANSI' ) );
 		$this->assertTrue( $lexer->next_token() );
 		$this->assertSame( WP_MySQL_Lexer::KEYWORDS['COUNT'], $lexer->get_token()->id );
 	}
@@ -808,7 +824,7 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 		int $expected_token_id,
 		string $expected_value
 	): void {
-		$lexer = new WP_MySQL_Lexer( $sql, 80400, $sql_modes );
+		$lexer = new WP_MySQL_Lexer( $sql, 80410, $sql_modes );
 		$this->assertTrue( $lexer->next_token() );
 
 		$token = $lexer->get_token();
