@@ -484,7 +484,7 @@ class WP_SQLite_Configurator {
 				);
 			}
 
-			$alter_list = array();
+			$defaults = array();
 			foreach ( $repaired_columns as $column ) {
 				// Preserve numeric and string types so comparisons apply the same
 				// SQLite conversion as when the defaults were stored.
@@ -502,26 +502,37 @@ class WP_SQLite_Configurator {
 						: array( $column['zero_value'] )
 				);
 
-				$alter_list[] = sprintf(
-					'ALTER COLUMN `%s` SET DEFAULT %s',
-					str_replace( '`', '``', $column['name'] ),
-					$this->driver->quote( $column['zero_value'] )
-				);
+				$defaults[ $column['name'] ] = $this->driver->quote( $column['zero_value'] );
 			}
+			$this->recreate_table( $table_name, $defaults );
+		}
+	}
 
-			// ALTER TABLE stores the new defaults, and it recreates the table to apply them.
-			try {
-				$this->driver->query(
-					sprintf( 'ALTER TABLE `%s` %s', str_replace( '`', '``', $table_name ), implode( ', ', $alter_list ) )
-				);
-			} catch ( WP_MySQL_On_SQLite_Exception $e ) {
-				throw new WP_MySQL_On_SQLite_Exception(
-					$this->driver,
-					sprintf( 'Failed to recreate table "%s": %s', $table_name, $e->getMessage() ),
-					$e->getCode(),
-					$e
-				);
-			}
+	/**
+	 * Recreate a table with new column defaults.
+	 *
+	 * ALTER TABLE stores the new defaults, and it recreates the table to apply them.
+	 *
+	 * @param string $table_name The table name.
+	 * @param array  $defaults   The new defaults as MySQL literals, keyed by column name.
+	 */
+	private function recreate_table( string $table_name, array $defaults ): void {
+		$alter_list = array();
+		foreach ( $defaults as $column_name => $default ) {
+			$alter_list[] = sprintf( 'ALTER COLUMN `%s` SET DEFAULT %s', str_replace( '`', '``', $column_name ), $default );
+		}
+
+		try {
+			$this->driver->query(
+				sprintf( 'ALTER TABLE `%s` %s', str_replace( '`', '``', $table_name ), implode( ', ', $alter_list ) )
+			);
+		} catch ( WP_MySQL_On_SQLite_Exception $e ) {
+			throw new WP_MySQL_On_SQLite_Exception(
+				$this->driver,
+				sprintf( 'Failed to recreate table "%s": %s', $table_name, $e->getMessage() ),
+				$e->getCode(),
+				$e
+			);
 		}
 	}
 }
