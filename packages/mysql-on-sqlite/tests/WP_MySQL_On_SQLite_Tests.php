@@ -10635,6 +10635,15 @@ END;
 		$this->assertQuery( 'LOCK TABLES `missing table` READ' );
 	}
 
+	public function testLockTableWithDotInName(): void {
+		// "main.t" is a table name, not table "t" in the SQLite "main" schema.
+		$this->assertQuery( 'CREATE TABLE t (id INT)' );
+
+		$this->expectException( 'WP_MySQL_On_SQLite_Exception' );
+		$this->expectExceptionMessage( "Table 'wp.main.t' doesn't exist" );
+		$this->assertQuery( 'LOCK TABLES `main.t` READ' );
+	}
+
 	public function testTransactionSavepoints(): void {
 		$this->assertQuery( 'CREATE TABLE t (id INT)' );
 
