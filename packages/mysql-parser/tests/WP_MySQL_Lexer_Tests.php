@@ -764,6 +764,22 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 		);
 	}
 
+	/**
+	 * @dataProvider data_national_strings
+	 */
+	public function test_national_strings( string $sql, array $expected ): void {
+		$this->assertSame( array_merge( $expected, array( 'END_OF_INPUT', 'YYEOF' ) ), self::token_names( $sql ) );
+	}
+
+	public function data_national_strings(): array {
+		return array(
+			'uppercase prefix'              => array( "N'abc'", array( 'NCHAR_STRING' ) ),
+			'lowercase prefix'              => array( "n'abc'", array( 'NCHAR_STRING' ) ),
+			'escaped quote'                 => array( "N'a''b'", array( 'NCHAR_STRING' ) ),
+			'double quote is not a literal' => array( 'N"abc"', array( 'IDENT', 'TEXT_STRING' ) ),
+		);
+	}
+
 	public function test_composite_ansi_mode_expands_to_lexer_component_modes(): void {
 		// ANSI_QUOTES: a double-quoted sequence is a quoted identifier.
 		$lexer = new WP_MySQL_Lexer( '"foo"', 80400, array( 'ANSI' ) );

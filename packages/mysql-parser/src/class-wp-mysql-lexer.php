@@ -1011,7 +1011,7 @@ class WP_MySQL_Lexer {
 			$type = $this->read_number();
 		} elseif ( ( 'n' === $byte || 'N' === $byte ) && "'" === $next_byte ) {
 			$this->bytes_already_read += 1;
-			$type                      = $this->read_quoted_text( "'" );
+			$type                      = $this->read_quoted_text();
 			if ( self::TEXT_STRING === $type ) {
 				$type = self::NCHAR_STRING;
 			}
