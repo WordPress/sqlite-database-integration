@@ -62,11 +62,7 @@ final class WP_MySQL_Token extends WP_Parser_Token {
 	 */
 	public function get_value(): string {
 		$value = $this->get_bytes();
-		if (
-			WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $this->id
-			|| WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $this->id
-			|| WP_MySQL_Lexer::BACK_TICK_QUOTED_ID === $this->id
-		) {
+		if ( WP_MySQL_Lexer::TEXT_STRING === $this->id || WP_MySQL_Lexer::IDENT_QUOTED === $this->id ) {
 			// Remove bounding quotes.
 			$quote = $value[0];
 			$value = substr( $value, 1, -1 );
@@ -79,7 +75,7 @@ final class WP_MySQL_Token extends WP_Parser_Token {
 			 * See: https://dev.mysql.com/doc/refman/8.4/en/identifiers.html
 			 */
 			if (
-				WP_MySQL_Lexer::BACK_TICK_QUOTED_ID === $this->id
+				WP_MySQL_Lexer::IDENT_QUOTED === $this->id
 				|| $this->sql_mode_no_backslash_escapes_enabled
 			) {
 				return str_replace( $quote . $quote, $quote, $value );

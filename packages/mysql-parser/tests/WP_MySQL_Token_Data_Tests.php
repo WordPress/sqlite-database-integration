@@ -29,6 +29,18 @@ class WP_MySQL_Token_Data_Tests extends TestCase {
 		}
 	}
 
+	public function test_token_constants_have_distinct_numbers(): void {
+		// Each token constant names one grammar terminal; none is an alias.
+		$numbers = array();
+		foreach ( ( new ReflectionClass( WP_MySQL_Lexer::class ) )->getConstants() as $name => $value ) {
+			if ( is_int( $value ) && $value >= 0 && 0 !== strpos( $name, 'SQL_MODE_' ) ) {
+				$this->assertArrayNotHasKey( $value, $numbers, "Constant $name shares token $value with another constant" );
+				$numbers[ $value ] = $name;
+			}
+		}
+		$this->assertNotEmpty( $numbers );
+	}
+
 	public function test_function_keywords_are_a_subset_of_keywords(): void {
 		$this->assertNotEmpty( WP_MySQL_Lexer::FUNCTIONS );
 		foreach ( array_keys( WP_MySQL_Lexer::FUNCTIONS ) as $keyword ) {
@@ -64,12 +76,12 @@ class WP_MySQL_Token_Data_Tests extends TestCase {
 		$this->assertSame( 'CURRENT_DATE', WP_MySQL_Lexer::get_token_name( WP_MySQL_Lexer::KEYWORDS['CURDATE'] ) );
 
 		// Constant name for non-keyword tokens.
-		$this->assertSame( 'IDENTIFIER', WP_MySQL_Lexer::get_token_name( WP_MySQL_Lexer::IDENTIFIER ) );
-		$this->assertSame( 'SINGLE_QUOTED_TEXT', WP_MySQL_Lexer::get_token_name( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT ) );
-		$this->assertSame( 'AT_SIGN_SYMBOL', WP_MySQL_Lexer::get_token_name( WP_MySQL_Lexer::AT_SIGN_SYMBOL ) );
-		$this->assertSame( 'WITH_ROLLUP_SYMBOL', WP_MySQL_Lexer::get_token_name( WP_MySQL_Lexer::WITH_ROLLUP_SYMBOL ) );
+		$this->assertSame( 'IDENT', WP_MySQL_Lexer::get_token_name( WP_MySQL_Lexer::IDENT ) );
+		$this->assertSame( 'TEXT_STRING', WP_MySQL_Lexer::get_token_name( WP_MySQL_Lexer::TEXT_STRING ) );
+		$this->assertSame( 'AT_SIGN', WP_MySQL_Lexer::get_token_name( WP_MySQL_Lexer::AT_SIGN ) );
+		$this->assertSame( 'WITH_ROLLUP_SYM', WP_MySQL_Lexer::get_token_name( WP_MySQL_Lexer::WITH_ROLLUP_SYM ) );
 		$this->assertSame( 'END_OF_INPUT', WP_MySQL_Lexer::get_token_name( WP_MySQL_Lexer::END_OF_INPUT ) );
-		$this->assertSame( 'END_MARKER', WP_MySQL_Lexer::get_token_name( WP_MySQL_Lexer::END_MARKER ) );
+		$this->assertSame( 'YYEOF', WP_MySQL_Lexer::get_token_name( WP_MySQL_Lexer::YYEOF ) );
 	}
 
 	public function test_internal_scanner_sentinels_cannot_collide_with_grammar_tokens(): void {

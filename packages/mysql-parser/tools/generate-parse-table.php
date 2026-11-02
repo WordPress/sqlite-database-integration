@@ -45,9 +45,13 @@ if ( $argc < 3 ) {
 }
 $xml_path    = $argv[1];
 $output_path = $argv[2];
-$mysql_tag   = getenv( 'MYSQL_TAG' );
-if ( false === $mysql_tag || '' === $mysql_tag ) {
-	$mysql_tag = 'mysql-8.4.3';
+
+// The tag of the grammar sources, recorded next to the automaton by fetch-mysql-grammar.sh.
+$tag_path  = dirname( $xml_path ) . '/mysql-tag';
+$mysql_tag = is_file( $tag_path ) ? trim( file_get_contents( $tag_path ) ) : '';
+if ( '' === $mysql_tag ) {
+	fwrite( STDERR, "error: MySQL tag not found in $tag_path; run fetch-mysql-grammar.sh first.\n" );
+	exit( 1 );
 }
 
 ini_set( 'memory_limit', '3G' );

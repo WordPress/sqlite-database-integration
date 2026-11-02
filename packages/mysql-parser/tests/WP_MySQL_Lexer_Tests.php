@@ -17,7 +17,7 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 
 		// id
 		$this->assertTrue( $lexer->next_token() );
-		$this->assertSame( WP_MySQL_Lexer::IDENTIFIER, $lexer->get_token()->id );
+		$this->assertSame( WP_MySQL_Lexer::IDENT, $lexer->get_token()->id );
 
 		// FROM
 		$this->assertTrue( $lexer->next_token() );
@@ -25,13 +25,13 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 
 		// users
 		$this->assertTrue( $lexer->next_token() );
-		$this->assertSame( WP_MySQL_Lexer::IDENTIFIER, $lexer->get_token()->id );
+		$this->assertSame( WP_MySQL_Lexer::IDENT, $lexer->get_token()->id );
 
 		// The stream ends with END_OF_INPUT followed by Bison's end marker.
 		$this->assertTrue( $lexer->next_token() );
 		$this->assertSame( WP_MySQL_Lexer::END_OF_INPUT, $lexer->get_token()->id );
 		$this->assertTrue( $lexer->next_token() );
-		$this->assertSame( WP_MySQL_Lexer::END_MARKER, $lexer->get_token()->id );
+		$this->assertSame( WP_MySQL_Lexer::YYEOF, $lexer->get_token()->id );
 
 		// No more tokens.
 		$this->assertFalse( $lexer->next_token() );
@@ -70,7 +70,7 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 	 * @return string[]            Terminal names, in input order.
 	 */
 	private static function token_names( string $sql, array $sql_modes = array() ): array {
-		$tokens = ( new WP_MySQL_Lexer( $sql, 80400, $sql_modes ) )->remaining_tokens();
+		$tokens = ( new WP_MySQL_Lexer( $sql, 80410, $sql_modes ) )->remaining_tokens();
 		$names  = array();
 		foreach ( $tokens as $token ) {
 			$names[] = $token->get_name();
@@ -80,7 +80,7 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 
 	public function test_emits_bison_terminals_with_end_markers(): void {
 		$this->assertSame(
-			array( 'SELECT', 'IDENTIFIER', 'FROM', 'IDENTIFIER', 'END_OF_INPUT', 'END_MARKER' ),
+			array( 'SELECT', 'IDENT', 'FROM', 'IDENT', 'END_OF_INPUT', 'YYEOF' ),
 			self::token_names( 'SELECT id FROM users' )
 		);
 	}
@@ -88,29 +88,29 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 	public function test_ignore_space_preserves_function_name_ranges(): void {
 		// Without "(", COUNT is an identifier whose range excludes trailing whitespace.
 		$sql    = 'SELECT COUNT FROM t';
-		$tokens = ( new WP_MySQL_Lexer( $sql, 80400, array( 'IGNORE_SPACE' ) ) )->remaining_tokens();
-		$this->assertSame( 'IDENTIFIER', $tokens[1]->get_name(), $sql );
+		$tokens = ( new WP_MySQL_Lexer( $sql, 80410, array( 'IGNORE_SPACE' ) ) )->remaining_tokens();
+		$this->assertSame( 'IDENT', $tokens[1]->get_name(), $sql );
 		$this->assertSame( 'COUNT', $tokens[1]->get_value(), $sql );
 		$this->assertSame( 5, $tokens[1]->length, $sql );
 		$this->assertSame( 13, $tokens[2]->start, $sql );
 
 		$sql    = "SELECT COUNT\t\n FROM t";
-		$tokens = ( new WP_MySQL_Lexer( $sql, 80400, array( 'IGNORE_SPACE' ) ) )->remaining_tokens();
-		$this->assertSame( 'IDENTIFIER', $tokens[1]->get_name(), $sql );
+		$tokens = ( new WP_MySQL_Lexer( $sql, 80410, array( 'IGNORE_SPACE' ) ) )->remaining_tokens();
+		$this->assertSame( 'IDENT', $tokens[1]->get_name(), $sql );
 		$this->assertSame( 'COUNT', $tokens[1]->get_value(), $sql );
 		$this->assertSame( 5, $tokens[1]->length, $sql );
 		$this->assertSame( 15, $tokens[2]->start, $sql );
 
 		// With "(", COUNT is a function whose range still excludes the whitespace.
-		$tokens = ( new WP_MySQL_Lexer( 'SELECT COUNT (1)', 80400, array( 'IGNORE_SPACE' ) ) )->remaining_tokens();
+		$tokens = ( new WP_MySQL_Lexer( 'SELECT COUNT (1)', 80410, array( 'IGNORE_SPACE' ) ) )->remaining_tokens();
 		$this->assertSame( 5, $tokens[1]->length );
 		$this->assertSame( 'COUNT', $tokens[1]->get_name() );
-		$this->assertSame( 'OPEN_PAR_SYMBOL', $tokens[2]->get_name() );
+		$this->assertSame( 'LEFT_PAREN', $tokens[2]->get_name() );
 		$this->assertSame( 13, $tokens[2]->start );
 
 		$sql    = "SELECT COUNT \t\n";
-		$tokens = ( new WP_MySQL_Lexer( $sql, 80400, array( 'IGNORE_SPACE' ) ) )->remaining_tokens();
-		$this->assertSame( 'IDENTIFIER', $tokens[1]->get_name(), $sql );
+		$tokens = ( new WP_MySQL_Lexer( $sql, 80410, array( 'IGNORE_SPACE' ) ) )->remaining_tokens();
+		$this->assertSame( 'IDENT', $tokens[1]->get_name(), $sql );
 		$this->assertSame( 'COUNT', $tokens[1]->get_value(), $sql );
 		$this->assertSame( 5, $tokens[1]->length, $sql );
 		$this->assertSame( 'END_OF_INPUT', $tokens[2]->get_name(), $sql );
@@ -122,7 +122,7 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 	 */
 	public function test_version_comments( string $sql, int $mysql_version, array $expected_bytes ): void {
 		$tokens = ( new WP_MySQL_Lexer( $sql, $mysql_version ) )->remaining_tokens();
-		$this->assertSame( 'END_MARKER', array_pop( $tokens )->get_name() );
+		$this->assertSame( 'YYEOF', array_pop( $tokens )->get_name() );
 		$this->assertSame( 'END_OF_INPUT', array_pop( $tokens )->get_name() );
 		$this->assertSame(
 			$expected_bytes,
@@ -190,10 +190,26 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 		return $cases;
 	}
 
+	public function test_mysql_version_defaults_to_mysql_8_4_10(): void {
+		$lexer = new WP_MySQL_Lexer( 'SELECT /*!080400 1 + */ 2' );
+		$this->assertSame( 80410, $lexer->get_mysql_version() );
+
+		// A six-digit MySQL 8.4 version comment is executed by default.
+		$this->assertSame(
+			array( 'SELECT', 'NUM', 'PLUS', 'NUM', 'END_OF_INPUT', 'YYEOF' ),
+			array_map(
+				static function ( WP_MySQL_Token $token ): string {
+					return $token->get_name();
+				},
+				$lexer->remaining_tokens()
+			)
+		);
+	}
+
 	public function test_at_name_splits_into_at_and_ident(): void {
 		$tokens = ( new WP_MySQL_Lexer( 'SELECT @var1' ) )->remaining_tokens();
-		$this->assertSame( 'AT_SIGN_SYMBOL', $tokens[1]->get_name() );
-		$this->assertSame( 'IDENTIFIER', $tokens[2]->get_name() );
+		$this->assertSame( 'AT_SIGN', $tokens[1]->get_name() );
+		$this->assertSame( 'IDENT', $tokens[2]->get_name() );
 		$this->assertSame( 'var1', $tokens[2]->get_value() );
 		$this->assertSame( 7, $tokens[1]->start );
 		$this->assertSame( 1, $tokens[1]->length );
@@ -203,7 +219,7 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 
 	public function test_at_at_splits_into_two_at_signs(): void {
 		$this->assertSame(
-			array( 'SELECT', 'AT_SIGN_SYMBOL', 'AT_SIGN_SYMBOL', 'IDENTIFIER', 'END_OF_INPUT', 'END_MARKER' ),
+			array( 'SELECT', 'AT_SIGN', 'AT_SIGN', 'IDENT', 'END_OF_INPUT', 'YYEOF' ),
 			self::token_names( 'SELECT @@sql_mode' )
 		);
 	}
@@ -212,13 +228,13 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 		// MySQL's lexer emits an empty LEX_HOSTNAME after a bare "@", making
 		// "user1@" (an empty host part) and "SELECT @" valid.
 		$tokens = ( new WP_MySQL_Lexer( 'SELECT @' ) )->remaining_tokens();
-		$this->assertSame( 'AT_SIGN_SYMBOL', $tokens[1]->get_name() );
-		$this->assertSame( 'IDENTIFIER', $tokens[2]->get_name() );
+		$this->assertSame( 'AT_SIGN', $tokens[1]->get_name() );
+		$this->assertSame( 'IDENT', $tokens[2]->get_name() );
 		$this->assertSame( 0, $tokens[2]->length );
 		$this->assertSame( '', $tokens[2]->get_value() );
 
 		$this->assertSame(
-			array( 'CREATE', 'USER', 'IDENTIFIER', 'AT_SIGN_SYMBOL', 'IDENTIFIER', 'END_OF_INPUT', 'END_MARKER' ),
+			array( 'CREATE', 'USER', 'IDENT', 'AT_SIGN', 'IDENT', 'END_OF_INPUT', 'YYEOF' ),
 			self::token_names( 'CREATE USER user1@' )
 		);
 	}
@@ -226,14 +242,14 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 	public function test_bare_at_before_quote_stands_alone(): void {
 		// In "@'name'" the quoted text supplies the name itself.
 		$this->assertSame(
-			array( 'SET', 'AT_SIGN_SYMBOL', 'SINGLE_QUOTED_TEXT', '=', 'INT_NUMBER', 'END_OF_INPUT', 'END_MARKER' ),
+			array( 'SET', 'AT_SIGN', 'TEXT_STRING', '=', 'NUM', 'END_OF_INPUT', 'YYEOF' ),
 			self::token_names( "SET @'v' = 1" )
 		);
 	}
 
 	public function test_with_rollup_is_contracted(): void {
 		$names = self::token_names( 'SELECT 1 FROM t GROUP BY a WITH ROLLUP' );
-		$this->assertContains( 'WITH_ROLLUP_SYMBOL', $names );
+		$this->assertContains( 'WITH_ROLLUP_SYM', $names );
 		$this->assertNotContains( 'WITH', $names );
 	}
 
@@ -241,7 +257,7 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 		$tokens = ( new WP_MySQL_Lexer( 'SELECT 1 FROM t GROUP BY a WITH /* c */ ROLLUP' ) )->remaining_tokens();
 		$rollup = null;
 		foreach ( $tokens as $token ) {
-			if ( 'WITH_ROLLUP_SYMBOL' === $token->get_name() ) {
+			if ( 'WITH_ROLLUP_SYM' === $token->get_name() ) {
 				$rollup = $token;
 			}
 		}
@@ -251,40 +267,40 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 
 	public function test_lone_with_is_emitted(): void {
 		$this->assertSame(
-			array( 'WITH', 'IDENTIFIER', 'AS', 'OPEN_PAR_SYMBOL', 'SELECT', 'INT_NUMBER', 'CLOSE_PAR_SYMBOL', 'SELECT', 'MULT_OPERATOR', 'FROM', 'IDENTIFIER', 'END_OF_INPUT', 'END_MARKER' ),
+			array( 'WITH', 'IDENT', 'AS', 'LEFT_PAREN', 'SELECT', 'NUM', 'RIGHT_PAREN', 'SELECT', 'ASTERISK', 'FROM', 'IDENT', 'END_OF_INPUT', 'YYEOF' ),
 			self::token_names( 'WITH c AS (SELECT 1) SELECT * FROM c' )
 		);
 
 		// A statement ending on WITH still emits it before the end markers.
 		$this->assertSame(
-			array( 'SELECT', 'INT_NUMBER', 'WITH', 'END_OF_INPUT', 'END_MARKER' ),
+			array( 'SELECT', 'NUM', 'WITH', 'END_OF_INPUT', 'YYEOF' ),
 			self::token_names( 'SELECT 1 WITH' )
 		);
 	}
 
 	public function test_invalid_input_returns_partial_stream_without_end_markers(): void {
 		$names = self::token_names( "SELECT 1 WITH \x01" );
-		$this->assertSame( array( 'SELECT', 'INT_NUMBER', 'WITH' ), $names );
+		$this->assertSame( array( 'SELECT', 'NUM', 'WITH' ), $names );
 	}
 
 	public function test_system_variable_name_must_not_be_empty(): void {
 		// As in MySQL, the name after "@@" can't be empty, and only backticks
 		// can quote it. Otherwise, the stream ends after the "@@".
-		$at_at = array( 'AT_SIGN_SYMBOL', 'AT_SIGN_SYMBOL' );
+		$at_at = array( 'AT_SIGN', 'AT_SIGN' );
 		$this->assertSame( $at_at, self::token_names( '@@' ) );
 		$this->assertSame( $at_at, self::token_names( '@@ version' ) );
 		$this->assertSame( $at_at, self::token_names( "@@'version'" ) );
 		$this->assertSame( $at_at, self::token_names( '@@"version"' ) );
 		$this->assertSame( $at_at, self::token_names( '@@"version"', array( 'ANSI_QUOTES' ) ) );
 		$this->assertSame(
-			array_merge( $at_at, array( 'BACK_TICK_QUOTED_ID', 'END_OF_INPUT', 'END_MARKER' ) ),
+			array_merge( $at_at, array( 'IDENT_QUOTED', 'END_OF_INPUT', 'YYEOF' ) ),
 			self::token_names( '@@`version`' )
 		);
 	}
 
 	public function test_high_not_precedence_emits_not2(): void {
 		$names = self::token_names( 'SELECT NOT 1', array( 'HIGH_NOT_PRECEDENCE' ) );
-		$this->assertContains( 'NOT2_SYMBOL', $names );
+		$this->assertContains( 'NOT2_SYM', $names );
 
 		$names = self::token_names( 'SELECT NOT 1' );
 		$this->assertContains( 'NOT', $names );
@@ -293,7 +309,7 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 	public function test_end_of_input_word_is_an_identifier(): void {
 		// "end_of_input" is not a MySQL keyword; it must not truncate the stream.
 		$this->assertSame(
-			array( 'SELECT', 'IDENTIFIER', 'FROM', 'IDENTIFIER', 'END_OF_INPUT', 'END_MARKER' ),
+			array( 'SELECT', 'IDENT', 'FROM', 'IDENT', 'END_OF_INPUT', 'YYEOF' ),
 			self::token_names( 'SELECT end_of_input FROM t' )
 		);
 	}
@@ -302,18 +318,18 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 		// CURRENT_DATE/CURRENT_TIME are plain reserved keywords in MySQL 8.4
 		// (lex.h SYM), unlike CURDATE/CURTIME which require parentheses.
 		$this->assertSame(
-			array( 'SELECT', 'CURRENT_DATE', 'END_OF_INPUT', 'END_MARKER' ),
+			array( 'SELECT', 'CURRENT_DATE', 'END_OF_INPUT', 'YYEOF' ),
 			self::token_names( 'SELECT CURRENT_DATE' )
 		);
 		$this->assertSame(
-			array( 'SELECT', 'IDENTIFIER', 'END_OF_INPUT', 'END_MARKER' ),
+			array( 'SELECT', 'IDENT', 'END_OF_INPUT', 'YYEOF' ),
 			self::token_names( 'SELECT curdate' )
 		);
 	}
 
 	public function test_json_aggregates_are_keywords_only_before_parenthesis(): void {
 		$this->assertSame(
-			array( 'SELECT', 'IDENTIFIER', 'FROM', 'IDENTIFIER', 'END_OF_INPUT', 'END_MARKER' ),
+			array( 'SELECT', 'IDENT', 'FROM', 'IDENT', 'END_OF_INPUT', 'YYEOF' ),
 			self::token_names( 'SELECT json_objectagg FROM t' )
 		);
 		$names = self::token_names( 'SELECT JSON_OBJECTAGG(a, b) FROM t' );
@@ -321,10 +337,10 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 	}
 
 	public function test_number_tokens_follow_mysql_magnitude_classes(): void {
-		$this->assertSame( array( 'SELECT', 'INT_NUMBER', 'END_OF_INPUT', 'END_MARKER' ), self::token_names( 'SELECT 2147483647' ) );
-		$this->assertSame( array( 'SELECT', 'LONG_NUMBER', 'END_OF_INPUT', 'END_MARKER' ), self::token_names( 'SELECT 2147483648' ) );
-		$this->assertSame( array( 'SELECT', 'ULONGLONG_NUMBER', 'END_OF_INPUT', 'END_MARKER' ), self::token_names( 'SELECT 18446744073709551615' ) );
-		$this->assertSame( array( 'SELECT', 'DECIMAL_NUMBER', 'END_OF_INPUT', 'END_MARKER' ), self::token_names( 'SELECT 18446744073709551616' ) );
+		$this->assertSame( array( 'SELECT', 'NUM', 'END_OF_INPUT', 'YYEOF' ), self::token_names( 'SELECT 2147483647' ) );
+		$this->assertSame( array( 'SELECT', 'LONG_NUM', 'END_OF_INPUT', 'YYEOF' ), self::token_names( 'SELECT 2147483648' ) );
+		$this->assertSame( array( 'SELECT', 'ULONGLONG_NUM', 'END_OF_INPUT', 'YYEOF' ), self::token_names( 'SELECT 18446744073709551615' ) );
+		$this->assertSame( array( 'SELECT', 'DECIMAL_NUM', 'END_OF_INPUT', 'YYEOF' ), self::token_names( 'SELECT 18446744073709551616' ) );
 	}
 
 	/**
@@ -341,7 +357,7 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 			$type     = $lexer->get_token()->id;
 			$is_valid = preg_match( '/^[\x{0080}-\x{ffff}]$/u', $value );
 			if ( $is_valid ) {
-				$this->assertSame( WP_MySQL_Lexer::IDENTIFIER, $type );
+				$this->assertSame( WP_MySQL_Lexer::IDENT, $type );
 			} else {
 				// A surrogate codepoint renders as an empty string, so the lexer
 				// emits no identifier — only the end-of-input terminal.
@@ -369,7 +385,7 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 				$is_valid = preg_match( '/^[\x{0080}-\x{ffff}]$/u', $value );
 				if ( $is_valid ) {
 					$this->assertTrue( $result );
-					$this->assertSame( WP_MySQL_Lexer::IDENTIFIER, $token->id );
+					$this->assertSame( WP_MySQL_Lexer::IDENT, $token->id );
 				} else {
 					$this->assertFalse( $result );
 					$this->assertNull( $token );
@@ -399,7 +415,7 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 					$is_valid = preg_match( '/^[\x{0080}-\x{ffff}]$/u', $value );
 					if ( $is_valid ) {
 						$this->assertTrue( $result );
-						$this->assertSame( WP_MySQL_Lexer::IDENTIFIER, $token->id );
+						$this->assertSame( WP_MySQL_Lexer::IDENT, $token->id );
 					} else {
 						$this->assertFalse( $result );
 						$this->assertNull( $token );
@@ -431,12 +447,12 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 	public function data_underscore_charset_after_dot(): array {
 		return array(
 			// `t . _utf8` - the member name must be an identifier, not a charset.
-			'charset name after dot is identifier'  => array( 't._utf8', 2, WP_MySQL_Lexer::IDENTIFIER ),
-			'other charset name after dot'          => array( 'a._binary', 2, WP_MySQL_Lexer::IDENTIFIER ),
+			'charset name after dot is identifier'  => array( 't._utf8', 2, WP_MySQL_Lexer::IDENT ),
+			'other charset name after dot'          => array( 'a._binary', 2, WP_MySQL_Lexer::IDENT ),
 			// A genuine charset introducer (before a string) stays a charset.
 			'charset introducer before string'      => array( "_utf8'x'", 0, WP_MySQL_Lexer::UNDERSCORE_CHARSET ),
 			// A non-charset underscore name after a dot stays an identifier.
-			'non-charset underscore name after dot' => array( 't._foo', 2, WP_MySQL_Lexer::IDENTIFIER ),
+			'non-charset underscore name after dot' => array( 't._foo', 2, WP_MySQL_Lexer::IDENT ),
 		);
 	}
 
@@ -448,7 +464,7 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 	 */
 	public function test_qualified_name_tokens( string $sql, array $expected ): void {
 		$this->assertSame(
-			array_merge( $expected, array( 'END_OF_INPUT', 'END_MARKER' ) ),
+			array_merge( $expected, array( 'END_OF_INPUT', 'YYEOF' ) ),
 			self::token_names( $sql )
 		);
 	}
@@ -457,54 +473,54 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 	 * @return array<string,array{0:string,1:string[]}>
 	 */
 	public function data_qualified_name_tokens(): array {
-		$qualified = array( 'IDENTIFIER', 'DOT_SYMBOL', 'IDENTIFIER' );
+		$qualified = array( 'IDENT', 'DOT', 'IDENT' );
 		return array(
 			// A qualified name part can start with digits.
 			'digits only'                 => array( 't.1', $qualified ),
 			'digit-led identifier'        => array( 't.1st', $qualified ),
 			'float-like identifier'       => array( 't.1e5', $qualified ),
-			'part ends before a sign'     => array( 't.1e+5', array_merge( $qualified, array( 'PLUS_OPERATOR', 'INT_NUMBER' ) ) ),
+			'part ends before a sign'     => array( 't.1e+5', array_merge( $qualified, array( 'PLUS', 'NUM' ) ) ),
 			'after a digit-led qualifier' => array( '1ea10.1', $qualified ),
-			'three parts'                 => array( 'd.1.2', array_merge( $qualified, array( 'DOT_SYMBOL', 'IDENTIFIER' ) ) ),
+			'three parts'                 => array( 'd.1.2', array_merge( $qualified, array( 'DOT', 'IDENT' ) ) ),
 
 			// Elsewhere, ".N" is a number.
-			'after a quoted identifier'   => array( '`t`.1', array( 'BACK_TICK_QUOTED_ID', 'DECIMAL_NUMBER' ) ),
-			'after whitespace'            => array( 't .1', array( 'IDENTIFIER', 'DECIMAL_NUMBER' ) ),
-			'after a separator dot'       => array( 't..1', array( 'IDENTIFIER', 'DOT_SYMBOL', 'DECIMAL_NUMBER' ) ),
-			'after a decimal'             => array( '1.5.6', array( 'DECIMAL_NUMBER', 'DECIMAL_NUMBER' ) ),
-			'after a float'               => array( '1e5.1', array( 'FLOAT_NUMBER', 'DECIMAL_NUMBER' ) ),
-			'after a hex number'          => array( '0x1F.1', array( 'HEX_NUMBER', 'DECIMAL_NUMBER' ) ),
-			'after a binary number'       => array( '0b1.1', array( 'BIN_NUMBER', 'DECIMAL_NUMBER' ) ),
-			'after "\N"'                  => array( '\N.1', array( 'NULL', 'DECIMAL_NUMBER' ) ),
-			'after a version comment'     => array( '/*!50000.5*/', array( 'DECIMAL_NUMBER' ) ),
+			'after a quoted identifier'   => array( '`t`.1', array( 'IDENT_QUOTED', 'DECIMAL_NUM' ) ),
+			'after whitespace'            => array( 't .1', array( 'IDENT', 'DECIMAL_NUM' ) ),
+			'after a separator dot'       => array( 't..1', array( 'IDENT', 'DOT', 'DECIMAL_NUM' ) ),
+			'after a decimal'             => array( '1.5.6', array( 'DECIMAL_NUM', 'DECIMAL_NUM' ) ),
+			'after a float'               => array( '1e5.1', array( 'FLOAT_NUM', 'DECIMAL_NUM' ) ),
+			'after a hex number'          => array( '0x1F.1', array( 'HEX_NUM', 'DECIMAL_NUM' ) ),
+			'after a binary number'       => array( '0b1.1', array( 'BIN_NUM', 'DECIMAL_NUM' ) ),
+			'after "\N"'                  => array( '\N.1', array( 'NULL', 'DECIMAL_NUM' ) ),
+			'after a version comment'     => array( '/*!50000.5*/', array( 'DECIMAL_NUM' ) ),
 
 			// A user variable name includes the dot.
-			'in a user variable'          => array( '@a.1', array( 'AT_SIGN_SYMBOL', 'IDENTIFIER' ) ),
+			'in a user variable'          => array( '@a.1', array( 'AT_SIGN', 'IDENT' ) ),
 
 			// A keyword before a dot and a name is an identifier.
 			'keyword before a name'       => array( 'order.id', $qualified ),
 			'keyword before digits'       => array( 'select.1', $qualified ),
 			'keyword before non-ASCII'    => array( 'order.ñ', $qualified ),
 			'keyword before "$"'          => array( 'order.$x', $qualified ),
-			'keyword in three parts'      => array( 'order.t.id', array_merge( $qualified, array( 'DOT_SYMBOL', 'IDENTIFIER' ) ) ),
+			'keyword in three parts'      => array( 'order.t.id', array_merge( $qualified, array( 'DOT', 'IDENT' ) ) ),
 
 			// A name right after a "." token is always an identifier.
-			'keyword after a dot'         => array( '`t`.order', array( 'BACK_TICK_QUOTED_ID', 'DOT_SYMBOL', 'IDENTIFIER' ) ),
-			'literal prefix after a dot'  => array( "t.x'41'", array_merge( $qualified, array( 'SINGLE_QUOTED_TEXT' ) ) ),
+			'keyword after a dot'         => array( '`t`.order', array( 'IDENT_QUOTED', 'DOT', 'IDENT' ) ),
+			'literal prefix after a dot'  => array( "t.x'41'", array_merge( $qualified, array( 'TEXT_STRING' ) ) ),
 
 			// Otherwise, it stays a keyword or a charset.
-			'keyword after a decimal'     => array( '1.FROM', array( 'DECIMAL_NUMBER', 'FROM' ) ),
-			'keyword before a backtick'   => array( 'order.`id`', array( 'ORDER', 'DOT_SYMBOL', 'BACK_TICK_QUOTED_ID' ) ),
-			'keyword before an asterisk'  => array( 'order.*', array( 'ORDER', 'DOT_SYMBOL', 'MULT_OPERATOR' ) ),
-			'keyword before whitespace'   => array( 'order .id', array( 'ORDER', 'DOT_SYMBOL', 'IDENTIFIER' ) ),
-			'system variable scope'       => array( '@@session.sql_mode', array( 'AT_SIGN_SYMBOL', 'AT_SIGN_SYMBOL', 'SESSION', 'DOT_SYMBOL', 'IDENTIFIER' ) ),
-			'charset introducer'          => array( '_utf8mb4.x', array( 'UNDERSCORE_CHARSET', 'DOT_SYMBOL', 'IDENTIFIER' ) ),
+			'keyword after a decimal'     => array( '1.FROM', array( 'DECIMAL_NUM', 'FROM' ) ),
+			'keyword before a backtick'   => array( 'order.`id`', array( 'ORDER', 'DOT', 'IDENT_QUOTED' ) ),
+			'keyword before an asterisk'  => array( 'order.*', array( 'ORDER', 'DOT', 'ASTERISK' ) ),
+			'keyword before whitespace'   => array( 'order .id', array( 'ORDER', 'DOT', 'IDENT' ) ),
+			'system variable scope'       => array( '@@session.sql_mode', array( 'AT_SIGN', 'AT_SIGN', 'SESSION', 'DOT', 'IDENT' ) ),
+			'charset introducer'          => array( '_utf8mb4.x', array( 'UNDERSCORE_CHARSET', 'DOT', 'IDENT' ) ),
 
 			// After "@@", the name is never a number, a literal, or a charset.
-			'system variable digits'      => array( '@@123', array( 'AT_SIGN_SYMBOL', 'AT_SIGN_SYMBOL', 'IDENTIFIER' ) ),
-			'system variable float-like'  => array( '@@1e5', array( 'AT_SIGN_SYMBOL', 'AT_SIGN_SYMBOL', 'IDENTIFIER' ) ),
-			'system variable before text' => array( "@@b'01'", array( 'AT_SIGN_SYMBOL', 'AT_SIGN_SYMBOL', 'IDENTIFIER', 'SINGLE_QUOTED_TEXT' ) ),
-			'system variable charset'     => array( '@@_utf8mb4', array( 'AT_SIGN_SYMBOL', 'AT_SIGN_SYMBOL', 'IDENTIFIER' ) ),
+			'system variable digits'      => array( '@@123', array( 'AT_SIGN', 'AT_SIGN', 'IDENT' ) ),
+			'system variable float-like'  => array( '@@1e5', array( 'AT_SIGN', 'AT_SIGN', 'IDENT' ) ),
+			'system variable before text' => array( "@@b'01'", array( 'AT_SIGN', 'AT_SIGN', 'IDENT', 'TEXT_STRING' ) ),
+			'system variable charset'     => array( '@@_utf8mb4', array( 'AT_SIGN', 'AT_SIGN', 'IDENT' ) ),
 		);
 	}
 
@@ -519,29 +535,29 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 
 	public function data_integer_types(): array {
 		return array(
-			array( '0', WP_MySQL_Lexer::INT_NUMBER ),
-			array( '123', WP_MySQL_Lexer::INT_NUMBER ),
-			array( '2147483647', WP_MySQL_Lexer::INT_NUMBER ),
-			array( '00000000001', WP_MySQL_Lexer::INT_NUMBER ),
-			array( '00000000002147483647', WP_MySQL_Lexer::INT_NUMBER ),
+			array( '0', WP_MySQL_Lexer::NUM ),
+			array( '123', WP_MySQL_Lexer::NUM ),
+			array( '2147483647', WP_MySQL_Lexer::NUM ),
+			array( '00000000001', WP_MySQL_Lexer::NUM ),
+			array( '00000000002147483647', WP_MySQL_Lexer::NUM ),
 
-			array( '2147483648', WP_MySQL_Lexer::LONG_NUMBER ),
-			array( '123456789123456789', WP_MySQL_Lexer::LONG_NUMBER ),
-			array( '9223372036854775807', WP_MySQL_Lexer::LONG_NUMBER ),
-			array( '00000000002147483648', WP_MySQL_Lexer::LONG_NUMBER ),
-			array( '00000000009223372036854775807', WP_MySQL_Lexer::LONG_NUMBER ),
+			array( '2147483648', WP_MySQL_Lexer::LONG_NUM ),
+			array( '123456789123456789', WP_MySQL_Lexer::LONG_NUM ),
+			array( '9223372036854775807', WP_MySQL_Lexer::LONG_NUM ),
+			array( '00000000002147483648', WP_MySQL_Lexer::LONG_NUM ),
+			array( '00000000009223372036854775807', WP_MySQL_Lexer::LONG_NUM ),
 
-			array( '9223372036854775808', WP_MySQL_Lexer::ULONGLONG_NUMBER ),
-			array( '12345678912345678912', WP_MySQL_Lexer::ULONGLONG_NUMBER ),
-			array( '18446744073709551615', WP_MySQL_Lexer::ULONGLONG_NUMBER ),
-			array( '00000000000000000009223372036854775808', WP_MySQL_Lexer::ULONGLONG_NUMBER ),
-			array( '000000000000000000018446744073709551615', WP_MySQL_Lexer::ULONGLONG_NUMBER ),
+			array( '9223372036854775808', WP_MySQL_Lexer::ULONGLONG_NUM ),
+			array( '12345678912345678912', WP_MySQL_Lexer::ULONGLONG_NUM ),
+			array( '18446744073709551615', WP_MySQL_Lexer::ULONGLONG_NUM ),
+			array( '00000000000000000009223372036854775808', WP_MySQL_Lexer::ULONGLONG_NUM ),
+			array( '000000000000000000018446744073709551615', WP_MySQL_Lexer::ULONGLONG_NUM ),
 
-			array( '18446744073709551616', WP_MySQL_Lexer::DECIMAL_NUMBER ),
-			array( '23456789123456789123', WP_MySQL_Lexer::DECIMAL_NUMBER ),
-			array( '123456789123456789123456789', WP_MySQL_Lexer::DECIMAL_NUMBER ),
-			array( '0000000000000000000018446744073709551616', WP_MySQL_Lexer::DECIMAL_NUMBER ),
-			array( '00000000000000000000123456789123456789123456789', WP_MySQL_Lexer::DECIMAL_NUMBER ),
+			array( '18446744073709551616', WP_MySQL_Lexer::DECIMAL_NUM ),
+			array( '23456789123456789123', WP_MySQL_Lexer::DECIMAL_NUM ),
+			array( '123456789123456789123456789', WP_MySQL_Lexer::DECIMAL_NUM ),
+			array( '0000000000000000000018446744073709551616', WP_MySQL_Lexer::DECIMAL_NUM ),
+			array( '00000000000000000000123456789123456789123456789', WP_MySQL_Lexer::DECIMAL_NUM ),
 		);
 	}
 
@@ -571,64 +587,64 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 	}
 
 	public function data_identifier_or_number(): array {
-		$end = array( WP_MySQL_Lexer::END_OF_INPUT, WP_MySQL_Lexer::END_MARKER );
+		$end = array( WP_MySQL_Lexer::END_OF_INPUT, WP_MySQL_Lexer::YYEOF );
 		return array(
 			// integer
-			array( '123', array_merge( array( WP_MySQL_Lexer::INT_NUMBER ), $end ) ),
-			array( '123abc', array_merge( array( WP_MySQL_Lexer::IDENTIFIER ), $end ) ), // identifier
+			array( '123', array_merge( array( WP_MySQL_Lexer::NUM ), $end ) ),
+			array( '123abc', array_merge( array( WP_MySQL_Lexer::IDENT ), $end ) ), // identifier
 
 			// binary
-			array( '0b01', array_merge( array( WP_MySQL_Lexer::BIN_NUMBER ), $end ) ),
-			array( '0b01xyz', array_merge( array( WP_MySQL_Lexer::IDENTIFIER ), $end ) ), // identifier
-			array( '0b', array_merge( array( WP_MySQL_Lexer::IDENTIFIER ), $end ) ), // identifier
-			array( "b'01'", array_merge( array( WP_MySQL_Lexer::BIN_NUMBER ), $end ) ),
+			array( '0b01', array_merge( array( WP_MySQL_Lexer::BIN_NUM ), $end ) ),
+			array( '0b01xyz', array_merge( array( WP_MySQL_Lexer::IDENT ), $end ) ), // identifier
+			array( '0b', array_merge( array( WP_MySQL_Lexer::IDENT ), $end ) ), // identifier
+			array( "b'01'", array_merge( array( WP_MySQL_Lexer::BIN_NUM ), $end ) ),
 			array( "b'01xyz'", array() ), // invalid input
-			array( "b''", array_merge( array( WP_MySQL_Lexer::BIN_NUMBER ), $end ) ),
+			array( "b''", array_merge( array( WP_MySQL_Lexer::BIN_NUM ), $end ) ),
 			array( "b'", array() ), // invalid input
 			array( "b'01", array() ), // invalid input
 
 			// hex
-			array( '0xab01', array_merge( array( WP_MySQL_Lexer::HEX_NUMBER ), $end ) ),
-			array( '0xab01xyz', array_merge( array( WP_MySQL_Lexer::IDENTIFIER ), $end ) ), // identifier
-			array( '0x', array_merge( array( WP_MySQL_Lexer::IDENTIFIER ), $end ) ), // identifier
-			array( "x'ab01'", array_merge( array( WP_MySQL_Lexer::HEX_NUMBER ), $end ) ),
+			array( '0xab01', array_merge( array( WP_MySQL_Lexer::HEX_NUM ), $end ) ),
+			array( '0xab01xyz', array_merge( array( WP_MySQL_Lexer::IDENT ), $end ) ), // identifier
+			array( '0x', array_merge( array( WP_MySQL_Lexer::IDENT ), $end ) ), // identifier
+			array( "x'ab01'", array_merge( array( WP_MySQL_Lexer::HEX_NUM ), $end ) ),
 			array( "x'ab01xyz'", array() ), // invalid input
-			array( "x''", array_merge( array( WP_MySQL_Lexer::HEX_NUMBER ), $end ) ),
+			array( "x''", array_merge( array( WP_MySQL_Lexer::HEX_NUM ), $end ) ),
 			array( "x'", array() ), // invalid input
 			array( "x'ab", array() ), // invalid input
 
 			// decimal
-			array( '123.456', array_merge( array( WP_MySQL_Lexer::DECIMAL_NUMBER ), $end ) ),
-			array( '.123', array_merge( array( WP_MySQL_Lexer::DECIMAL_NUMBER ), $end ) ),
-			array( '123.', array_merge( array( WP_MySQL_Lexer::DECIMAL_NUMBER ), $end ) ),
-			array( '123.456abc', array_merge( array( WP_MySQL_Lexer::DECIMAL_NUMBER, WP_MySQL_Lexer::IDENTIFIER ), $end ) ), // not identifier
-			array( '.123abc', array_merge( array( WP_MySQL_Lexer::DECIMAL_NUMBER, WP_MySQL_Lexer::IDENTIFIER ), $end ) ), // not identifier
-			array( '123.abc', array_merge( array( WP_MySQL_Lexer::DECIMAL_NUMBER, WP_MySQL_Lexer::IDENTIFIER ), $end ) ), // not identifier
+			array( '123.456', array_merge( array( WP_MySQL_Lexer::DECIMAL_NUM ), $end ) ),
+			array( '.123', array_merge( array( WP_MySQL_Lexer::DECIMAL_NUM ), $end ) ),
+			array( '123.', array_merge( array( WP_MySQL_Lexer::DECIMAL_NUM ), $end ) ),
+			array( '123.456abc', array_merge( array( WP_MySQL_Lexer::DECIMAL_NUM, WP_MySQL_Lexer::IDENT ), $end ) ), // not identifier
+			array( '.123abc', array_merge( array( WP_MySQL_Lexer::DECIMAL_NUM, WP_MySQL_Lexer::IDENT ), $end ) ), // not identifier
+			array( '123.abc', array_merge( array( WP_MySQL_Lexer::DECIMAL_NUM, WP_MySQL_Lexer::IDENT ), $end ) ), // not identifier
 
 			// float
-			array( '1e10', array_merge( array( WP_MySQL_Lexer::FLOAT_NUMBER ), $end ) ),
-			array( '1e+10', array_merge( array( WP_MySQL_Lexer::FLOAT_NUMBER ), $end ) ),
-			array( '1e-10', array_merge( array( WP_MySQL_Lexer::FLOAT_NUMBER ), $end ) ),
-			array( '.1e10', array_merge( array( WP_MySQL_Lexer::FLOAT_NUMBER ), $end ) ),
-			array( '.1e+10', array_merge( array( WP_MySQL_Lexer::FLOAT_NUMBER ), $end ) ),
-			array( '.1e-10', array_merge( array( WP_MySQL_Lexer::FLOAT_NUMBER ), $end ) ),
-			array( '1.1e10', array_merge( array( WP_MySQL_Lexer::FLOAT_NUMBER ), $end ) ),
-			array( '1.1e-10', array_merge( array( WP_MySQL_Lexer::FLOAT_NUMBER ), $end ) ),
-			array( '1.1e+10', array_merge( array( WP_MySQL_Lexer::FLOAT_NUMBER ), $end ) ),
-			array( '1e10abc', array_merge( array( WP_MySQL_Lexer::FLOAT_NUMBER, WP_MySQL_Lexer::IDENTIFIER ), $end ) ), // not identifier (this differs from INT/BIN/HEX numbers)
-			array( '1e+10abc', array_merge( array( WP_MySQL_Lexer::FLOAT_NUMBER, WP_MySQL_Lexer::IDENTIFIER ), $end ) ), // not identifier
-			array( '1e-10abc', array_merge( array( WP_MySQL_Lexer::FLOAT_NUMBER, WP_MySQL_Lexer::IDENTIFIER ), $end ) ), // not identifier
-			array( '.1e10abc', array_merge( array( WP_MySQL_Lexer::FLOAT_NUMBER, WP_MySQL_Lexer::IDENTIFIER ), $end ) ), // not identifier
-			array( '.1e+10abc', array_merge( array( WP_MySQL_Lexer::FLOAT_NUMBER, WP_MySQL_Lexer::IDENTIFIER ), $end ) ), // not identifier
-			array( '.1e-10abc', array_merge( array( WP_MySQL_Lexer::FLOAT_NUMBER, WP_MySQL_Lexer::IDENTIFIER ), $end ) ), // not identifier
-			array( '1.1e10abc', array_merge( array( WP_MySQL_Lexer::FLOAT_NUMBER, WP_MySQL_Lexer::IDENTIFIER ), $end ) ), // not identifier
-			array( '1.1e+10abc', array_merge( array( WP_MySQL_Lexer::FLOAT_NUMBER, WP_MySQL_Lexer::IDENTIFIER ), $end ) ), // not identifier
-			array( '1.1e-10abc', array_merge( array( WP_MySQL_Lexer::FLOAT_NUMBER, WP_MySQL_Lexer::IDENTIFIER ), $end ) ), // not identifier
+			array( '1e10', array_merge( array( WP_MySQL_Lexer::FLOAT_NUM ), $end ) ),
+			array( '1e+10', array_merge( array( WP_MySQL_Lexer::FLOAT_NUM ), $end ) ),
+			array( '1e-10', array_merge( array( WP_MySQL_Lexer::FLOAT_NUM ), $end ) ),
+			array( '.1e10', array_merge( array( WP_MySQL_Lexer::FLOAT_NUM ), $end ) ),
+			array( '.1e+10', array_merge( array( WP_MySQL_Lexer::FLOAT_NUM ), $end ) ),
+			array( '.1e-10', array_merge( array( WP_MySQL_Lexer::FLOAT_NUM ), $end ) ),
+			array( '1.1e10', array_merge( array( WP_MySQL_Lexer::FLOAT_NUM ), $end ) ),
+			array( '1.1e-10', array_merge( array( WP_MySQL_Lexer::FLOAT_NUM ), $end ) ),
+			array( '1.1e+10', array_merge( array( WP_MySQL_Lexer::FLOAT_NUM ), $end ) ),
+			array( '1e10abc', array_merge( array( WP_MySQL_Lexer::FLOAT_NUM, WP_MySQL_Lexer::IDENT ), $end ) ), // not identifier (this differs from INT/BIN/HEX numbers)
+			array( '1e+10abc', array_merge( array( WP_MySQL_Lexer::FLOAT_NUM, WP_MySQL_Lexer::IDENT ), $end ) ), // not identifier
+			array( '1e-10abc', array_merge( array( WP_MySQL_Lexer::FLOAT_NUM, WP_MySQL_Lexer::IDENT ), $end ) ), // not identifier
+			array( '.1e10abc', array_merge( array( WP_MySQL_Lexer::FLOAT_NUM, WP_MySQL_Lexer::IDENT ), $end ) ), // not identifier
+			array( '.1e+10abc', array_merge( array( WP_MySQL_Lexer::FLOAT_NUM, WP_MySQL_Lexer::IDENT ), $end ) ), // not identifier
+			array( '.1e-10abc', array_merge( array( WP_MySQL_Lexer::FLOAT_NUM, WP_MySQL_Lexer::IDENT ), $end ) ), // not identifier
+			array( '1.1e10abc', array_merge( array( WP_MySQL_Lexer::FLOAT_NUM, WP_MySQL_Lexer::IDENT ), $end ) ), // not identifier
+			array( '1.1e+10abc', array_merge( array( WP_MySQL_Lexer::FLOAT_NUM, WP_MySQL_Lexer::IDENT ), $end ) ), // not identifier
+			array( '1.1e-10abc', array_merge( array( WP_MySQL_Lexer::FLOAT_NUM, WP_MySQL_Lexer::IDENT ), $end ) ), // not identifier
 
 			// non-numbers
-			array( '.SELECT', array_merge( array( WP_MySQL_Lexer::DOT_SYMBOL, WP_MySQL_Lexer::IDENTIFIER ), $end ) ), // not decimal or float
-			array( '1+e10', array_merge( array( WP_MySQL_Lexer::INT_NUMBER, WP_MySQL_Lexer::PLUS_OPERATOR, WP_MySQL_Lexer::IDENTIFIER ), $end ) ), // not float
-			array( '1-e10', array_merge( array( WP_MySQL_Lexer::INT_NUMBER, WP_MySQL_Lexer::MINUS_OPERATOR, WP_MySQL_Lexer::IDENTIFIER ), $end ) ), // not float
+			array( '.SELECT', array_merge( array( WP_MySQL_Lexer::DOT, WP_MySQL_Lexer::IDENT ), $end ) ), // not decimal or float
+			array( '1+e10', array_merge( array( WP_MySQL_Lexer::NUM, WP_MySQL_Lexer::PLUS, WP_MySQL_Lexer::IDENT ), $end ) ), // not float
+			array( '1-e10', array_merge( array( WP_MySQL_Lexer::NUM, WP_MySQL_Lexer::MINUS, WP_MySQL_Lexer::IDENT ), $end ) ), // not float
 		);
 	}
 
@@ -690,12 +706,12 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 
 	public function data_valid_escaped_strings(): array {
 		return array(
-			'escaped single quote'       => array( "'it\\'s'", WP_MySQL_Lexer::SINGLE_QUOTED_TEXT ),
-			'trailing escaped backslash' => array( "'path\\\\'", WP_MySQL_Lexer::SINGLE_QUOTED_TEXT ),
-			'doubled single quote'       => array( "'it''s'", WP_MySQL_Lexer::SINGLE_QUOTED_TEXT ),
-			'empty single-quoted string' => array( "''", WP_MySQL_Lexer::SINGLE_QUOTED_TEXT ),
-			'escaped double quote'       => array( '"col\\"name"', WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT ),
-			'backtick identifier'        => array( '`my_column`', WP_MySQL_Lexer::BACK_TICK_QUOTED_ID ),
+			'escaped single quote'       => array( "'it\\'s'", WP_MySQL_Lexer::TEXT_STRING ),
+			'trailing escaped backslash' => array( "'path\\\\'", WP_MySQL_Lexer::TEXT_STRING ),
+			'doubled single quote'       => array( "'it''s'", WP_MySQL_Lexer::TEXT_STRING ),
+			'empty single-quoted string' => array( "''", WP_MySQL_Lexer::TEXT_STRING ),
+			'escaped double quote'       => array( '"col\\"name"', WP_MySQL_Lexer::TEXT_STRING ),
+			'backtick identifier'        => array( '`my_column`', WP_MySQL_Lexer::IDENT_QUOTED ),
 		);
 	}
 
@@ -749,34 +765,50 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 		array $sql_modes,
 		string $expected_token_name
 	): void {
-		$tokens = ( new WP_MySQL_Lexer( $sql, 80400, $sql_modes ) )->remaining_tokens();
+		$tokens = ( new WP_MySQL_Lexer( $sql, 80410, $sql_modes ) )->remaining_tokens();
 		$this->assertSame( $expected_token_name, $tokens[0]->get_name(), $sql );
 	}
 
 	public function data_ansi_quotes_tokenization(): array {
 		return array(
-			'double quote is a string by default'          => array( '"foo"', array(), 'SINGLE_QUOTED_TEXT' ),
-			'double quote is an identifier in ANSI_QUOTES' => array( '"foo"', array( 'ANSI_QUOTES' ), 'BACK_TICK_QUOTED_ID' ),
-			'ANSI_QUOTES is case-insensitive'              => array( '"foo"', array( 'ansi_quotes' ), 'BACK_TICK_QUOTED_ID' ),
-			'ANSI_QUOTES with other modes'                 => array( '"foo"', array( 'STRICT_ALL_TABLES', 'ANSI_QUOTES' ), 'BACK_TICK_QUOTED_ID' ),
-			'single quote stays a string in ANSI_QUOTES'   => array( "'foo'", array( 'ANSI_QUOTES' ), 'SINGLE_QUOTED_TEXT' ),
-			'backtick stays an identifier in ANSI_QUOTES'  => array( '`foo`', array( 'ANSI_QUOTES' ), 'BACK_TICK_QUOTED_ID' ),
+			'double quote is a string by default'          => array( '"foo"', array(), 'TEXT_STRING' ),
+			'double quote is an identifier in ANSI_QUOTES' => array( '"foo"', array( 'ANSI_QUOTES' ), 'IDENT_QUOTED' ),
+			'ANSI_QUOTES is case-insensitive'              => array( '"foo"', array( 'ansi_quotes' ), 'IDENT_QUOTED' ),
+			'ANSI_QUOTES with other modes'                 => array( '"foo"', array( 'STRICT_ALL_TABLES', 'ANSI_QUOTES' ), 'IDENT_QUOTED' ),
+			'single quote stays a string in ANSI_QUOTES'   => array( "'foo'", array( 'ANSI_QUOTES' ), 'TEXT_STRING' ),
+			'backtick stays an identifier in ANSI_QUOTES'  => array( '`foo`', array( 'ANSI_QUOTES' ), 'IDENT_QUOTED' ),
+		);
+	}
+
+	/**
+	 * @dataProvider data_national_strings
+	 */
+	public function test_national_strings( string $sql, array $expected ): void {
+		$this->assertSame( array_merge( $expected, array( 'END_OF_INPUT', 'YYEOF' ) ), self::token_names( $sql ) );
+	}
+
+	public function data_national_strings(): array {
+		return array(
+			'uppercase prefix'              => array( "N'abc'", array( 'NCHAR_STRING' ) ),
+			'lowercase prefix'              => array( "n'abc'", array( 'NCHAR_STRING' ) ),
+			'escaped quote'                 => array( "N'a''b'", array( 'NCHAR_STRING' ) ),
+			'double quote is not a literal' => array( 'N"abc"', array( 'IDENT', 'TEXT_STRING' ) ),
 		);
 	}
 
 	public function test_composite_ansi_mode_expands_to_lexer_component_modes(): void {
 		// ANSI_QUOTES: a double-quoted sequence is a quoted identifier.
-		$lexer = new WP_MySQL_Lexer( '"foo"', 80400, array( 'ANSI' ) );
+		$lexer = new WP_MySQL_Lexer( '"foo"', 80410, array( 'ANSI' ) );
 		$this->assertTrue( $lexer->next_token() );
-		$this->assertSame( WP_MySQL_Lexer::BACK_TICK_QUOTED_ID, $lexer->get_token()->id );
+		$this->assertSame( WP_MySQL_Lexer::IDENT_QUOTED, $lexer->get_token()->id );
 
 		// PIPES_AS_CONCAT: "||" is the string concatenation operator.
-		$lexer = new WP_MySQL_Lexer( '||', 80400, array( 'ANSI' ) );
+		$lexer = new WP_MySQL_Lexer( '||', 80410, array( 'ANSI' ) );
 		$this->assertTrue( $lexer->next_token() );
-		$this->assertSame( WP_MySQL_Lexer::CONCAT_PIPES_SYMBOL, $lexer->get_token()->id );
+		$this->assertSame( WP_MySQL_Lexer::OR_OR_SYM, $lexer->get_token()->id );
 
 		// IGNORE_SPACE: whitespace is permitted between a function name and "(".
-		$lexer = new WP_MySQL_Lexer( 'COUNT (1)', 80400, array( 'ANSI' ) );
+		$lexer = new WP_MySQL_Lexer( 'COUNT (1)', 80410, array( 'ANSI' ) );
 		$this->assertTrue( $lexer->next_token() );
 		$this->assertSame( WP_MySQL_Lexer::KEYWORDS['COUNT'], $lexer->get_token()->id );
 	}
@@ -792,7 +824,7 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 		int $expected_token_id,
 		string $expected_value
 	): void {
-		$lexer = new WP_MySQL_Lexer( $sql, 80400, $sql_modes );
+		$lexer = new WP_MySQL_Lexer( $sql, 80410, $sql_modes );
 		$this->assertTrue( $lexer->next_token() );
 
 		$token = $lexer->get_token();
@@ -807,16 +839,16 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 		$sq = "'";
 		return array(
 			// Backtick identifiers: backslash is a literal character.
-			'backtick keeps backslash-n literal'    => array( $bt . 'a' . $bs . 'nb' . $bt, array(), WP_MySQL_Lexer::BACK_TICK_QUOTED_ID, 'a' . $bs . 'nb' ),
-			'backtick allows trailing backslash'    => array( $bt . 'a' . $bs . $bt, array(), WP_MySQL_Lexer::BACK_TICK_QUOTED_ID, 'a' . $bs ),
-			'backtick escapes only by doubling'     => array( $bt . 'a' . $bt . $bt . 'b' . $bt, array(), WP_MySQL_Lexer::BACK_TICK_QUOTED_ID, 'a' . $bt . 'b' ),
+			'backtick keeps backslash-n literal'    => array( $bt . 'a' . $bs . 'nb' . $bt, array(), WP_MySQL_Lexer::IDENT_QUOTED, 'a' . $bs . 'nb' ),
+			'backtick allows trailing backslash'    => array( $bt . 'a' . $bs . $bt, array(), WP_MySQL_Lexer::IDENT_QUOTED, 'a' . $bs ),
+			'backtick escapes only by doubling'     => array( $bt . 'a' . $bt . $bt . 'b' . $bt, array(), WP_MySQL_Lexer::IDENT_QUOTED, 'a' . $bt . 'b' ),
 
 			// ANSI-quoted identifiers behave like backtick identifiers.
-			'ansi-quoted keeps backslash literal'   => array( $dq . 'a' . $bs . 'nb' . $dq, array( 'ANSI_QUOTES' ), WP_MySQL_Lexer::BACK_TICK_QUOTED_ID, 'a' . $bs . 'nb' ),
-			'ansi-quoted allows trailing backslash' => array( $dq . 'a' . $bs . $dq, array( 'ANSI_QUOTES' ), WP_MySQL_Lexer::BACK_TICK_QUOTED_ID, 'a' . $bs ),
+			'ansi-quoted keeps backslash literal'   => array( $dq . 'a' . $bs . 'nb' . $dq, array( 'ANSI_QUOTES' ), WP_MySQL_Lexer::IDENT_QUOTED, 'a' . $bs . 'nb' ),
+			'ansi-quoted allows trailing backslash' => array( $dq . 'a' . $bs . $dq, array( 'ANSI_QUOTES' ), WP_MySQL_Lexer::IDENT_QUOTED, 'a' . $bs ),
 
 			// String literals still process backslash escapes.
-			'single-quoted string escapes newline'  => array( $sq . 'a' . $bs . 'nb' . $sq, array(), WP_MySQL_Lexer::SINGLE_QUOTED_TEXT, "a\nb" ),
+			'single-quoted string escapes newline'  => array( $sq . 'a' . $bs . 'nb' . $sq, array(), WP_MySQL_Lexer::TEXT_STRING, "a\nb" ),
 		);
 	}
 

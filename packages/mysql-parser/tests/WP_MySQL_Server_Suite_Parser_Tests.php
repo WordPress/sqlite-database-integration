@@ -20,7 +20,7 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 	 * legitimately changes.
 	 */
 	const EXPECTED_QUERIES  = 69158;
-	const EXPECTED_FAILURES = 170;
+	const EXPECTED_FAILURES = 167;
 
 	public function test_corpus_acceptance_rate(): void {
 		$parser = WP_MySQL_Parser_Factory::create_parser();
@@ -36,7 +36,7 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 			++$total;
 
 			// Pin the MySQL version. The failure set in FAILURES_PATH depends on it.
-			$tokens = ( new WP_MySQL_Lexer( $query, 80038 ) )->remaining_tokens();
+			$tokens = ( new WP_MySQL_Lexer( $query, 80410 ) )->remaining_tokens();
 			if ( null === $parser->parse( $tokens ) ) {
 				$failures[] = $query;
 			}

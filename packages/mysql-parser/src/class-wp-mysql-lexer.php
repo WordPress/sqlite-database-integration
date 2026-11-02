@@ -37,62 +37,61 @@ class WP_MySQL_Lexer {
 	// BEGIN: AUTO-GENERATED MYSQL GRAMMAR SYMBOLS
 	// This block is auto-generated from MySQL mysql-8.4.10. DO NOT EDIT!
 	// phpcs:disable
-	const OPEN_PAR_SYMBOL                = 40;
-	const CLOSE_PAR_SYMBOL               = 41;
-	const OPEN_CURLY_SYMBOL              = 123;
-	const CLOSE_CURLY_SYMBOL             = 125;
-	const AT_SIGN_SYMBOL                 = 64;
-	const COLON_SYMBOL                   = 58;
-	const COMMA_SYMBOL                   = 44;
-	const DOT_SYMBOL                     = 46;
-	const SEMICOLON_SYMBOL               = 59;
-	const BITWISE_AND_OPERATOR           = 38;
-	const BITWISE_NOT_OPERATOR           = 126;
-	const BITWISE_OR_OPERATOR            = 124;
-	const BITWISE_XOR_OPERATOR           = 94;
-	const DIV_OPERATOR                   = 47;
-	const MINUS_OPERATOR                 = 45;
-	const MOD_OPERATOR                   = 37;
-	const MULT_OPERATOR                  = 42;
-	const PLUS_OPERATOR                  = 43;
-	const LOGICAL_NOT_OPERATOR           = 33;
-	const EQUAL_OPERATOR                 = 415;
-	const NULL_SAFE_EQUAL_OPERATOR       = 416;
-	const GREATER_OR_EQUAL_OPERATOR      = 456;
-	const GREATER_THAN_OPERATOR          = 469;
-	const LESS_OR_EQUAL_OPERATOR         = 522;
-	const LESS_THAN_OPERATOR             = 549;
-	const NOT_EQUAL_OPERATOR             = 614;
-	const ASSIGN_OPERATOR                = 757;
-	const LOGICAL_AND_OPERATOR           = 273;
-	const LOGICAL_OR_OPERATOR            = 642;
-	const CONCAT_PIPES_SYMBOL            = 644;
-	const SHIFT_LEFT_OPERATOR            = 759;
-	const SHIFT_RIGHT_OPERATOR           = 760;
-	const JSON_SEPARATOR_SYMBOL          = 514;
-	const JSON_UNQUOTED_SEPARATOR_SYMBOL = 907;
-	const PARAM_MARKER                   = 652;
-	const IDENTIFIER                     = 482;
-	const BACK_TICK_QUOTED_ID            = 484;
-	const SINGLE_QUOTED_TEXT             = 827;
-	const DOUBLE_QUOTED_TEXT             = 827;
-	const NCHAR_TEXT                     = 611;
-	const UNDERSCORE_CHARSET             = 852;
-	const BIN_NUMBER                     = 292;
-	const HEX_NUMBER                     = 474;
-	const INT_NUMBER                     = 628;
-	const LONG_NUMBER                    = 545;
-	const ULONGLONG_NUMBER               = 849;
-	const DECIMAL_NUMBER                 = 377;
-	const FLOAT_NUMBER                   = 443;
-	const NULL2_SYMBOL                   = 627;
-	const NOT_SYMBOL                     = 622;
-	const NOT2_SYMBOL                    = 621;
-	const WITH_SYMBOL                    = 892;
-	const ROLLUP_SYMBOL                  = 734;
-	const WITH_ROLLUP_SYMBOL             = 894;
-	const END_OF_INPUT                   = 411;
-	const END_MARKER                     = 0;
+	const LEFT_PAREN                  = 40;
+	const RIGHT_PAREN                 = 41;
+	const LEFT_BRACE                  = 123;
+	const RIGHT_BRACE                 = 125;
+	const COMMA                       = 44;
+	const DOT                         = 46;
+	const COLON                       = 58;
+	const SEMICOLON                   = 59;
+	const AT_SIGN                     = 64;
+	const PLUS                        = 43;
+	const MINUS                       = 45;
+	const ASTERISK                    = 42;
+	const SLASH                       = 47;
+	const PERCENT                     = 37;
+	const AMPERSAND                   = 38;
+	const PIPE                        = 124;
+	const CARET                       = 94;
+	const TILDE                       = 126;
+	const EXCLAMATION                 = 33;
+	const EQ                          = 415;
+	const EQUAL_SYM                   = 416;
+	const NE                          = 614;
+	const GE                          = 456;
+	const GT_SYM                      = 469;
+	const LE                          = 522;
+	const LT                          = 549;
+	const SET_VAR                     = 757;
+	const AND_AND_SYM                 = 273;
+	const OR2_SYM                     = 642;
+	const OR_OR_SYM                   = 644;
+	const SHIFT_LEFT                  = 759;
+	const SHIFT_RIGHT                 = 760;
+	const JSON_SEPARATOR_SYM          = 514;
+	const JSON_UNQUOTED_SEPARATOR_SYM = 907;
+	const PARAM_MARKER                = 652;
+	const IDENT                       = 482;
+	const IDENT_QUOTED                = 484;
+	const TEXT_STRING                 = 827;
+	const NCHAR_STRING                = 611;
+	const UNDERSCORE_CHARSET          = 852;
+	const BIN_NUM                     = 292;
+	const HEX_NUM                     = 474;
+	const NUM                         = 628;
+	const LONG_NUM                    = 545;
+	const ULONGLONG_NUM               = 849;
+	const DECIMAL_NUM                 = 377;
+	const FLOAT_NUM                   = 443;
+	const NULL_SYM                    = 627;
+	const NOT_SYM                     = 622;
+	const NOT2_SYM                    = 621;
+	const WITH                        = 892;
+	const ROLLUP_SYM                  = 734;
+	const WITH_ROLLUP_SYM             = 894;
+	const END_OF_INPUT                = 411;
+	const YYEOF                       = 0;
 
 	const KEYWORDS = array( '!=' => 614, '&&' => 273, '<' => 549, '<<' => 759, '<=' => 522, '<=>' => 416, '<>' => 614, '=' => 415, '>' => 469, '>=' => 456, '>>' => 760, 'ACCESSIBLE' => 259, 'ACCOUNT' => 260, 'ACTION' => 261, 'ACTIVE' => 973, 'ADD' => 262, 'ADDDATE' => 263, 'ADMIN' => 910, 'AFTER' => 264, 'AGAINST' => 265, 'AGGREGATE' => 266, 'ALGORITHM' => 267, 'ALL' => 268, 'ALTER' => 269, 'ALWAYS' => 270, 'ANALYZE' => 272, 'AND' => 274, 'ANY' => 275, 'ARRAY' => 976, 'AS' => 276, 'ASC' => 277, 'ASCII' => 278, 'ASENSITIVE' => 279, 'ASSIGN_GTIDS_TO_ANONYMOUS_TRANSACTIONS' => 1161, 'AT' => 280, 'ATTRIBUTE' => 1153, 'AUTHENTICATION' => 1191, 'AUTO' => 1211, 'AUTOEXTEND_SIZE' => 281, 'AUTO_INCREMENT' => 282, 'AVG' => 284, 'AVG_ROW_LENGTH' => 283, 'BACKUP' => 285, 'BEFORE' => 286, 'BEGIN' => 287, 'BERNOULLI' => 1213, 'BETWEEN' => 288, 'BIGINT' => 289, 'BINARY' => 290, 'BINLOG' => 291, 'BIT' => 295, 'BIT_AND' => 293, 'BIT_OR' => 294, 'BIT_XOR' => 296, 'BLOB' => 297, 'BLOCK' => 298, 'BOOL' => 300, 'BOOLEAN' => 299, 'BOTH' => 301, 'BTREE' => 302, 'BUCKETS' => 929, 'BULK' => 1201, 'BY' => 303, 'BYTE' => 304, 'CACHE' => 305, 'CALL' => 306, 'CASCADE' => 307, 'CASCADED' => 308, 'CASE' => 309, 'CAST' => 310, 'CATALOG_NAME' => 311, 'CHAIN' => 312, 'CHALLENGE_RESPONSE' => 1198, 'CHANGE' => 313, 'CHANGED' => 314, 'CHANNEL' => 315, 'CHAR' => 317, 'CHARACTER' => 317, 'CHARSET' => 316, 'CHECK' => 319, 'CHECKSUM' => 318, 'CIPHER' => 320, 'CLASS_ORIGIN' => 321, 'CLIENT' => 322, 'CLONE' => 931, 'CLOSE' => 323, 'COALESCE' => 324, 'CODE' => 325, 'COLLATE' => 326, 'COLLATION' => 327, 'COLUMN' => 329, 'COLUMNS' => 328, 'COLUMN_FORMAT' => 330, 'COLUMN_NAME' => 331, 'COMMENT' => 332, 'COMMIT' => 334, 'COMMITTED' => 333, 'COMPACT' => 335, 'COMPLETION' => 336, 'COMPONENT' => 914, 'COMPRESSED' => 337, 'COMPRESSION' => 338, 'CONCURRENT' => 340, 'CONDITION' => 341, 'CONNECTION' => 342, 'CONSISTENT' => 343, 'CONSTRAINT' => 344, 'CONSTRAINT_CATALOG' => 345, 'CONSTRAINT_NAME' => 346, 'CONSTRAINT_SCHEMA' => 347, 'CONTAINS' => 348, 'CONTEXT' => 349, 'CONTINUE' => 350, 'CONVERT' => 351, 'COUNT' => 352, 'CPU' => 353, 'CREATE' => 354, 'CROSS' => 355, 'CUBE' => 356, 'CUME_DIST' => 932, 'CURDATE' => 357, 'CURRENT' => 358, 'CURRENT_DATE' => 357, 'CURRENT_TIME' => 362, 'CURRENT_TIMESTAMP' => 623, 'CURRENT_USER' => 359, 'CURSOR' => 360, 'CURSOR_NAME' => 361, 'CURTIME' => 362, 'DATA' => 366, 'DATABASE' => 363, 'DATABASES' => 364, 'DATAFILE' => 365, 'DATE' => 370, 'DATETIME' => 367, 'DATE_ADD' => 368, 'DATE_SUB' => 369, 'DAY' => 375, 'DAY_HOUR' => 371, 'DAY_MICROSECOND' => 372, 'DAY_MINUTE' => 373, 'DAY_SECOND' => 374, 'DEALLOCATE' => 376, 'DEC' => 378, 'DECIMAL' => 378, 'DECLARE' => 379, 'DEFAULT' => 380, 'DEFAULT_AUTH' => 381, 'DEFINER' => 382, 'DEFINITION' => 969, 'DELAYED' => 383, 'DELAY_KEY_WRITE' => 384, 'DELETE' => 385, 'DENSE_RANK' => 933, 'DESC' => 386, 'DESCRIBE' => 387, 'DESCRIPTION' => 970, 'DETERMINISTIC' => 389, 'DIAGNOSTICS' => 390, 'DIRECTORY' => 391, 'DISABLE' => 392, 'DISCARD' => 393, 'DISK' => 394, 'DISTINCT' => 395, 'DISTINCTROW' => 395, 'DIV' => 396, 'DO' => 398, 'DOUBLE' => 397, 'DROP' => 399, 'DUAL' => 400, 'DUMPFILE' => 401, 'DUPLICATE' => 402, 'DYNAMIC' => 403, 'EACH' => 404, 'ELSE' => 405, 'ELSEIF' => 406, 'EMPTY' => 954, 'ENABLE' => 407, 'ENCLOSED' => 408, 'ENCRYPTION' => 339, 'END' => 409, 'ENDS' => 410, 'ENFORCED' => 985, 'ENGINE' => 413, 'ENGINES' => 412, 'ENGINE_ATTRIBUTE' => 1154, 'ENUM' => 414, 'ERROR' => 417, 'ERRORS' => 418, 'ESCAPE' => 420, 'ESCAPED' => 419, 'EVENT' => 422, 'EVENTS' => 421, 'EVERY' => 423, 'EXCEPT' => 913, 'EXCHANGE' => 424, 'EXCLUDE' => 934, 'EXECUTE' => 425, 'EXISTS' => 426, 'EXIT' => 427, 'EXPANSION' => 428, 'EXPIRE' => 429, 'EXPLAIN' => 387, 'EXPORT' => 430, 'EXTENDED' => 431, 'EXTENT_SIZE' => 432, 'EXTRACT' => 433, 'FACTOR' => 1192, 'FAILED_LOGIN_ATTEMPTS' => 995, 'FALSE' => 434, 'FAST' => 435, 'FAULTS' => 436, 'FETCH' => 437, 'FIELDS' => 328, 'FILE' => 438, 'FILE_BLOCK_SIZE' => 439, 'FILTER' => 440, 'FINISH' => 1193, 'FIRST' => 441, 'FIRST_VALUE' => 935, 'FIXED' => 442, 'FLOAT' => 444, 'FLOAT4' => 444, 'FLOAT8' => 397, 'FLUSH' => 445, 'FOLLOWING' => 936, 'FOLLOWS' => 446, 'FOR' => 449, 'FORCE' => 447, 'FOREIGN' => 448, 'FORMAT' => 450, 'FOUND' => 451, 'FROM' => 452, 'FULL' => 453, 'FULLTEXT' => 454, 'FUNCTION' => 455, 'GENERAL' => 457, 'GENERATE' => 1203, 'GENERATED' => 458, 'GEOMCOLLECTION' => 460, 'GEOMETRY' => 461, 'GEOMETRYCOLLECTION' => 460, 'GET' => 463, 'GET_FORMAT' => 462, 'GET_SOURCE_PUBLIC_KEY' => 1162, 'GLOBAL' => 464, 'GRANT' => 465, 'GRANTS' => 466, 'GROUP' => 467, 'GROUPING' => 926, 'GROUPS' => 937, 'GROUP_CONCAT' => 468, 'GROUP_REPLICATION' => 459, 'GTIDS' => 1207, 'GTID_ONLY' => 1199, 'HANDLER' => 470, 'HASH' => 471, 'HAVING' => 472, 'HELP' => 473, 'HIGH_PRIORITY' => 475, 'HISTOGRAM' => 928, 'HISTORY' => 959, 'HOST' => 476, 'HOSTS' => 477, 'HOUR' => 481, 'HOUR_MICROSECOND' => 478, 'HOUR_MINUTE' => 479, 'HOUR_SECOND' => 480, 'IDENTIFIED' => 483, 'IF' => 485, 'IGNORE' => 486, 'IGNORE_SERVER_IDS' => 487, 'IMPORT' => 488, 'IN' => 504, 'INACTIVE' => 974, 'INDEX' => 490, 'INDEXES' => 489, 'INFILE' => 491, 'INITIAL' => 1197, 'INITIAL_SIZE' => 492, 'INITIATE' => 1194, 'INNER' => 493, 'INOUT' => 494, 'INSENSITIVE' => 495, 'INSERT' => 496, 'INSERT_METHOD' => 497, 'INSTALL' => 499, 'INSTANCE' => 498, 'INT' => 502, 'INT1' => 836, 'INT2' => 768, 'INT3' => 584, 'INT4' => 502, 'INT8' => 289, 'INTEGER' => 502, 'INTERSECT' => 1200, 'INTERVAL' => 500, 'INTO' => 501, 'INVISIBLE' => 911, 'INVOKER' => 503, 'IO' => 507, 'IO_AFTER_GTIDS' => 505, 'IO_BEFORE_GTIDS' => 506, 'IO_THREAD' => 702, 'IPC' => 508, 'IS' => 509, 'ISOLATION' => 510, 'ISSUER' => 511, 'ITERATE' => 512, 'JOIN' => 513, 'JSON' => 515, 'JSON_ARRAYAGG' => 921, 'JSON_OBJECTAGG' => 920, 'JSON_TABLE' => 955, 'JSON_VALUE' => 1151, 'KEY' => 518, 'KEYRING' => 1190, 'KEYS' => 516, 'KEY_BLOCK_SIZE' => 517, 'KILL' => 519, 'LAG' => 938, 'LANGUAGE' => 520, 'LAST' => 521, 'LAST_VALUE' => 939, 'LATERAL' => 975, 'LEAD' => 940, 'LEADING' => 523, 'LEAVE' => 525, 'LEAVES' => 524, 'LEFT' => 526, 'LESS' => 527, 'LEVEL' => 528, 'LIKE' => 530, 'LIMIT' => 531, 'LINEAR' => 532, 'LINES' => 533, 'LINESTRING' => 534, 'LIST' => 535, 'LOAD' => 536, 'LOCAL' => 537, 'LOCALTIME' => 623, 'LOCALTIMESTAMP' => 623, 'LOCK' => 540, 'LOCKED' => 924, 'LOCKS' => 539, 'LOG' => 1206, 'LOGFILE' => 541, 'LOGS' => 542, 'LONG' => 546, 'LONGBLOB' => 543, 'LONGTEXT' => 544, 'LOOP' => 547, 'LOW_PRIORITY' => 548, 'MANUAL' => 1212, 'MASTER' => 571, 'MATCH' => 574, 'MAX' => 579, 'MAXVALUE' => 582, 'MAX_CONNECTIONS_PER_HOUR' => 575, 'MAX_QUERIES_PER_HOUR' => 576, 'MAX_ROWS' => 577, 'MAX_SIZE' => 578, 'MAX_UPDATES_PER_HOUR' => 580, 'MAX_USER_CONNECTIONS' => 581, 'MEDIUM' => 586, 'MEDIUMBLOB' => 583, 'MEDIUMINT' => 584, 'MEDIUMTEXT' => 585, 'MEMBER' => 977, 'MEMORY' => 587, 'MERGE' => 588, 'MESSAGE_TEXT' => 589, 'MICROSECOND' => 590, 'MID' => 811, 'MIDDLEINT' => 584, 'MIGRATE' => 591, 'MIN' => 596, 'MINUTE' => 594, 'MINUTE_MICROSECOND' => 592, 'MINUTE_SECOND' => 593, 'MIN_ROWS' => 595, 'MOD' => 600, 'MODE' => 597, 'MODIFIES' => 598, 'MODIFY' => 599, 'MONTH' => 601, 'MULTILINESTRING' => 602, 'MULTIPOINT' => 603, 'MULTIPOLYGON' => 604, 'MUTEX' => 605, 'MYSQL_ERRNO' => 606, 'NAME' => 608, 'NAMES' => 607, 'NATIONAL' => 609, 'NATURAL' => 610, 'NCHAR' => 612, 'NDB' => 613, 'NDBCLUSTER' => 613, 'NESTED' => 956, 'NETWORK_NAMESPACE' => 987, 'NEVER' => 616, 'NEW' => 617, 'NEXT' => 618, 'NO' => 624, 'NODEGROUP' => 619, 'NONE' => 620, 'NOT' => 622, 'NOW' => 623, 'NOWAIT' => 925, 'NO_WAIT' => 625, 'NO_WRITE_TO_BINLOG' => 626, 'NTH_VALUE' => 941, 'NTILE' => 942, 'NULL' => 627, 'NULLS' => 943, 'NUMBER' => 629, 'NUMERIC' => 630, 'NVARCHAR' => 631, 'OF' => 922, 'OFF' => 998, 'OFFSET' => 632, 'OJ' => 986, 'OLD' => 984, 'ON' => 633, 'ONE' => 634, 'ONLY' => 635, 'OPEN' => 636, 'OPTIMIZE' => 637, 'OPTIMIZER_COSTS' => 638, 'OPTION' => 640, 'OPTIONAL' => 978, 'OPTIONALLY' => 641, 'OPTIONS' => 639, 'OR' => 645, 'ORDER' => 643, 'ORDINALITY' => 957, 'ORGANIZATION' => 971, 'OTHERS' => 944, 'OUT' => 648, 'OUTER' => 646, 'OUTFILE' => 647, 'OVER' => 945, 'OWNER' => 649, 'PACK_KEYS' => 650, 'PAGE' => 651, 'PARALLEL' => 1208, 'PARSER' => 653, 'PARSE_TREE' => 1205, 'PARTIAL' => 655, 'PARTITION' => 656, 'PARTITIONING' => 658, 'PARTITIONS' => 657, 'PASSWORD' => 659, 'PASSWORD_LOCK_TIME' => 994, 'PATH' => 958, 'PERCENT_RANK' => 946, 'PERSIST' => 908, 'PERSIST_ONLY' => 927, 'PHASE' => 660, 'PLUGIN' => 662, 'PLUGINS' => 663, 'PLUGIN_DIR' => 661, 'POINT' => 664, 'POLYGON' => 665, 'PORT' => 666, 'POSITION' => 667, 'PRECEDES' => 668, 'PRECEDING' => 947, 'PRECISION' => 669, 'PREPARE' => 670, 'PRESERVE' => 671, 'PREV' => 672, 'PRIMARY' => 673, 'PRIVILEGES' => 674, 'PRIVILEGE_CHECKS_USER' => 991, 'PROCEDURE' => 675, 'PROCESS' => 676, 'PROCESSLIST' => 677, 'PROFILE' => 678, 'PROFILES' => 679, 'PROXY' => 680, 'PURGE' => 681, 'QUALIFY' => 1210, 'QUARTER' => 682, 'QUERY' => 683, 'QUICK' => 684, 'RANDOM' => 988, 'RANGE' => 685, 'RANK' => 948, 'READ' => 688, 'READS' => 686, 'READ_ONLY' => 687, 'READ_WRITE' => 689, 'REAL' => 690, 'REBUILD' => 691, 'RECOVER' => 692, 'RECURSIVE' => 915, 'REDO_BUFFER_SIZE' => 694, 'REDUNDANT' => 695, 'REFERENCE' => 972, 'REFERENCES' => 696, 'REGEXP' => 697, 'REGISTRATION' => 1195, 'RELAY' => 698, 'RELAYLOG' => 699, 'RELAY_LOG_FILE' => 700, 'RELAY_LOG_POS' => 701, 'RELAY_THREAD' => 702, 'RELEASE' => 703, 'RELOAD' => 704, 'REMOVE' => 705, 'RENAME' => 706, 'REORGANIZE' => 707, 'REPAIR' => 708, 'REPEAT' => 710, 'REPEATABLE' => 709, 'REPLACE' => 711, 'REPLICA' => 1159, 'REPLICAS' => 1160, 'REPLICATE_DO_DB' => 713, 'REPLICATE_DO_TABLE' => 715, 'REPLICATE_IGNORE_DB' => 714, 'REPLICATE_IGNORE_TABLE' => 716, 'REPLICATE_REWRITE_DB' => 719, 'REPLICATE_WILD_DO_TABLE' => 717, 'REPLICATE_WILD_IGNORE_TABLE' => 718, 'REPLICATION' => 712, 'REQUIRE' => 720, 'REQUIRE_ROW_FORMAT' => 993, 'REQUIRE_TABLE_PRIMARY_KEY_CHECK' => 996, 'RESET' => 721, 'RESIGNAL' => 722, 'RESOURCE' => 963, 'RESPECT' => 949, 'RESTART' => 968, 'RESTORE' => 724, 'RESTRICT' => 725, 'RESUME' => 726, 'RETAIN' => 983, 'RETURN' => 729, 'RETURNED_SQLSTATE' => 727, 'RETURNING' => 999, 'RETURNS' => 728, 'REUSE' => 960, 'REVERSE' => 730, 'REVOKE' => 731, 'RIGHT' => 732, 'RLIKE' => 697, 'ROLE' => 909, 'ROLLBACK' => 733, 'ROLLUP' => 734, 'ROTATE' => 735, 'ROUTINE' => 736, 'ROW' => 739, 'ROWS' => 737, 'ROW_COUNT' => 740, 'ROW_FORMAT' => 738, 'ROW_NUMBER' => 950, 'RTREE' => 741, 'S3' => 1209, 'SAVEPOINT' => 742, 'SCHEDULE' => 743, 'SCHEMA' => 363, 'SCHEMAS' => 364, 'SCHEMA_NAME' => 744, 'SECOND' => 746, 'SECONDARY' => 979, 'SECONDARY_ENGINE' => 980, 'SECONDARY_ENGINE_ATTRIBUTE' => 1155, 'SECONDARY_LOAD' => 981, 'SECONDARY_UNLOAD' => 982, 'SECOND_MICROSECOND' => 745, 'SECURITY' => 747, 'SELECT' => 748, 'SENSITIVE' => 749, 'SEPARATOR' => 750, 'SERIAL' => 752, 'SERIALIZABLE' => 751, 'SERVER' => 754, 'SESSION' => 753, 'SESSION_USER' => 867, 'SET' => 756, 'SHARE' => 758, 'SHOW' => 761, 'SHUTDOWN' => 762, 'SIGNAL' => 763, 'SIGNED' => 764, 'SIMPLE' => 765, 'SKIP' => 923, 'SLAVE' => 766, 'SLOW' => 767, 'SMALLINT' => 768, 'SNAPSHOT' => 769, 'SOCKET' => 770, 'SOME' => 275, 'SONAME' => 771, 'SOUNDS' => 772, 'SOURCE' => 773, 'SOURCE_AUTO_POSITION' => 1163, 'SOURCE_BIND' => 1164, 'SOURCE_COMPRESSION_ALGORITHMS' => 1165, 'SOURCE_CONNECTION_AUTO_FAILOVER' => 1156, 'SOURCE_CONNECT_RETRY' => 1166, 'SOURCE_DELAY' => 1167, 'SOURCE_HEARTBEAT_PERIOD' => 1168, 'SOURCE_HOST' => 1169, 'SOURCE_LOG_FILE' => 1170, 'SOURCE_LOG_POS' => 1171, 'SOURCE_PASSWORD' => 1172, 'SOURCE_PORT' => 1173, 'SOURCE_PUBLIC_KEY_PATH' => 1174, 'SOURCE_RETRY_COUNT' => 1175, 'SOURCE_SSL' => 1176, 'SOURCE_SSL_CA' => 1177, 'SOURCE_SSL_CAPATH' => 1178, 'SOURCE_SSL_CERT' => 1179, 'SOURCE_SSL_CIPHER' => 1180, 'SOURCE_SSL_CRL' => 1181, 'SOURCE_SSL_CRLPATH' => 1182, 'SOURCE_SSL_KEY' => 1183, 'SOURCE_SSL_VERIFY_SERVER_CERT' => 1184, 'SOURCE_TLS_CIPHERSUITES' => 1185, 'SOURCE_TLS_VERSION' => 1186, 'SOURCE_USER' => 1187, 'SOURCE_ZSTD_COMPRESSION_LEVEL' => 1188, 'SPATIAL' => 774, 'SPECIFIC' => 775, 'SQL' => 788, 'SQLEXCEPTION' => 776, 'SQLSTATE' => 777, 'SQLWARNING' => 778, 'SQL_AFTER_GTIDS' => 779, 'SQL_AFTER_MTS_GAPS' => 780, 'SQL_BEFORE_GTIDS' => 781, 'SQL_BIG_RESULT' => 782, 'SQL_BUFFER_RESULT' => 783, 'SQL_CALC_FOUND_ROWS' => 785, 'SQL_NO_CACHE' => 786, 'SQL_SMALL_RESULT' => 787, 'SQL_THREAD' => 789, 'SQL_TSI_DAY' => 375, 'SQL_TSI_HOUR' => 481, 'SQL_TSI_MINUTE' => 594, 'SQL_TSI_MONTH' => 601, 'SQL_TSI_QUARTER' => 682, 'SQL_TSI_SECOND' => 746, 'SQL_TSI_WEEK' => 887, 'SQL_TSI_YEAR' => 905, 'SRID' => 961, 'SSL' => 790, 'STACKED' => 791, 'START' => 794, 'STARTING' => 792, 'STARTS' => 793, 'STATS_AUTO_RECALC' => 795, 'STATS_PERSISTENT' => 796, 'STATS_SAMPLE_PAGES' => 797, 'STATUS' => 798, 'STD' => 800, 'STDDEV' => 800, 'STDDEV_POP' => 800, 'STDDEV_SAMP' => 799, 'STOP' => 801, 'STORAGE' => 802, 'STORED' => 803, 'STRAIGHT_JOIN' => 804, 'STREAM' => 997, 'STRING' => 805, 'ST_COLLECT' => 1189, 'SUBCLASS_ORIGIN' => 806, 'SUBDATE' => 807, 'SUBJECT' => 808, 'SUBPARTITION' => 810, 'SUBPARTITIONS' => 809, 'SUBSTR' => 811, 'SUBSTRING' => 811, 'SUM' => 812, 'SUPER' => 813, 'SUSPEND' => 814, 'SWAPS' => 815, 'SWITCHES' => 816, 'SYSDATE' => 817, 'SYSTEM' => 964, 'SYSTEM_USER' => 867, 'TABLE' => 821, 'TABLES' => 818, 'TABLESAMPLE' => 1214, 'TABLESPACE' => 819, 'TABLE_CHECKSUM' => 822, 'TABLE_NAME' => 823, 'TEMPORARY' => 824, 'TEMPTABLE' => 825, 'TERMINATED' => 826, 'TEXT' => 828, 'THAN' => 829, 'THEN' => 830, 'THREAD_PRIORITY' => 962, 'TIES' => 951, 'TIME' => 834, 'TIMESTAMP' => 831, 'TIMESTAMPADD' => 832, 'TIMESTAMPDIFF' => 833, 'TINYBLOB' => 835, 'TINYINT' => 836, 'TINYTEXT' => 837, 'TLS' => 1152, 'TO' => 838, 'TRAILING' => 839, 'TRANSACTION' => 840, 'TRIGGER' => 842, 'TRIGGERS' => 841, 'TRIM' => 843, 'TRUE' => 844, 'TRUNCATE' => 845, 'TYPE' => 847, 'TYPES' => 846, 'UNBOUNDED' => 952, 'UNCOMMITTED' => 850, 'UNDEFINED' => 851, 'UNDO' => 855, 'UNDOFILE' => 853, 'UNDO_BUFFER_SIZE' => 854, 'UNICODE' => 856, 'UNINSTALL' => 857, 'UNION' => 858, 'UNIQUE' => 859, 'UNKNOWN' => 860, 'UNLOCK' => 861, 'UNREGISTER' => 1196, 'UNSIGNED' => 862, 'UNTIL' => 863, 'UPDATE' => 864, 'UPGRADE' => 865, 'URL' => 1202, 'USAGE' => 866, 'USE' => 869, 'USER' => 867, 'USER_RESOURCES' => 723, 'USE_FRM' => 868, 'USING' => 870, 'UTC_DATE' => 871, 'UTC_TIME' => 873, 'UTC_TIMESTAMP' => 872, 'VALIDATION' => 874, 'VALUE' => 876, 'VALUES' => 875, 'VARBINARY' => 877, 'VARCHAR' => 878, 'VARCHARACTER' => 878, 'VARIABLES' => 879, 'VARIANCE' => 880, 'VARYING' => 881, 'VAR_POP' => 880, 'VAR_SAMP' => 882, 'VCPU' => 965, 'VIEW' => 883, 'VIRTUAL' => 884, 'VISIBLE' => 912, 'WAIT' => 885, 'WARNINGS' => 886, 'WEEK' => 887, 'WEIGHT_STRING' => 888, 'WHEN' => 889, 'WHERE' => 890, 'WHILE' => 891, 'WINDOW' => 953, 'WITH' => 892, 'WITHOUT' => 895, 'WORK' => 896, 'WRAPPER' => 897, 'WRITE' => 898, 'X509' => 899, 'XA' => 900, 'XID' => 901, 'XML' => 902, 'XOR' => 903, 'YEAR' => 905, 'YEAR_MONTH' => 904, 'ZEROFILL' => 906, 'ZONE' => 1157, '||' => 644 );
 
@@ -364,7 +363,7 @@ class WP_MySQL_Lexer {
 	 */
 	public function __construct(
 		string $sql,
-		int $mysql_version = 80038,
+		int $mysql_version = 80410,
 		array $sql_modes = array()
 	) {
 		$this->sql           = $sql;
@@ -503,8 +502,8 @@ class WP_MySQL_Lexer {
 			// Common single-token lexeme — the overwhelming majority.
 			if (
 				self::EOF !== $type
-				&& self::WITH_SYMBOL !== $type
-				&& self::AT_SIGN_SYMBOL !== $type
+				&& self::WITH !== $type
+				&& self::AT_SIGN !== $type
 			) {
 				$tokens[] = new WP_MySQL_Token( $type, $start, $length, $sql, $nbe );
 				continue;
@@ -514,7 +513,7 @@ class WP_MySQL_Lexer {
 			if ( self::EOF === $type ) {
 				$this->emit_end_markers( $tokens );
 				break;
-			} elseif ( self::WITH_SYMBOL === $type ) {
+			} elseif ( self::WITH === $type ) {
 				$this->produce_with_or_rollup( $tokens, $start, $length );
 			} else {
 				$this->produce_at_variable( $tokens, $start );
@@ -551,31 +550,13 @@ class WP_MySQL_Lexer {
 	}
 
 	/**
-	 * Get the numeric token ID for a given token name.
-	 *
-	 * @param string $token_name The name of the token.
-	 * @return int|null The token ID for the given token name; null when not found.
-	 */
-	public static function get_token_id( string $token_name ): ?int {
-		// Token constants share the class with the lexer's own constants, so
-		// resolve only the grammar tokens: non-negative ints, never an SQL mode.
-		$constant_name = self::class . '::' . $token_name;
-		if ( 0 === strpos( $token_name, 'SQL_MODE_' ) || ! defined( $constant_name ) ) {
-			return null;
-		}
-		$value = constant( $constant_name );
-		return is_int( $value ) && $value >= 0 ? $value : null;
-	}
-
-	/**
 	 * Get the name of a token for a given token ID.
 	 *
 	 * Names are derived from the grammar data rather than stored: a keyword
 	 * token resolves to its keyword string via self::KEYWORDS, any other token
-	 * to its token constant name via reflection. When several names share a
-	 * token number (keyword synonyms, equal-valued constants), plain keywords
-	 * win over paren-gated function keywords (USER over SESSION_USER), then the
-	 * first name in table order wins.
+	 * to its token constant name via reflection. When several keywords share a
+	 * token number (synonyms), plain keywords win over paren-gated function
+	 * keywords (USER over SESSION_USER), then the first name in table order wins.
 	 *
 	 * This method is intended to be used only for testing and debugging purposes,
 	 * when tokens need to be presented by their names in a human-readable form.
@@ -634,9 +615,9 @@ class WP_MySQL_Lexer {
 
 		if ( self::EOF === $type ) {
 			$this->emit_end_markers( $out );
-		} elseif ( self::WITH_SYMBOL === $type ) {
+		} elseif ( self::WITH === $type ) {
 			$this->produce_with_or_rollup( $out, $start, $length );
-		} elseif ( self::AT_SIGN_SYMBOL === $type ) {
+		} elseif ( self::AT_SIGN === $type ) {
 			$this->produce_at_variable( $out, $start );
 		} else {
 			$out[] = $this->make_token( $type, $start, $length );
@@ -655,21 +636,21 @@ class WP_MySQL_Lexer {
 	private function produce_with_or_rollup( array &$out, int $with_start, int $with_length ): void {
 		if ( ! $this->scan_lexeme() ) {
 			// "WITH" was the last valid token; the trailing input is invalid.
-			$out[]              = $this->make_token( self::WITH_SYMBOL, $with_start, $with_length );
+			$out[]              = $this->make_token( self::WITH, $with_start, $with_length );
 			$this->stream_ended = true;
 			return;
 		}
 
-		if ( self::ROLLUP_SYMBOL === $this->token_type ) {
+		if ( self::ROLLUP_SYM === $this->token_type ) {
 			$out[] = $this->make_token(
-				self::WITH_ROLLUP_SYMBOL,
+				self::WITH_ROLLUP_SYM,
 				$with_start,
 				$this->bytes_already_read - $with_start
 			);
 			return;
 		}
 
-		$out[] = $this->make_token( self::WITH_SYMBOL, $with_start, $with_length );
+		$out[] = $this->make_token( self::WITH, $with_start, $with_length );
 		if ( self::EOF === $this->token_type ) {
 			$this->emit_end_markers( $out );
 			return;
@@ -695,13 +676,13 @@ class WP_MySQL_Lexer {
 	 * @param int $at_start Byte offset of the "@" token.
 	 */
 	private function produce_at_variable( array &$out, int $at_start ): void {
-		$out[] = $this->make_token( self::AT_SIGN_SYMBOL, $at_start, 1 );
+		$out[] = $this->make_token( self::AT_SIGN, $at_start, 1 );
 
 		$position = $this->bytes_already_read;   // Right after the "@".
 		$next     = $this->sql[ $position ] ?? '';
 
 		if ( '@' === $next ) {
-			$out[]                    = $this->make_token( self::AT_SIGN_SYMBOL, $position, 1 );
+			$out[]                    = $this->make_token( self::AT_SIGN, $position, 1 );
 			$this->bytes_already_read = $position + 1;
 
 			// The name after it may be a keyword ("session" in "@@session.x").
@@ -722,10 +703,10 @@ class WP_MySQL_Lexer {
 			$position
 		);
 		if ( $name_length > 0 ) {
-			$out[]                    = $this->make_token( self::IDENTIFIER, $position, $name_length );
+			$out[]                    = $this->make_token( self::IDENT, $position, $name_length );
 			$this->bytes_already_read = $position + $name_length;
 		} elseif ( "'" !== $next && '"' !== $next && '`' !== $next ) {
-			$out[] = $this->make_token( self::IDENTIFIER, $position, 0 );
+			$out[] = $this->make_token( self::IDENT, $position, 0 );
 		}
 	}
 
@@ -736,7 +717,7 @@ class WP_MySQL_Lexer {
 	private function emit_end_markers( array &$out ): void {
 		$end                = $this->bytes_already_read;
 		$out[]              = $this->make_token( self::END_OF_INPUT, $end, 0 );
-		$out[]              = $this->make_token( self::END_MARKER, $end, 0 );
+		$out[]              = $this->make_token( self::YYEOF, $end, 0 );
 		$this->stream_ended = true;
 	}
 
@@ -795,7 +776,7 @@ class WP_MySQL_Lexer {
 			}
 			if ( self::STATE_IDENTIFIER_OR_KEYWORD === $state ) {
 				$type = $this->read_identifier();
-				return self::IDENTIFIER === $type
+				return self::IDENT === $type
 					? $this->determine_identifier_or_keyword_type( $this->get_current_token_bytes() )
 					: $type;
 			}
@@ -806,18 +787,18 @@ class WP_MySQL_Lexer {
 
 		// A map for a single-byte symbol fast path.
 		static $single_byte_ops = array(
-			'(' => self::OPEN_PAR_SYMBOL,
-			')' => self::CLOSE_PAR_SYMBOL,
-			',' => self::COMMA_SYMBOL,
-			';' => self::SEMICOLON_SYMBOL,
-			'+' => self::PLUS_OPERATOR,
-			'~' => self::BITWISE_NOT_OPERATOR,
-			'%' => self::MOD_OPERATOR,
-			'^' => self::BITWISE_XOR_OPERATOR,
+			'(' => self::LEFT_PAREN,
+			')' => self::RIGHT_PAREN,
+			',' => self::COMMA,
+			';' => self::SEMICOLON,
+			'+' => self::PLUS,
+			'~' => self::TILDE,
+			'%' => self::PERCENT,
+			'^' => self::CARET,
 			'?' => self::PARAM_MARKER,
-			'{' => self::OPEN_CURLY_SYMBOL,
-			'}' => self::CLOSE_CURLY_SYMBOL,
-			'=' => self::EQUAL_OPERATOR,
+			'{' => self::LEFT_BRACE,
+			'}' => self::RIGHT_BRACE,
+			'=' => self::EQ,
 		);
 
 		// Fast path for keywords and identifiers.
@@ -836,18 +817,18 @@ class WP_MySQL_Lexer {
 		) {
 			$started_at = $this->bytes_already_read;
 			$type       = $this->read_identifier();
-			if ( self::IDENTIFIER === $type ) {
+			if ( self::IDENT === $type ) {
 				// Inline the keyword lookup on the hot identifier path: most
 				// identifiers are not keywords, so this avoids two method calls
 				// (token-bytes extraction + keyword determination) per token.
 				$word    = strtoupper(
 					substr( $this->sql, $started_at, $this->bytes_already_read - $started_at )
 				);
-				$keyword = self::KEYWORDS[ $word ] ?? self::IDENTIFIER;
+				$keyword = self::KEYWORDS[ $word ] ?? self::IDENT;
 				// Before "." and a name, a keyword is an identifier ("order.id").
 				// read_identifier() sets STATE_IDENTIFIER_SEPARATOR in that case.
 				if (
-					self::IDENTIFIER !== $keyword
+					self::IDENT !== $keyword
 					&& self::STATE_IDENTIFIER_SEPARATOR !== $this->next_state
 				) {
 					$type = $this->resolve_keyword_type( $keyword, $word );
@@ -871,7 +852,7 @@ class WP_MySQL_Lexer {
 				$type = $this->read_number();
 			} else {
 				$this->bytes_already_read += 1;
-				$type                      = self::DOT_SYMBOL;
+				$type                      = self::DOT;
 
 				// A name character right after it starts a qualified name part.
 				if ( null !== $next_byte && ( strspn( $next_byte, self::IDENTIFIER_MASK ) > 0 || $next_byte > "\x7F" ) ) {
@@ -882,9 +863,9 @@ class WP_MySQL_Lexer {
 			$this->bytes_already_read += 1;
 			if ( '=' === $next_byte ) {
 				$this->bytes_already_read += 1;
-				$type                      = self::ASSIGN_OPERATOR;
+				$type                      = self::SET_VAR;
 			} else {
-				$type = self::COLON_SYMBOL;
+				$type = self::COLON;
 			}
 		} elseif ( '<' === $byte ) {
 			$this->bytes_already_read += 1;
@@ -892,37 +873,37 @@ class WP_MySQL_Lexer {
 				$this->bytes_already_read += 1;
 				if ( '>' === ( $this->sql[ $this->bytes_already_read ] ?? null ) ) {
 					$this->bytes_already_read += 1;
-					$type                      = self::NULL_SAFE_EQUAL_OPERATOR;
+					$type                      = self::EQUAL_SYM;
 				} else {
-					$type = self::LESS_OR_EQUAL_OPERATOR;
+					$type = self::LE;
 				}
 			} elseif ( '>' === $next_byte ) {
 				$this->bytes_already_read += 1;
-				$type                      = self::NOT_EQUAL_OPERATOR;
+				$type                      = self::NE;
 			} elseif ( '<' === $next_byte ) {
 				$this->bytes_already_read += 1;
-				$type                      = self::SHIFT_LEFT_OPERATOR;
+				$type                      = self::SHIFT_LEFT;
 			} else {
-				$type = self::LESS_THAN_OPERATOR;
+				$type = self::LT;
 			}
 		} elseif ( '>' === $byte ) {
 			$this->bytes_already_read += 1;
 			if ( '=' === $next_byte ) {
 				$this->bytes_already_read += 1;
-				$type                      = self::GREATER_OR_EQUAL_OPERATOR;
+				$type                      = self::GE;
 			} elseif ( '>' === $next_byte ) {
 				$this->bytes_already_read += 1;
-				$type                      = self::SHIFT_RIGHT_OPERATOR;
+				$type                      = self::SHIFT_RIGHT;
 			} else {
-				$type = self::GREATER_THAN_OPERATOR;
+				$type = self::GT_SYM;
 			}
 		} elseif ( '!' === $byte ) {
 			$this->bytes_already_read += 1;
 			if ( '=' === $next_byte ) {
 				$this->bytes_already_read += 1;
-				$type                      = self::NOT_EQUAL_OPERATOR;
+				$type                      = self::NE;
 			} else {
-				$type = self::LOGICAL_NOT_OPERATOR;
+				$type = self::EXCLAMATION;
 			}
 		} elseif ( '-' === $byte ) {
 			if (
@@ -936,20 +917,20 @@ class WP_MySQL_Lexer {
 				if ( '>' === ( $this->sql[ $this->bytes_already_read ] ?? null ) ) {
 					$this->bytes_already_read += 1;
 					if ( $this->mysql_version >= 50713 ) {
-						$type = self::JSON_UNQUOTED_SEPARATOR_SYMBOL;
+						$type = self::JSON_UNQUOTED_SEPARATOR_SYM;
 					} else {
 						return null; // Invalid input.
 					}
 				} else {
 					if ( $this->mysql_version >= 50708 ) {
-						$type = self::JSON_SEPARATOR_SYMBOL;
+						$type = self::JSON_SEPARATOR_SYM;
 					} else {
 						return null; // Invalid input.
 					}
 				}
 			} else {
 				$this->bytes_already_read += 1;
-				$type                      = self::MINUS_OPERATOR;
+				$type                      = self::MINUS;
 			}
 		} elseif ( '*' === $byte ) {
 			$this->bytes_already_read += 1;
@@ -958,7 +939,7 @@ class WP_MySQL_Lexer {
 				$type                      = self::MYSQL_COMMENT_END;
 				$this->in_mysql_comment    = false;
 			} else {
-				$type = self::MULT_OPERATOR;
+				$type = self::ASTERISK;
 			}
 		} elseif ( '/' === $byte ) {
 			if ( '*' === $next_byte ) {
@@ -971,36 +952,36 @@ class WP_MySQL_Lexer {
 				}
 			} else {
 				$this->bytes_already_read += 1;
-				$type                      = self::DIV_OPERATOR;
+				$type                      = self::SLASH;
 			}
 		} elseif ( '&' === $byte ) {
 			$this->bytes_already_read += 1;
 			if ( '&' === $next_byte ) {
 				$this->bytes_already_read += 1;
-				$type                      = self::LOGICAL_AND_OPERATOR;
+				$type                      = self::AND_AND_SYM;
 			} else {
-				$type = self::BITWISE_AND_OPERATOR;
+				$type = self::AMPERSAND;
 			}
 		} elseif ( '|' === $byte ) {
 			$this->bytes_already_read += 1;
 			if ( '|' === $next_byte ) {
 				$this->bytes_already_read += 1;
 				$type                      = $this->is_sql_mode_active( self::SQL_MODE_PIPES_AS_CONCAT )
-					? self::CONCAT_PIPES_SYMBOL
-					: self::LOGICAL_OR_OPERATOR;
+					? self::OR_OR_SYM
+					: self::OR2_SYM;
 			} else {
-				$type = self::BITWISE_OR_OPERATOR;
+				$type = self::PIPE;
 			}
 		} elseif ( '@' === $byte ) {
 			// MySQL treats "@" as a standalone terminal; the variable name that
 			// follows is emitted as its own token (see produce_at_variable()).
 			$this->bytes_already_read += 1;
-			$type                      = self::AT_SIGN_SYMBOL;
+			$type                      = self::AT_SIGN;
 		} elseif ( '\\' === $byte ) {
 			$this->bytes_already_read += 1;
 			if ( 'N' === $next_byte ) {
 				$this->bytes_already_read += 1;
-				$type                      = self::NULL2_SYMBOL;
+				$type                      = self::NULL_SYM;
 			} else {
 				return null; // Invalid input.
 			}
@@ -1013,15 +994,15 @@ class WP_MySQL_Lexer {
 			$type = $this->read_number();
 		} elseif ( ( 'n' === $byte || 'N' === $byte ) && "'" === $next_byte ) {
 			$this->bytes_already_read += 1;
-			$type                      = $this->read_quoted_text( "'" );
-			if ( self::SINGLE_QUOTED_TEXT === $type ) {
-				$type = self::NCHAR_TEXT;
+			$type                      = $this->read_quoted_text();
+			if ( self::TEXT_STRING === $type ) {
+				$type = self::NCHAR_STRING;
 			}
 		} elseif ( null === $byte ) {
 			$type = self::EOF;
 		} else {
 			$type = $this->read_identifier();
-			if ( self::IDENTIFIER === $type ) {
+			if ( self::IDENT === $type ) {
 				if ( '_' === $byte && isset( self::UNDERSCORE_CHARSETS[ strtolower( $this->get_current_token_bytes() ) ] ) ) {
 					$type = self::UNDERSCORE_CHARSET;
 				} else {
@@ -1124,7 +1105,7 @@ class WP_MySQL_Lexer {
 		) {
 			$this->next_state = self::STATE_IDENTIFIER_SEPARATOR;
 		}
-		return self::IDENTIFIER;
+		return self::IDENT;
 	}
 
 	private function read_number(): ?int {
@@ -1155,7 +1136,7 @@ class WP_MySQL_Lexer {
 				}
 				$this->bytes_already_read += 1; // Consume the "'".
 			}
-			$type = self::HEX_NUMBER;
+			$type = self::HEX_NUM;
 		} elseif (
 			// BIN number in the form of 0bN.
 			(
@@ -1178,18 +1159,18 @@ class WP_MySQL_Lexer {
 				}
 				$this->bytes_already_read += 1; // Consume the "'".
 			}
-			$type = self::BIN_NUMBER;
+			$type = self::BIN_NUM;
 		} else {
 			// Here, we have a sequence starting with N or .N, where N is a digit.
 
 			// 1. Try integer first.
 			$this->bytes_already_read += strspn( $this->sql, self::DIGIT_MASK, $this->bytes_already_read );
-			$type                      = self::INT_NUMBER;
+			$type                      = self::NUM;
 
 			// 2. In case of N. or .N, it's a decimal or float number.
 			if ( '.' === ( $this->sql[ $this->bytes_already_read ] ?? null ) ) {
 				$this->bytes_already_read += 1;
-				$type                      = self::DECIMAL_NUMBER;
+				$type                      = self::DECIMAL_NUM;
 				$this->bytes_already_read += strspn( $this->sql, self::DIGIT_MASK, $this->bytes_already_read );
 			}
 
@@ -1211,7 +1192,7 @@ class WP_MySQL_Lexer {
 				$this->bytes_already_read += 1; // Consume the 'e' or 'E'.
 				$this->bytes_already_read += 1; // Consume the '+', '-', or digit.
 				$this->bytes_already_read += strspn( $this->sql, self::DIGIT_MASK, $this->bytes_already_read );
-				$type                      = self::FLOAT_NUMBER;
+				$type                      = self::FLOAT_NUM;
 			}
 		}
 
@@ -1230,7 +1211,7 @@ class WP_MySQL_Lexer {
 		 */
 		$text                       = $this->get_current_token_bytes();
 		$possible_identifier_prefix =
-			self::INT_NUMBER === $type
+			self::NUM === $type
 			|| ( '0' === $text[0] && ( 'b' === $text[1] || 'x' === $text[1] ) );
 
 		/*
@@ -1240,16 +1221,16 @@ class WP_MySQL_Lexer {
 		 * here, as we can look only at subsequent bytes instead of backtracking
 		 * to the beginning of the number (for valid identifiers like 0b019).
 		 */
-		if ( $possible_identifier_prefix && self::IDENTIFIER === $this->read_identifier() ) {
-			$type = self::IDENTIFIER;
+		if ( $possible_identifier_prefix && self::IDENT === $this->read_identifier() ) {
+			$type = self::IDENT;
 		}
 
 		// Determine integer type.
-		if ( self::INT_NUMBER === $type ) {
+		if ( self::NUM === $type ) {
 			// Fast path for most integers.
 			$bytes = $this->get_current_token_bytes();
 			if ( strlen( $bytes ) < 10 ) {
-				return self::INT_NUMBER;
+				return self::NUM;
 			}
 
 			// Remove leading zeros.
@@ -1258,23 +1239,23 @@ class WP_MySQL_Lexer {
 
 			// Determine integer type based on its length and value.
 			if ( $length < 10 ) {
-				return self::INT_NUMBER;
+				return self::NUM;
 			} elseif ( 10 === $length ) {
 				return strcmp( $bytes, '2147483647' ) > 0
-					? self::LONG_NUMBER
-					: self::INT_NUMBER;
+					? self::LONG_NUM
+					: self::NUM;
 			} elseif ( $length < 19 ) {
-				return self::LONG_NUMBER;
+				return self::LONG_NUM;
 			} elseif ( 19 === $length ) {
 				return strcmp( $bytes, '9223372036854775807' ) > 0
-					? self::ULONGLONG_NUMBER
-					: self::LONG_NUMBER;
+					? self::ULONGLONG_NUM
+					: self::LONG_NUM;
 			} elseif ( 20 === $length ) {
 				return strcmp( $bytes, '18446744073709551615' ) > 0
-					? self::DECIMAL_NUMBER
-					: self::ULONGLONG_NUMBER;
+					? self::DECIMAL_NUM
+					: self::ULONGLONG_NUM;
 			} else {
-				return self::DECIMAL_NUMBER;
+				return self::DECIMAL_NUM;
 			}
 		}
 		return $type;
@@ -1358,13 +1339,7 @@ class WP_MySQL_Lexer {
 
 		$this->bytes_already_read = $at;
 
-		if ( $is_identifier_quote ) {
-			return self::BACK_TICK_QUOTED_ID;
-		} elseif ( '"' === $quote ) {
-			return self::DOUBLE_QUOTED_TEXT;
-		} else {
-			return self::SINGLE_QUOTED_TEXT;
-		}
+		return $is_identifier_quote ? self::IDENT_QUOTED : self::TEXT_STRING;
 	}
 
 	private function read_line_comment(): int {
@@ -1419,9 +1394,9 @@ class WP_MySQL_Lexer {
 
 	private function determine_identifier_or_keyword_type( string $value ): int {
 		$word = strtoupper( $value );
-		$type = self::KEYWORDS[ $word ] ?? self::IDENTIFIER;
-		if ( self::IDENTIFIER === $type ) {
-			return self::IDENTIFIER;
+		$type = self::KEYWORDS[ $word ] ?? self::IDENT;
+		if ( self::IDENT === $type ) {
+			return self::IDENT;
 		}
 		return $this->resolve_keyword_type( $type, $word );
 	}
@@ -1443,13 +1418,13 @@ class WP_MySQL_Lexer {
 				$peek += strspn( $this->sql, self::WHITESPACE_MASK, $peek );
 			}
 			if ( '(' !== ( $this->sql[ $peek ] ?? null ) ) {
-				return self::IDENTIFIER;
+				return self::IDENT;
 			}
 		}
 
 		// With "SQL_MODE_HIGH_NOT_PRECEDENCE" enabled, "NOT" needs to be emitted as a higher priority NOT2 symbol.
-		if ( self::NOT_SYMBOL === $type && $this->is_sql_mode_active( self::SQL_MODE_HIGH_NOT_PRECEDENCE ) ) {
-			return self::NOT2_SYMBOL;
+		if ( self::NOT_SYM === $type && $this->is_sql_mode_active( self::SQL_MODE_HIGH_NOT_PRECEDENCE ) ) {
+			return self::NOT2_SYM;
 		}
 
 		return $type;
