@@ -165,6 +165,51 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		);
 	}
 
+	/**
+	 * Create tables with binary column defaults, as driver versions <= 3.1.2 did.
+	 *
+	 * These versions stored BINARY and VARBINARY defaults as written, and they used
+	 * them and the expression defaults of binary columns as TEXT defaults in SQLite.
+	 */
+	private function createBinaryDefaultTablesFromOlderVersion(): void {
+		$this->assertQuery(
+			"CREATE TABLE t (
+				id INT PRIMARY KEY,
+				hex_string BINARY(2) NOT NULL DEFAULT x'0000',
+				hex_number VARBINARY(4) NOT NULL DEFAULT 0xDEADBEEF,
+				bit_string VARBINARY(4) NOT NULL DEFAULT b'01000001',
+				plain_text VARBINARY(4) NOT NULL DEFAULT 'abcd',
+				empty_text VARBINARY(4) NOT NULL DEFAULT '',
+				expression BLOB DEFAULT ('abc')
+			)"
+		);
+		$this->assertQuery( "CREATE TABLE t_expression (id INT PRIMARY KEY, expression BLOB DEFAULT ('abc'))" );
+
+		$statement = $this->sqlite->prepare(
+			"UPDATE _wp_sqlite_mysql_information_schema_columns SET column_default = ? WHERE table_name = 't' AND column_name = ?"
+		);
+		$statement->execute( array( "x'0000'", 'hex_string' ) );
+		$statement->execute( array( '0xdeadbeef', 'hex_number' ) );
+		$statement->execute( array( "b'01000001'", 'bit_string' ) );
+		$statement->execute( array( 'abcd', 'plain_text' ) );
+
+		$this->sqlite->exec( 'DROP TABLE t' );
+		$this->sqlite->exec(
+			"CREATE TABLE `t` (
+				`id` INT NOT NULL,
+				`hex_string` BLOB NOT NULL DEFAULT 'x''0000''',
+				`hex_number` BLOB NOT NULL DEFAULT '0xdeadbeef',
+				`bit_string` BLOB NOT NULL DEFAULT 'b''01000001''',
+				`plain_text` BLOB NOT NULL DEFAULT 'abcd',
+				`empty_text` BLOB NOT NULL DEFAULT '',
+				`expression` BLOB DEFAULT ('abc'),
+				PRIMARY KEY (`id`)
+			) STRICT"
+		);
+		$this->sqlite->exec( 'DROP TABLE t_expression' );
+		$this->sqlite->exec( "CREATE TABLE `t_expression` (`id` INT NOT NULL, `expression` BLOB DEFAULT ('abc'), PRIMARY KEY (`id`)) STRICT" );
+	}
+
 	public function testRegexp() {
 		$this->assertQuery(
 			"INSERT INTO _options (option_name, option_value) VALUES ('rss_0123456789abcdef0123456789abcdef', '1');"
@@ -926,6 +971,93 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			'zero bytes'           => array( "\0\0", "'\\0\\0'", '0000' ),
 			'text'                 => array( 'abcd', "'abcd'", '61626364' ),
 			'empty text'           => array( '', "''", '' ),
+		);
+	}
+
+	public function testConfigurationMigratesBinaryDefaultsFromOlderVersions(): void {
+		$this->createBinaryDefaultTablesFromOlderVersion();
+		$this->assertQuery( "CREATE TABLE t_current (id INT PRIMARY KEY, v VARBINARY(4) NOT NULL DEFAULT 0x41, w BLOB DEFAULT ('abc'))" );
+		$tables_query = "SELECT name, sql FROM sqlite_master WHERE name IN ('t', 't_expression', 't_current') ORDER BY name";
+		$tables       = $this->sqlite->query( $tables_query )->fetchAll( PDO::FETCH_KEY_PAIR );
+
+		$this->assertQueryError(
+			'INSERT INTO t (id) VALUES (1)',
+			'SQLSTATE[23000]: Integrity constraint violation: 19 cannot store TEXT value in BLOB column t.hex_string'
+		);
+
+		$this->reconnectAfterDriverUpgrade();
+
+		$this->assertQuery( "SELECT COLUMN_NAME, COLUMN_DEFAULT FROM information_schema.columns WHERE table_name = 't' ORDER BY ordinal_position" );
+		$this->assertSame(
+			array(
+				'id'         => null,
+				'hex_string' => '0x0000',
+				'hex_number' => '0xDEADBEEF',
+				'bit_string' => '0x41',
+				'plain_text' => '0x61626364',
+				'empty_text' => '',
+				'expression' => "'abc'",
+			),
+			array_column( $this->last_result, 'COLUMN_DEFAULT', 'COLUMN_NAME' )
+		);
+
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (1)' );
+		$this->assertQuery( 'INSERT INTO t_expression (id) VALUES (1)' );
+		$this->assertQuery( 'SELECT HEX(hex_string) AS a, HEX(hex_number) AS b, HEX(bit_string) AS c, HEX(plain_text) AS d, HEX(empty_text) AS e, HEX(expression) AS f FROM t' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'a' => '0000',
+					'b' => 'DEADBEEF',
+					'c' => '41',
+					'd' => '61626364',
+					'e' => '',
+					'f' => '616263',
+				),
+			),
+			$this->last_result
+		);
+		$this->assertQuery( 'SELECT HEX(expression) AS expression FROM t_expression' );
+		$this->assertSame( '616263', $this->last_result[0]->expression );
+
+		// A table from the current version isn't recreated.
+		$migrated_tables = $this->sqlite->query( $tables_query )->fetchAll( PDO::FETCH_KEY_PAIR );
+		$this->assertSame( $tables['t_current'], $migrated_tables['t_current'] );
+
+		// Configuring the database again changes nothing.
+		$this->reconnectAfterDriverUpgrade();
+		$this->assertSame( $migrated_tables, $this->sqlite->query( $tables_query )->fetchAll( PDO::FETCH_KEY_PAIR ) );
+	}
+
+	/**
+	 * @dataProvider data_binary_default_migration_driver_versions
+	 */
+	public function testConfigurationMigratesBinaryDefaultsOnlyForOlderDriverVersions( string $saved_version, string $expected_default ): void {
+		$this->createBinaryDefaultTablesFromOlderVersion();
+
+		// Configure the database as if it was last configured by the given driver version.
+		$this->sqlite->exec(
+			sprintf(
+				"UPDATE %s SET value = '%s' WHERE name = '%s'",
+				WP_MySQL_On_SQLite::GLOBAL_VARIABLES_TABLE_NAME,
+				$saved_version,
+				WP_MySQL_On_SQLite::DRIVER_VERSION_VARIABLE_NAME
+			)
+		);
+		$configurator = new WP_SQLite_Configurator(
+			$this->engine,
+			new WP_SQLite_Information_Schema_Builder( WP_MySQL_On_SQLite::RESERVED_PREFIX, $this->engine->get_connection() )
+		);
+		$configurator->configure_database();
+
+		$this->assertQuery( "SELECT COLUMN_DEFAULT FROM information_schema.columns WHERE table_name = 't' AND column_name = 'hex_number'" );
+		$this->assertSame( $expected_default, $this->last_result[0]->COLUMN_DEFAULT );
+	}
+
+	public static function data_binary_default_migration_driver_versions(): array {
+		return array(
+			'migrated from 3.1.2'     => array( '3.1.2', '0xDEADBEEF' ),
+			'not migrated from 3.1.3' => array( '3.1.3', '0xdeadbeef' ),
 		);
 	}
 
