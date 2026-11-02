@@ -862,6 +862,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			'varbinary text' => array( 'varbinary(4)', "('abc')", '616263' ),
 			'binary text'    => array( 'binary(3)', "('abc')", '616263' ),
 			'blob text'      => array( 'blob', "('abc')", '616263' ),
+			'national text'  => array( 'varbinary(4)', "(N'abc')", '616263' ),
 			'hex'            => array( 'varbinary(4)', '(0x616263)', '616263' ),
 			'function'       => array( 'longblob', "(CONCAT('a', 'bc'))", '616263' ),
 			'number'         => array( 'varbinary(4)', '(1 + 1)', '32' ),
@@ -9665,6 +9666,31 @@ QUERY
 		// "\%" and "\_" preserve the backslash so it can be used in some contexts.
 		$this->assertSame( $backslash . '%', $result[0]->value_11 );
 		$this->assertSame( $backslash . '_', $result[0]->value_12 );
+	}
+
+	public function testNationalStringLiterals(): void {
+		$this->assertQuery(
+			"CREATE TABLE t (
+				id INT PRIMARY KEY,
+				name VARCHAR(20) NOT NULL DEFAULT (N'it''s'),
+				CHECK (name <> N'x')
+			)"
+		);
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (1)' );
+		$this->assertQuery( "INSERT INTO t VALUES (2, N'0 OR 1=1')" );
+		$this->assertQueryError(
+			"INSERT INTO t VALUES (3, N'x')",
+			'SQLSTATE[23000]: Integrity constraint violation: 19 CHECK constraint failed: t_chk_1'
+		);
+
+		$this->assertQuery( 'SELECT name FROM t ORDER BY id' );
+		$this->assertSame( array( "it's", '0 OR 1=1' ), array_column( $this->last_result, 'name' ) );
+
+		// The string value must not be evaluated as SQL.
+		$this->assertQuery( "SELECT id FROM t WHERE name = N'0 OR 1=1'" );
+		$this->assertSame( array( '2' ), array_column( $this->last_result, 'id' ) );
+		$this->assertQuery( "SELECT id FROM t WHERE 'z' = N'0 OR 1=1'" );
+		$this->assertSame( array(), $this->last_result );
 	}
 
 	public function testBackslashEscapesInPatternMatching(): void {

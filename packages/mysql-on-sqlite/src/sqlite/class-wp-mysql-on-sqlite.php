@@ -4383,7 +4383,7 @@ class WP_MySQL_On_SQLite extends PDO {
 				}
 				return $value;
 			case 'textStringLiteral':
-				return $this->translate_string_literal( $node );
+				return $this->translate_string_literal( $node->get_first_child_token() );
 			case 'dataType':
 			case 'nchar':
 				$child = $node->get_first_child();
@@ -4607,6 +4607,9 @@ class WP_MySQL_On_SQLite extends PDO {
 					return sprintf( "x'%s'", $hex );
 				}
 				return $value;
+			case WP_MySQL_Lexer::NCHAR_TEXT:
+				// A national string, such as N'abc', is a regular string in SQLite.
+				return $this->translate_string_literal( $token );
 			case WP_MySQL_Lexer::AUTO_INCREMENT_SYMBOL:
 				return 'AUTOINCREMENT';
 			case WP_MySQL_Lexer::BINARY_SYMBOL:
@@ -4657,11 +4660,10 @@ class WP_MySQL_On_SQLite extends PDO {
 	/**
 	 * Translate a MySQL string literal to SQLite.
 	 *
-	 * @param  WP_Parser_Node $node The "textStringLiteral" AST node.
-	 * @return string               The translated value.
+	 * @param  WP_MySQL_Token $token The string literal token.
+	 * @return string                The translated value.
 	 */
-	private function translate_string_literal( WP_Parser_Node $node ): string {
-		$token = $node->get_first_child_token();
+	private function translate_string_literal( WP_MySQL_Token $token ): string {
 		$value = $token->get_value();
 
 		/*

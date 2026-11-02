@@ -945,6 +945,10 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 
 		$this->assertSame( $quoted, $this->driver->quote( $value, PDO::PARAM_STR ) );
 		$this->assertSame( 'N' . $quoted, $this->driver->quote( $value, PDO::PARAM_STR_NATL ) );
+		$this->assertSame(
+			$value,
+			$this->driver->query( 'SELECT ' . $this->driver->quote( $value, PDO::PARAM_STR_NATL ) )->fetchColumn()
+		);
 		$this->assertSame( $quoted, $this->driver->quote( $value, PDO::PARAM_STR_CHAR ) );
 		$this->assertSame(
 			$quoted,
