@@ -14,7 +14,7 @@ It outputs a compact parse table and a list of MySQL tokens for the lexer:
 mysql-server sources
   sql/sql_yacc.yy ──▶ Bison 3.8.2 ──▶ automaton.xml ─┬─▶ generate-parse-table.php ──▶ mysql-parse-table.php
                                                      |
-  sql/lex.h ─────────────────────────────────────────┴─▶ generate-tokens.php ───────▶ class-wp-mysql-tokens.php
+  sql/lex.h ─────────────────────────────────────────┴─▶ generate-tokens.php ───────▶ class-wp-mysql-lexer.php
 ```
 
 The runtime ships only the compiled artifacts and a thin parser implementation.
