@@ -10638,6 +10638,10 @@ END;
 		$result = $this->assertQuery( "SELECT 'abc\0def' AS `col1`" );
 		$this->assertSame( array( 'col1' ), array_keys( (array) $result[0] ) );
 
+		// National string literals (no explicit alias).
+		$result = $this->assertQuery( "SELECT N'abc', n'it''s'" );
+		$this->assertSame( array( 'abc', "it's" ), array_keys( (array) $result[0] ) );
+
 		// Columns (no explicit alias).
 		$result = $this->assertQuery( 'SELECT id, name FROM t' );
 		$this->assertSame( array( 'id', 'name' ), array_keys( (array) $result[0] ) );

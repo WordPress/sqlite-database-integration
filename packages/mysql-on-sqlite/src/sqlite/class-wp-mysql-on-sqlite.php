@@ -5593,6 +5593,7 @@ class WP_MySQL_On_SQLite extends PDO {
 		 *
 		 * Descend the AST until we reach a textStringLiteral. If at any level
 		 * we don't have a single child node, bail out; it's not a bare literal.
+		 * A national string, such as N'abc', is a single NCHAR_TEXT token.
 		 */
 		$current = $node;
 		while ( 'textStringLiteral' !== $current->rule_name ) {
@@ -5602,7 +5603,10 @@ class WP_MySQL_On_SQLite extends PDO {
 			}
 			$current = $children[0];
 		}
-		if ( 'textStringLiteral' === $current->rule_name ) {
+		if (
+			'textStringLiteral' === $current->rule_name
+			|| ( 1 === count( $current->get_children() ) && $current->has_child_token( WP_MySQL_Lexer::NCHAR_TEXT ) )
+		) {
 			$alias = $current->get_first_child_token()->get_value();
 
 			// When the literal value contains a NULL byte, MySQL truncates the

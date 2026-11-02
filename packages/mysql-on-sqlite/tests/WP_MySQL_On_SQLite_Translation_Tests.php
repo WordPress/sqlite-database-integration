@@ -1756,15 +1756,15 @@ class WP_MySQL_On_SQLite_Translation_Tests extends TestCase {
 
 	public function testNationalStringLiterals(): void {
 		$this->assertQuery(
-			"SELECT 'abc' AS `N'abc'`",
+			"SELECT 'abc' AS `abc`",
 			"SELECT N'abc'"
 		);
 		$this->assertQuery(
-			"SELECT 'it''s' AS `n'it''s'`",
+			"SELECT 'it''s' AS `it's`",
 			"SELECT n'it''s'"
 		);
 		$this->assertQuery(
-			"SELECT '0 OR 1=1' AS `N'0 OR 1=1'`",
+			"SELECT '0 OR 1=1' AS `0 OR 1=1`",
 			"SELECT N'0 OR 1=1'"
 		);
 	}
