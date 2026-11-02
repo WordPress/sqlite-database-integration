@@ -193,6 +193,9 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$statement->execute( array( "b'01000001'", 'bit_string' ) );
 		$statement->execute( array( 'abcd', 'plain_text' ) );
 
+		$is_legacy_sqlite = version_compare( $this->engine->get_sqlite_version(), WP_MySQL_On_SQLite::MINIMUM_SQLITE_VERSION, '<' );
+		$strict           = $is_legacy_sqlite ? '' : ' STRICT';
+
 		$this->sqlite->exec( 'DROP TABLE t' );
 		$this->sqlite->exec(
 			"CREATE TABLE `t` (
@@ -204,10 +207,10 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 				`empty_text` BLOB NOT NULL DEFAULT '',
 				`expression` BLOB DEFAULT ('abc'),
 				PRIMARY KEY (`id`)
-			) STRICT"
+			)$strict"
 		);
 		$this->sqlite->exec( 'DROP TABLE t_expression' );
-		$this->sqlite->exec( "CREATE TABLE `t_expression` (`id` INT NOT NULL, `expression` BLOB DEFAULT ('abc'), PRIMARY KEY (`id`)) STRICT" );
+		$this->sqlite->exec( "CREATE TABLE `t_expression` (`id` INT NOT NULL, `expression` BLOB DEFAULT ('abc'), PRIMARY KEY (`id`))$strict" );
 	}
 
 	public function testRegexp() {
@@ -980,10 +983,14 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$tables_query = "SELECT name, sql FROM sqlite_master WHERE name IN ('t', 't_expression', 't_current') ORDER BY name";
 		$tables       = $this->sqlite->query( $tables_query )->fetchAll( PDO::FETCH_KEY_PAIR );
 
-		$this->assertQueryError(
-			'INSERT INTO t (id) VALUES (1)',
-			'SQLSTATE[23000]: Integrity constraint violation: 19 cannot store TEXT value in BLOB column t.hex_string'
-		);
+		// STRICT tables reject the TEXT defaults of older versions.
+		$is_legacy_sqlite = version_compare( $this->engine->get_sqlite_version(), WP_MySQL_On_SQLite::MINIMUM_SQLITE_VERSION, '<' );
+		if ( ! $is_legacy_sqlite ) {
+			$this->assertQueryError(
+				'INSERT INTO t (id) VALUES (1)',
+				'SQLSTATE[23000]: Integrity constraint violation: 19 cannot store TEXT value in BLOB column t.hex_string'
+			);
+		}
 
 		$this->reconnectAfterDriverUpgrade();
 
