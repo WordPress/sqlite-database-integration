@@ -42,5 +42,8 @@ else
 	sha256 "$build_dir/sql_yacc.yy" "$build_dir/lex.h" | sed 's/^/    /'
 fi
 
+# Record the tag for the generators, so the generated files name the right source.
+echo "$MYSQL_TAG" > "$build_dir/mysql-tag"
+
 echo "  -> $build_dir/sql_yacc.yy ($(wc -l < "$build_dir/sql_yacc.yy" | tr -d ' ') lines)"
 echo "  -> $build_dir/lex.h ($(wc -l < "$build_dir/lex.h" | tr -d ' ') lines)"

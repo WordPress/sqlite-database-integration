@@ -32,9 +32,13 @@ if ( $argc < 4 ) {
 $xml_path   = $argv[1];
 $lexh_path  = $argv[2];
 $lexer_path = $argv[3];
-$mysql_tag  = getenv( 'MYSQL_TAG' );
-if ( false === $mysql_tag || '' === $mysql_tag ) {
-	$mysql_tag = 'mysql-8.4.10';
+
+// The tag of the grammar sources, recorded next to the automaton by fetch-mysql-grammar.sh.
+$tag_path  = dirname( $xml_path ) . '/mysql-tag';
+$mysql_tag = is_file( $tag_path ) ? trim( file_get_contents( $tag_path ) ) : '';
+if ( '' === $mysql_tag ) {
+	fwrite( STDERR, "error: MySQL tag not found in $tag_path; run fetch-mysql-grammar.sh first.\n" );
+	exit( 1 );
 }
 
 // Bison terminal name => token-number, read straight from the automaton.
