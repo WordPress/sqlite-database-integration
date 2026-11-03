@@ -102,6 +102,8 @@ class WP_MySQL_Parser_Tests extends TestCase {
 			'UPDATE t SET a = a + 1 WHERE b IN (SELECT b FROM u)',
 			'DELETE FROM t WHERE a IS NOT NULL',
 			'CREATE TABLE t (id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, name VARCHAR(255))',
+			'CREATE TABLE 🐬 (🐬 INT, a🐬b INT)',
+			'SELECT 🐬.a🐬b FROM 🐬 AS 𩸽',
 			'ALTER TABLE t ADD COLUMN c JSON',
 			'DROP TABLE IF EXISTS t',
 			'SET @v = 1',

@@ -426,6 +426,61 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 	}
 
 	/**
+	 * Test valid and invalid 4-byte UTF-8 sequences in an identifier.
+	 * The validity is checked against PCRE with the "u" (PCRE_UTF8) modifier set.
+	 *
+	 * Testing all 4-byte sequences would take too long, so the first two bytes
+	 * are tested with valid trailing bytes, and the last two bytes are tested
+	 * with valid leading bytes. The first byte starts from 0xF0 to mark the
+	 * beginning of a 4-byte sequence, and the other bytes go from 128 to 255.
+	 */
+	public function test_identifier_utf8_four_byte_sequences(): void {
+		$values = array();
+		for ( $byte_1 = 0xF0; $byte_1 <= 0xFF; $byte_1 += 1 ) {
+			for ( $byte_2 = 128; $byte_2 <= 255; $byte_2 += 1 ) {
+				$values[] = chr( $byte_1 ) . chr( $byte_2 ) . "\x80\x80";
+			}
+		}
+		for ( $byte_3 = 128; $byte_3 <= 255; $byte_3 += 1 ) {
+			for ( $byte_4 = 128; $byte_4 <= 255; $byte_4 += 1 ) {
+				$values[] = "\xF0\x9F" . chr( $byte_3 ) . chr( $byte_4 );
+			}
+		}
+
+		foreach ( $values as $value ) {
+			$lexer  = new WP_MySQL_Lexer( $value );
+			$result = $lexer->next_token();
+			$token  = $lexer->get_token();
+
+			$is_valid = preg_match( '/^[\x{10000}-\x{10ffff}]$/u', $value );
+			if ( $is_valid ) {
+				$this->assertTrue( $result );
+				$this->assertSame( WP_MySQL_Lexer::IDENT, $token->id );
+				$this->assertSame( $value, $token->get_bytes() );
+			} else {
+				$this->assertFalse( $result );
+				$this->assertNull( $token );
+			}
+		}
+	}
+
+	public function test_identifier_with_4_byte_characters(): void {
+		// The MySQL lexer accepts 4-byte characters in unquoted identifiers on all versions.
+		foreach ( array( 50744, 80410 ) as $mysql_version ) {
+			$tokens = ( new WP_MySQL_Lexer( 'SELECT a🐬b, 𩸽 FROM 🐬', $mysql_version ) )->remaining_tokens();
+			$this->assertSame(
+				array( 'SELECT', 'a🐬b', ',', '𩸽', 'FROM', '🐬', '', '' ),
+				array_map(
+					static function ( WP_MySQL_Token $token ): string {
+						return $token->get_bytes();
+					},
+					$tokens
+				)
+			);
+		}
+	}
+
+	/**
 	 * A charset-introducer-like name used as a qualified member (after a dot)
 	 * must lex as an identifier. A real charset introducer only appears before
 	 * a string literal, never as the member of a qualified reference.
