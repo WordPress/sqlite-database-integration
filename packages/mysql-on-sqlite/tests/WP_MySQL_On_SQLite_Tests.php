@@ -469,6 +469,75 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$this->assertSame( '1', $this->last_result[0]->r );
 	}
 
+	public function testRegexpNulBytePattern() {
+		// A pattern starting with a NUL byte is an ordinary case-insensitive pattern.
+		$this->assertQuery( 'CREATE TABLE nul_patterns (id INT PRIMARY KEY, s TEXT, p TEXT)' );
+		$this->assertQuery(
+			"INSERT INTO nul_patterns VALUES (1, X'610062', X'0042'), (2, 'aBc', X'0062'), (3, 'abc', 'B')"
+		);
+		$this->assertQuery(
+			'SELECT
+				s REGEXP p AS matched,
+				s NOT REGEXP p AS not_matched,
+				s REGEXP BINARY p AS binary_matched,
+				REGEXP_LIKE(s, p) AS like_matched,
+				REGEXP_INSTR(s, p) AS position
+			FROM nul_patterns ORDER BY id'
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'matched'        => '1',
+					'not_matched'    => '0',
+					'binary_matched' => '0',
+					'like_matched'   => '1',
+					'position'       => '2',
+				),
+				(object) array(
+					'matched'        => '0',
+					'not_matched'    => '1',
+					'binary_matched' => '0',
+					'like_matched'   => '0',
+					'position'       => '0',
+				),
+				(object) array(
+					'matched'        => '1',
+					'not_matched'    => '0',
+					'binary_matched' => '0',
+					'like_matched'   => '1',
+					'position'       => '2',
+				),
+			),
+			$this->last_result
+		);
+	}
+
+	public function testRegexpLegacyOperatorPrecedence() {
+		// REGEXP binds tighter than comparison operators.
+		$this->assertQuery(
+			"SELECT
+				1 = 'a' REGEXP 'a' AS a,
+				0 = 'a' REGEXP 'b' AS b,
+				'a' REGEXP 'a' = 1 AS c,
+				1 = 'a' NOT REGEXP 'b' AS d,
+				1 + 1 REGEXP '2' AS e,
+				NOT 'a' REGEXP 'b' AS f"
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'a' => '1',
+					'b' => '1',
+					'c' => '1',
+					'd' => '1',
+					'e' => '1',
+					'f' => '1',
+				),
+			),
+			$this->last_result
+		);
+	}
+
 	public function testRegexpLegacyOperatorMatchesBinaryDataByBytes() {
 		// Non-UTF-8 data is matched like MySQL binary strings: byte by byte and case-sensitively.
 		$this->assertQuery( 'CREATE TABLE blobs (id INT PRIMARY KEY, b BLOB)' );

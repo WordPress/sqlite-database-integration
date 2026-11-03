@@ -101,6 +101,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * @var array
 	 */
 	private $function_arities = array(
+		'regexp'         => array( 2, 3 ),
 		'regexp_like'    => array( 2, 3 ),
 		'regexp_replace' => array( 3, 4, 5, 6 ),
 		'regexp_substr'  => array( 2, 3, 4, 5 ),
@@ -592,44 +593,26 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	}
 
 	/**
-	 * Method to emulate MySQL REGEXP() function.
+	 * Method to emulate the MySQL REGEXP operator.
 	 *
 	 * @param string|null $pattern Regular expression to match.
 	 * @param string|null $field   Haystack.
+	 * @param int         $binary  1 for REGEXP BINARY, which matches bytes
+	 *                             case-sensitively; 0 otherwise.
 	 *
 	 * @throws Exception If the pattern is not a valid regular expression.
 	 * @return int|null 1 if matched, 0 if not matched, or NULL for NULL input.
 	 */
-	public function regexp( $pattern, $field ) {
+	public function regexp( $pattern, $field, $binary = 0 ) {
 		if ( null === $pattern || null === $field ) {
 			return null;
-		}
-		$pattern = (string) $pattern;
-
-		/*
-		 * If the original query says REGEXP BINARY
-		 * the comparison is byte-by-byte and letter casing now
-		 * matters since lower- and upper-case letters have different
-		 * byte codes.
-		 *
-		 * The REGEXP function can't be easily made to accept two
-		 * parameters, so we'll have to use a hack to get around this.
-		 *
-		 * If the first character of the pattern is a null byte, we'll
-		 * remove it and make the comparison case-sensitive. This should
-		 * be reasonably safe since PHP does not allow null bytes in
-		 * regular expressions anyway.
-		 */
-		$is_binary = '' !== $pattern && "\x00" === $pattern[0];
-		if ( $is_binary ) {
-			$pattern = substr( $pattern, 1 );
 		}
 
 		/*
 		 * Data that is not valid UTF-8 can only be a binary string in MySQL,
 		 * and MySQL matches binary strings byte by byte and case-sensitively.
 		 */
-		$byte_mode = $is_binary || ! $this->regexp_is_utf8( $pattern ) || ! $this->regexp_is_utf8( $field );
+		$byte_mode = 1 === $binary || ! $this->regexp_is_utf8( $pattern ) || ! $this->regexp_is_utf8( $field );
 		$compiled  = $this->regexp_compile( $pattern, $byte_mode ? 'c' : '', $byte_mode );
 		$result    = preg_match( $compiled, $field );
 		if ( false === $result ) {
@@ -1291,7 +1274,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		}
 
 		$newline  = $unix_lines ? '(*LF)' : '(*ANY)';
-		$compiled = '/' . $newline . $this->regexp_escape_delimiter( $pattern ) . '/' . $modifiers;
+		$compiled = '/' . $newline . $this->regexp_escape_pattern( $pattern ) . '/' . $modifiers;
 
 		/*
 		 * Compile errors are the only preg failures that emit PHP warnings.
@@ -1312,13 +1295,19 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	}
 
 	/**
-	 * Escape pattern delimiters that are not already escaped.
+	 * Escape pattern delimiters and NUL bytes that are not already escaped.
+	 *
+	 * PHP before 8.2 rejects NUL bytes in patterns, so they become "\x00".
 	 *
 	 * @param string $pattern The regex pattern.
 	 *
 	 * @return string Pattern safe to wrap in slash delimiters.
 	 */
-	private function regexp_escape_delimiter( $pattern ) {
+	private function regexp_escape_pattern( $pattern ) {
+		$special = array(
+			'/'  => '\\/',
+			"\0" => '\\x00',
+		);
 		$escaped = '';
 		$quoted  = false;
 		$length  = strlen( $pattern );
@@ -1329,19 +1318,20 @@ class WP_SQLite_PDO_User_Defined_Functions {
 					$escaped .= '\\E';
 					$quoted   = false;
 					++$i;
-				} elseif ( '/' === $character ) {
-					$escaped .= '\\E\\/\\Q';
+				} elseif ( isset( $special[ $character ] ) ) {
+					$escaped .= '\\E' . $special[ $character ] . '\\Q';
 				} else {
 					$escaped .= $character;
 				}
 				continue;
 			}
 			if ( '\\' === $character && $i + 1 < $length ) {
-				$escaped .= $character . $pattern[ $i + 1 ];
-				$quoted   = 'Q' === $pattern[ $i + 1 ];
+				$next     = $pattern[ $i + 1 ];
+				$escaped .= isset( $special[ $next ] ) ? $special[ $next ] : $character . $next;
+				$quoted   = 'Q' === $next;
 				++$i;
-			} elseif ( '/' === $character ) {
-				$escaped .= '\\/';
+			} elseif ( isset( $special[ $character ] ) ) {
+				$escaped .= $special[ $character ];
 			} else {
 				$escaped .= $character;
 			}

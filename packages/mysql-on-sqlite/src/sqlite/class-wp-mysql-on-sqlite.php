@@ -5169,26 +5169,16 @@ class WP_MySQL_On_SQLite extends PDO {
 		$is_binary = isset( $tokens[1] ) && WP_MySQL_Lexer::BINARY_SYMBOL === $tokens[1]->id;
 		$subject   = $this->translate( $node->get_first_child_node() );
 		$pattern   = $this->translate( $operations->get_first_child_node() );
+		$not       = null === $node->get_first_child_node( 'notRule' ) ? '' : 'NOT ';
 
 		/*
-		 * If the query says REGEXP BINARY, the comparison is byte-by-byte
-		 * and letter casing matters – lowercase and uppercase letters are
-		 * represented using different byte codes.
+		 * Call the REGEXP function directly, so that REGEXP BINARY can pass
+		 * a flag for byte-by-byte, case-sensitive matching.
 		 *
-		 * The REGEXP function can't be easily made to accept two
-		 * parameters, so we'll have to use a hack to get around this.
-		 *
-		 * If the first character of the pattern is a null byte, we'll
-		 * remove it and make the comparison case-sensitive. This should
-		 * be reasonably safe since PHP does not allow null bytes in
-		 * regular expressions anyway.
+		 * The parentheses keep the MySQL precedence. In SQLite, REGEXP binds
+		 * as loosely as "=", so "1 = 'a' REGEXP 'a'" would be "(1 = 'a') REGEXP 'a'".
 		 */
-		if ( true === $is_binary ) {
-			$pattern = 'CHAR(0) || ' . $pattern;
-		}
-
-		$operator = null === $node->get_first_child_node( 'notRule' ) ? 'REGEXP' : 'NOT REGEXP';
-		return "$subject $operator $pattern";
+		return sprintf( '(%sREGEXP(%s, %s%s))', $not, $pattern, $subject, $is_binary ? ', 1' : '' );
 	}
 
 	/**
