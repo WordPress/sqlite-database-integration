@@ -4,11 +4,11 @@
  * Functions that read the lines of MySQL server test files as UTF-8 text.
  *
  * MySQL reads a query in the character set of the client, which tests select with
- * statements like "SET NAMES". The "--character_set" command of mysqltest doesn't
- * change the character set of the current connection, but tests use it to mark
- * bytes in another character set, so it is the fallback. A test that sends UTF-8
- * bytes with "SET NAMES latin1" is read as latin1 too, because MySQL reads it so.
- * A character set introducer overrides all of them for its string literal.
+ * statements like "SET NAMES". The "--character_set" command of mysqltest only sets
+ * it for connections that a test opens later, and no query depends on that, so it
+ * is ignored. A test that sends UTF-8 bytes with "SET NAMES latin1" is read as
+ * latin1 too, because MySQL reads it so. A character set introducer overrides the
+ * client character set for its string literal.
  *
  * These functions are separate from the "generate-query-corpus.php" script, so that
  * tests can load them without running the script.

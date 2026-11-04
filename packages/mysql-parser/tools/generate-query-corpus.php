@@ -204,13 +204,10 @@ foreach ( scandir( $tests_dir ) as $i => $file ) {
 	// Track whether we should skip the next query.
 	$skip_next = false;
 
-	// Track the encoding of the character set that "--character_set" selects.
-	$mysqltest_encoding = 'UTF-8';
-
 	// Track the encoding of the client character set that a statement selects.
-	$client_encoding = null;
+	// mysqltest connects in utf8mb4.
+	$client_encoding = 'UTF-8';
 
-	$lines    = 0;
 	$query    = '';
 	$contents = file_get_contents( $tests_dir . '/' . $file );
 
@@ -232,8 +229,6 @@ foreach ( scandir( $tests_dir ) as $i => $file ) {
 	// As in mysqltest, only LF and CRLF end a line. Other line separators are part of
 	// the query, such as the ones that "comments.test" uses to test whitespace.
 	foreach ( preg_split( '/\r?\n/', $contents ) as $line ) {
-		$lines += 1;
-
 		// Skip command bodies for perl, append_file, and write_file commands.
 		if ( $command_body_terminator ) {
 			if ( trim( $line ) === $command_body_terminator ) {
@@ -266,25 +261,14 @@ foreach ( scandir( $tests_dir ) as $i => $file ) {
 			continue;
 		}
 
-		// Track character set.
-		if ( 0 === strpos( strtolower( $line ), '--character_set' ) ) {
-			$charset = strtolower( trim( substr( $line, strlen( '--character_set' ) ) ) );
-			if ( ! isset( QUERY_CORPUS_CHARSET_ENCODINGS[ $charset ] ) ) {
-				fwrite( STDERR, "error: unknown character set '$charset' on line $lines in $file.\n" );
-				exit( 1 );
-			}
-			$mysqltest_encoding = QUERY_CORPUS_CHARSET_ENCODINGS[ $charset ];
-			continue;
-		}
-
 		// Track the client character set, unless the statement is expected to fail.
-		// "DEFAULT" and character sets that the map doesn't list have no encoding.
+		// "DEFAULT" and character sets that the map doesn't list are read as UTF-8.
 		$client_charset = read_client_charset( $line );
 		if ( null !== $client_charset && ! $skip_next ) {
-			$client_encoding = QUERY_CORPUS_CHARSET_ENCODINGS[ $client_charset ] ?? null;
+			$client_encoding = QUERY_CORPUS_CHARSET_ENCODINGS[ $client_charset ] ?? 'UTF-8';
 		}
 
-		$line = convert_to_utf8( $line, array_filter( array( $client_encoding, $mysqltest_encoding ) ) );
+		$line = convert_to_utf8( $line, array( $client_encoding, 'UTF-8' ) );
 
 		// Skip comments.
 		$char1 = $line[0] ?? null;
