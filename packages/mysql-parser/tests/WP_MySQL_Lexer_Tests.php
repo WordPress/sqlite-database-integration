@@ -217,6 +217,53 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 		$this->assertSame( 4, $tokens[2]->length );
 	}
 
+	/**
+	 * In MySQL, the name after "@" is one token, also with non-ASCII characters.
+	 *
+	 * @dataProvider data_at_names
+	 */
+	public function test_at_name_is_one_token( string $sql, array $expected ): void {
+		$tokens = ( new WP_MySQL_Lexer( $sql ) )->remaining_tokens();
+		$this->assertSame(
+			$expected,
+			array_map(
+				static function ( WP_MySQL_Token $token ): string {
+					return $token->get_bytes();
+				},
+				$tokens
+			)
+		);
+	}
+
+	/**
+	 * @return array<string,array{0:string,1:string[]}>
+	 */
+	public function data_at_names(): array {
+		return array(
+			'ASCII'                     => array( '@a1_$', array( '@', 'a1_$', '', '' ) ),
+			'with a dot'                => array( '@a.b', array( '@', 'a.b', '', '' ) ),
+			'starting with a dot'       => array( '@.a', array( '@', '.a', '', '' ) ),
+			'ending with a dot'         => array( '@a.', array( '@', 'a.', '', '' ) ),
+			'only dots'                 => array( '@..', array( '@', '..', '', '' ) ),
+			'2-byte character'          => array( '@é', array( '@', 'é', '', '' ) ),
+			'after an ASCII character'  => array( '@xé', array( '@', 'xé', '', '' ) ),
+			'3-byte character'          => array( '@x€y', array( '@', 'x€y', '', '' ) ),
+			'4-byte character'          => array( '@🐬', array( '@', '🐬', '', '' ) ),
+			'4-byte character after x'  => array( '@x🐬', array( '@', 'x🐬', '', '' ) ),
+			'non-ASCII after a dot'     => array( '@a.🐬', array( '@', 'a.🐬', '', '' ) ),
+			'non-ASCII before a dot'    => array( '@🐬.a', array( '@', '🐬.a', '', '' ) ),
+			'followed by an operator'   => array( '@é+1', array( '@', 'é', '+', '1', '', '' ) ),
+			'followed by a name'        => array( '@é a', array( '@', 'é', 'a', '', '' ) ),
+			'followed by a number'      => array( '@a.b .5', array( '@', 'a.b', '.5', '', '' ) ),
+			'host part of a user'       => array( 'u@é.example.com', array( 'u', '@', 'é.example.com', '', '' ) ),
+
+			// Invalid UTF-8 ends the stream, as elsewhere in the lexer.
+			'invalid byte'              => array( "@x\xFF", array( '@', 'x' ) ),
+			'truncated 4-byte sequence' => array( "@x\xF0\x9F\x90", array( '@', 'x' ) ),
+			'invalid byte first'        => array( "@\xFF", array( '@', '' ) ),
+		);
+	}
+
 	public function test_at_at_splits_into_two_at_signs(): void {
 		$this->assertSame(
 			array( 'SELECT', 'AT_SIGN', 'AT_SIGN', 'IDENT', 'END_OF_INPUT', 'YYEOF' ),

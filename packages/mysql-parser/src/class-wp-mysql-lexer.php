@@ -667,11 +667,11 @@ class WP_MySQL_Lexer {
 	 *
 	 * MySQL treats "@" as its own terminal. A single "@" is followed by the
 	 * unquoted user-variable name (always an identifier, never a keyword; it may
-	 * contain "." and "$"), by an empty name (MySQL's empty LEX_HOSTNAME, which
-	 * makes "SELECT @" and "user1@" valid), or by a quoted name supplied by the
-	 * following token. A "@@" prefix is two "@" terminals, followed by the system
-	 * variable name. As in MySQL, that name can't be empty, and only backticks
-	 * can quote it.
+	 * contain ".", "$", and non-ASCII characters), by an empty name (MySQL's empty
+	 * LEX_HOSTNAME, which makes "SELECT @" and "user1@" valid), or by a quoted name
+	 * supplied by the following token. A "@@" prefix is two "@" terminals, followed
+	 * by the system variable name. As in MySQL, that name can't be empty, and only
+	 * backticks can quote it.
 	 *
 	 * @param int $at_start Byte offset of the "@" token.
 	 */
@@ -697,14 +697,21 @@ class WP_MySQL_Lexer {
 			return;
 		}
 
-		$name_length = strspn(
-			$this->sql,
-			self::IDENTIFIER_MASK . '.',
-			$position
-		);
+		// Read the identifier characters and any "." between them as one name.
+		while ( true ) {
+			$this->read_identifier();
+			if ( '.' !== ( $this->sql[ $this->bytes_already_read ] ?? null ) ) {
+				break;
+			}
+			$this->bytes_already_read += 1;
+		}
+
+		// The "." read as a part of the name is not a qualified name separator.
+		$this->next_state = self::STATE_START;
+
+		$name_length = $this->bytes_already_read - $position;
 		if ( $name_length > 0 ) {
-			$out[]                    = $this->make_token( self::IDENT, $position, $name_length );
-			$this->bytes_already_read = $position + $name_length;
+			$out[] = $this->make_token( self::IDENT, $position, $name_length );
 		} elseif ( "'" !== $next && '"' !== $next && '`' !== $next ) {
 			$out[] = $this->make_token( self::IDENT, $position, 0 );
 		}
@@ -1026,7 +1033,7 @@ class WP_MySQL_Lexer {
 	 *
 	 * This function reads characters that are allowed in an unquoted identifier.
 	 * It accepts digit-only sequences too; callers scan those as numbers, except
-	 * after "." or "@@".
+	 * after ".", "@", or "@@".
 	 *
 	 * Rules:
 	 *   1. Allowed characters are ASCII a-z, A-Z, 0-9, _, $, and Unicode U+0080-U+10FFFF.
