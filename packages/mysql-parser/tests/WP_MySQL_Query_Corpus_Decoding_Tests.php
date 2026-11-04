@@ -37,6 +37,27 @@ class WP_MySQL_Query_Corpus_Decoding_Tests extends TestCase {
 	}
 
 	/**
+	 * Test every non-ASCII byte that MySQL's cp1250 defines. The expected text comes
+	 * from MySQL, as the result of CONVERT(_cp1250 x'..' USING utf32) for each byte.
+	 */
+	public function test_cp1250_characters_match_mysql(): void {
+		$bytes = '';
+		for ( $byte = 0x80; $byte <= 0xFF; $byte += 1 ) {
+			if ( false === strpos( "\x81\x83\x88\x90\x98", chr( $byte ) ) ) {
+				$bytes .= chr( $byte );
+			}
+		}
+
+		$this->assertSame(
+			"€‚„…†‡‰Š‹ŚŤŽŹ‘’“”•–—™š›śťžź\u{A0}ˇ˘Ł¤Ą¦§"
+			. "¨©Ş«¬\u{AD}®Ż°±˛ł´µ¶·¸ąş»Ľ˝ľżŔÁÂĂÄĹĆÇČÉĘ"
+			. 'ËĚÍÎĎĐŃŇÓÔŐÖ×ŘŮÚŰÜÝŢßŕáâăäĺćçčéęëěíîďđńň'
+			. 'óôőö÷řůúűüýţ˙',
+			convert_to_utf8( $bytes, array( QUERY_CORPUS_CHARSET_ENCODINGS['cp1250'] ) )
+		);
+	}
+
+	/**
 	 * @dataProvider data_introduced_literals
 	 */
 	public function test_introduced_literal_is_read_in_its_character_set( string $encoding, string $line, string $expected ): void {
@@ -51,6 +72,7 @@ class WP_MySQL_Query_Corpus_Decoding_Tests extends TestCase {
 			'utf8mb3 in a koi8r line'      => array( 'KOI8-R', "SELECT _utf8mb3'тест'", "SELECT _utf8mb3'тест'" ),
 			'koi8r in a UTF-8 line'        => array( 'UTF-8', "SELECT _koi8r'\xD4\xC5\xD3\xD4'", "SELECT _koi8r'тест'" ),
 			'latin1 in a UTF-8 line'       => array( 'UTF-8', "SELECT _latin1'é'", "SELECT _latin1'Ã©'" ),
+			'cp1250 in a UTF-8 line'       => array( 'UTF-8', "SELECT _cp1250'\xE8'", "SELECT _cp1250'č'" ),
 			'whitespace is kept'           => array( 'UTF-8', "SELECT _koi8r  \t'\xD4'", "SELECT _koi8r  \t'т'" ),
 			'uppercase introducer'         => array( 'UTF-8', "SELECT _KOI8R'\xD4'", "SELECT _KOI8R'т'" ),
 			'double quotes'                => array( 'UTF-8', "SELECT _koi8r\"\xD4\"", 'SELECT _koi8r"т"' ),
@@ -94,6 +116,7 @@ class WP_MySQL_Query_Corpus_Decoding_Tests extends TestCase {
 			'default'                       => array( 'SET NAMES DEFAULT;', 'default' ),
 			'SET CHARACTER SET'             => array( 'SET CHARACTER SET koi8r;', 'koi8r' ),
 			'SET CHARSET'                   => array( 'SET CHARSET koi8r;', 'koi8r' ),
+			'old character set name'        => array( 'SET CHARACTER SET cp1250_latin2;', 'cp1250_latin2' ),
 			'character_set_client'          => array( 'SET character_set_client = latin1;', 'latin1' ),
 			'character_set_client no space' => array( 'SET character_set_client=latin1;', 'latin1' ),
 			'quoted character_set_client'   => array( "SET character_set_client= 'latin1';", 'latin1' ),
@@ -146,6 +169,8 @@ class WP_MySQL_Query_Corpus_Decoding_Tests extends TestCase {
 			'big5'                             => array( 'big5', "SELECT '\xA4\x40'", "SELECT '一'" ),
 			'binary as UTF-8'                  => array( 'binary', "SELECT 'é'", "SELECT 'é'" ),
 			'binary that is not UTF-8'         => array( 'binary', "SELECT '\xE9'", "SELECT 'é'" ),
+			'cp1250'                           => array( 'cp1250', "SELECT '\xE1\xE1\xE8\xE8'", "SELECT 'ááčč'" ),
+			'cp1250_latin2'                    => array( 'cp1250_latin2', "SELECT '\xA3\xA5\xAA\xAF'", "SELECT 'ŁĄŞŻ'" ),
 			'cp1251'                           => array( 'cp1251', "SELECT '\xF2\xE5\xF1\xF2'", "SELECT 'тест'" ),
 			'gb18030'                          => array( 'gb18030', "SELECT '\xC4\xE3'", "SELECT '你'" ),
 			'gbk'                              => array( 'gbk', "SELECT '\xC4\xE3'", "SELECT '你'" ),
@@ -170,6 +195,9 @@ class WP_MySQL_Query_Corpus_Decoding_Tests extends TestCase {
 			'unassigned tis620 byte'           => array( 'tis620', "SELECT '\xA1\xDB'", "SELECT '¡Û'" ),
 			'tis620 byte below the Thai block' => array( 'tis620', "SELECT '\xA0\xA1'", "SELECT '\u{A0}¡'" ),
 			'tis620 byte above the Thai block' => array( 'tis620', "SELECT '\xFC\xA1'", "SELECT 'ü¡'" ),
+
+			// MySQL's cp1250 leaves five bytes undefined, so these lines are read as latin1.
+			'undefined cp1250 bytes'           => array( 'cp1250', "SELECT '\xE8\x81\x83\x88\x90\x98'", "SELECT 'è\u{81}ƒˆ\u{90}˜'" ),
 		);
 	}
 }

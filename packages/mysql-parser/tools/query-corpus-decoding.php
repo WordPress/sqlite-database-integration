@@ -16,22 +16,71 @@
 
 // MySQL character sets that tests select, and the mbstring encodings to read them
 // with. MySQL's latin1 is Windows-1252, binary data is read as UTF-8 when valid, and
-// TIS-620, which mbstring doesn't support, is converted by convert_bytes_to_utf8().
+// TIS-620 and Windows-1250, which mbstring doesn't support, are converted by
+// convert_bytes_to_utf8(). "cp1250_latin2" is an old name that selects cp1250.
 const QUERY_CORPUS_CHARSET_ENCODINGS = array(
-	'big5'    => 'BIG-5',
-	'binary'  => 'UTF-8',
-	'cp1251'  => 'Windows-1251',
-	'gb18030' => 'GB18030',
-	'gbk'     => 'CP936',
-	'koi8r'   => 'KOI8-R',
-	'latin1'  => 'Windows-1252',
-	'latin2'  => 'ISO-8859-2',
-	'sjis'    => 'SJIS',
-	'tis620'  => 'TIS-620',
-	'ujis'    => 'EUC-JP',
-	'utf8'    => 'UTF-8',
-	'utf8mb3' => 'UTF-8',
-	'utf8mb4' => 'UTF-8',
+	'big5'          => 'BIG-5',
+	'binary'        => 'UTF-8',
+	'cp1250'        => 'Windows-1250',
+	'cp1250_latin2' => 'Windows-1250',
+	'cp1251'        => 'Windows-1251',
+	'gb18030'       => 'GB18030',
+	'gbk'           => 'CP936',
+	'koi8r'         => 'KOI8-R',
+	'latin1'        => 'Windows-1252',
+	'latin2'        => 'ISO-8859-2',
+	'sjis'          => 'SJIS',
+	'tis620'        => 'TIS-620',
+	'ujis'          => 'EUC-JP',
+	'utf8'          => 'UTF-8',
+	'utf8mb3'       => 'UTF-8',
+	'utf8mb4'       => 'UTF-8',
+);
+
+// The Windows-1250 characters of the bytes that differ from ISO-8859-2.
+const QUERY_CORPUS_CP1250_CHARACTERS = array(
+	"\x80" => '€',
+	"\x82" => '‚',
+	"\x84" => '„',
+	"\x85" => '…',
+	"\x86" => '†',
+	"\x87" => '‡',
+	"\x89" => '‰',
+	"\x8A" => 'Š',
+	"\x8B" => '‹',
+	"\x8C" => 'Ś',
+	"\x8D" => 'Ť',
+	"\x8E" => 'Ž',
+	"\x8F" => 'Ź',
+	"\x91" => '‘',
+	"\x92" => '’',
+	"\x93" => '“',
+	"\x94" => '”',
+	"\x95" => '•',
+	"\x96" => '–',
+	"\x97" => '—',
+	"\x99" => '™',
+	"\x9A" => 'š',
+	"\x9B" => '›',
+	"\x9C" => 'ś',
+	"\x9D" => 'ť',
+	"\x9E" => 'ž',
+	"\x9F" => 'ź',
+	"\xA1" => 'ˇ',
+	"\xA5" => 'Ą',
+	"\xA6" => '¦',
+	"\xA9" => '©',
+	"\xAB" => '«',
+	"\xAC" => '¬',
+	"\xAE" => '®',
+	"\xB1" => '±',
+	"\xB5" => 'µ',
+	"\xB6" => '¶',
+	"\xB7" => '·',
+	"\xB9" => 'ą',
+	"\xBB" => '»',
+	"\xBC" => 'Ľ',
+	"\xBE" => 'ľ',
 );
 
 /**
@@ -116,11 +165,33 @@ function convert_bytes_to_utf8( string $bytes, array $encodings ): string {
 					$bytes
 				);
 			}
+		} elseif ( 'Windows-1250' === $encoding ) {
+			// MySQL's cp1250 leaves these five bytes undefined.
+			if ( ! preg_match( '/[\x81\x83\x88\x90\x98]/', $bytes ) ) {
+				return convert_cp1250_to_utf8( $bytes );
+			}
 		} elseif ( mb_check_encoding( $bytes, $encoding ) ) {
 			return mb_convert_encoding( $bytes, 'UTF-8', $encoding );
 		}
 	}
 	return convert_latin1_to_utf8( $bytes );
+}
+
+/**
+ * Convert bytes in MySQL's cp1250 to UTF-8.
+ *
+ * @param string $bytes The cp1250 bytes, without any undefined ones.
+ * @return string The bytes in UTF-8.
+ */
+function convert_cp1250_to_utf8( string $bytes ): string {
+	return preg_replace_callback(
+		'/[\x80-\xff]/',
+		function ( array $matches ): string {
+			return QUERY_CORPUS_CP1250_CHARACTERS[ $matches[0] ]
+				?? mb_convert_encoding( $matches[0], 'UTF-8', 'ISO-8859-2' );
+		},
+		$bytes
+	);
 }
 
 /**

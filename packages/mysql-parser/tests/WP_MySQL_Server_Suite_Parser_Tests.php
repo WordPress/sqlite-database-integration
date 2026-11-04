@@ -74,7 +74,9 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 		return array(
 			'SET NAMES overrides --character_set'    => array( 'create table `été` (field1 int)' ),
 			'SET NAMES without --character_set'      => array( 'create database бд' ),
+			'SET NAMES cp1250'                       => array( 'insert into t1 values("ááčč")' ),
 			'SET NAMES with --character_set latin1'  => array( 'CREATE TABLE t1(колонка1 INT)' ),
+			'SET CHARACTER SET'                      => array( "INSERT INTO t1 VALUES ('ŁĄŞŻ')" ),
 			'SET NAMES before --character_set'       => array( "insert into t1 select repeat('я',300)" ),
 			'UTF-8 bytes that MySQL reads as latin1' => array( 'insert into t1 (id, name) values (1, "Ã³ra")' ),
 			'UTF-8 literal in a koi8r line'          => array( "CREATE VIEW v2 AS SELECT _utf8mb3'тест' as c1" ),
