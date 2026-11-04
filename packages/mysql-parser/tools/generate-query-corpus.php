@@ -229,7 +229,9 @@ foreach ( scandir( $tests_dir ) as $i => $file ) {
 	// The files are not decoded yet, so the regexes match bytes, not UTF-8.
 	$contents = preg_replace( '/^\s*(?:if|while)\s*(\((?>(?1)|[^()])*+\))\s*(\{(?>(?2)|[^{}])*+})/im', '', $contents );
 
-	foreach ( preg_split( '/\r\n|[\n\x0b\x0c\r]/', $contents ) as $line ) {
+	// As in mysqltest, only LF and CRLF end a line. Other line separators are part of
+	// the query, such as the ones that "comments.test" uses to test whitespace.
+	foreach ( preg_split( '/\r?\n/', $contents ) as $line ) {
 		$lines += 1;
 
 		// Skip command bodies for perl, append_file, and write_file commands.

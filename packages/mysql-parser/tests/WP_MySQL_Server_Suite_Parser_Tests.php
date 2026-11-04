@@ -19,7 +19,7 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 	 * set is pinned in FAILURES_PATH; update it when the accepted language
 	 * legitimately changes.
 	 */
-	const EXPECTED_QUERIES  = 69070;
+	const EXPECTED_QUERIES  = 69076;
 	const EXPECTED_FAILURES = 166;
 
 	public function test_corpus_acceptance_rate(): void {
@@ -54,7 +54,7 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 	}
 
 	/**
-	 * Pin the text of queries from tests that use other character sets, because
+	 * Pin the text of queries that are easy to misread from the test files, because
 	 * the tally can't see a change in the text of a query that still parses.
 	 *
 	 * @dataProvider data_query_texts
@@ -79,6 +79,10 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 			'UTF-8 bytes that MySQL reads as latin1' => array( 'insert into t1 (id, name) values (1, "Ã³ra")' ),
 			'UTF-8 literal in a koi8r line'          => array( "CREATE VIEW v2 AS SELECT _utf8mb3'тест' as c1" ),
 			'koi8r literal in a UTF-8 line'          => array( "CREATE VIEW v2 AS SELECT _koi8r'тест' as c1" ),
+			'line feed in a version comment'         => array( "DO 1 /*!80034\n+1*/" ),
+			'vertical tab in a version comment'      => array( "DO 1 /*!80034\v+1*/" ),
+			'form feed in a version comment'         => array( "DO 1 /*!80034\f+1*/" ),
+			'carriage return in a version comment'   => array( "DO 1 /*!80034\r+1*/" ),
 		);
 	}
 
