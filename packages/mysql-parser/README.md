@@ -97,6 +97,7 @@ This requires `bash`, `git`, and `php`. It performs the following steps:
 To run lexer and parser tests and benchmarks, use:
 
 ```bash
-composer run test        # PHPUnit suite, including the query corpus tests
-composer run benchmark   # Query throughput with and without JIT on the whole corpus
+composer run test                       # PHPUnit suite, including the query corpus tests
+composer run benchmark                  # Query throughput with and without JIT on the whole corpus
+composer run benchmark -- --lexer-only  # The same, measuring only the lexer
 ```

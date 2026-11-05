@@ -2,7 +2,8 @@
 /**
  * Benchmark the MySQL parser over the MySQL server test corpus.
  *
- * Reports the corpus parse rate and end-to-end (lex + parse) throughput.
+ * Reports the corpus parse rate and end-to-end (lex + parse) throughput. With
+ * --lexer-only, it measures only the lexer and parses nothing.
  *
  * Methodology: a few warmup passes (discarded — they heat opcache, the tracing
  * JIT, and the CPU caches) followed by N timed passes over the whole corpus. The
@@ -13,6 +14,7 @@
  *
  * Options:
  *   --json          Machine-readable output.
+ *   --lexer-only    Only lex the queries, without parsing them.
  *   --limit=N       Only benchmark the first N queries.
  *   --iterations=N  Number of timed passes (default 5).
  *   --warmup=N      Number of discarded warmup passes (default 2).
@@ -26,6 +28,7 @@ set_error_handler(
 );
 
 $json       = in_array( '--json', $argv, true );
+$lexer_only = in_array( '--lexer-only', $argv, true );
 $limit      = null;
 $iterations = 5;
 $warmup     = 2;
@@ -43,7 +46,7 @@ foreach ( $argv as $arg ) {
 }
 
 require_once __DIR__ . '/../vendor/autoload.php';
-$parser = WP_MySQL_Parser_Factory::create_parser();
+$parser = $lexer_only ? null : WP_MySQL_Parser_Factory::create_parser();
 
 // Load the corpus before timing so file IO is excluded.
 if ( ! is_readable( $corpus ) ) {
@@ -65,17 +68,17 @@ while ( ( $record = fgetcsv( $handle, null, ',', '"', '\\' ) ) !== false ) {
 fclose( $handle );
 $query_count = count( $queries );
 
-// One end-to-end pass over the corpus (lex + parse), recording failures and
-// exceptions (deterministic across passes, so the last pass's counts are kept).
-$failures     = 0;
-$exceptions   = 0;
-$parse_corpus = function () use ( $queries, $parser, &$failures, &$exceptions ) {
+// One pass over the corpus, recording failures and exceptions (deterministic
+// across passes, so the last pass's counts are kept).
+$failures   = 0;
+$exceptions = 0;
+$run_pass   = function () use ( $queries, $parser, &$failures, &$exceptions ) {
 	$failures   = 0;
 	$exceptions = 0;
 	foreach ( $queries as $query ) {
 		try {
 			$tokens = ( new WP_MySQL_Lexer( $query ) )->remaining_tokens();
-			if ( null === $parser->parse( $tokens ) ) {
+			if ( null !== $parser && null === $parser->parse( $tokens ) ) {
 				++$failures;
 			}
 		} catch ( Throwable $e ) {
@@ -85,13 +88,13 @@ $parse_corpus = function () use ( $queries, $parser, &$failures, &$exceptions ) 
 };
 
 for ( $i = 0; $i < $warmup; $i++ ) {
-	$parse_corpus();
+	$run_pass();
 }
 
 $samples = array();
 for ( $i = 0; $i < $iterations; $i++ ) {
 	$start = microtime( true );
-	$parse_corpus();
+	$run_pass();
 	$samples[] = $query_count / ( microtime( true ) - $start );
 }
 sort( $samples );
@@ -112,7 +115,7 @@ $jit_on         = $opcache_on && ! empty( $opcache_status['jit']['on'] );
 if ( $json ) {
 	echo json_encode(
 		array(
-			'benchmark'   => 'mysql-parser',
+			'benchmark'   => $lexer_only ? 'mysql-lexer' : 'mysql-parser',
 			'opcache'     => $opcache_on,
 			'jit'         => $jit_on,
 			'queries'     => $query_count,
@@ -134,12 +137,18 @@ if ( $json ) {
 }
 
 $config = $jit_on ? 'opcache + tracing JIT' : ( $opcache_on ? 'opcache, no JIT' : 'no opcache' );
-printf( "MySQL parser (official grammar) — %s\n", $config );
+printf( "MySQL %s — %s\n", $lexer_only ? 'lexer' : 'parser (official grammar)', $config );
 $jit_requested = ! in_array( strtolower( (string) ini_get( 'opcache.jit' ) ), array( '', '0', 'off', 'disable' ), true );
 if ( $jit_requested && ! $jit_on ) {
 	printf( "  warning: opcache.jit is set but the JIT is NOT active here — check that opcache is enabled and jit_buffer_size > 0.\n" );
 }
-printf( "%s queries, %d warmup + %d timed passes (end-to-end lex+parse)\n", number_format( $query_count ), $warmup, $iterations );
+printf(
+	"%s queries, %d warmup + %d timed passes (%s)\n",
+	number_format( $query_count ),
+	$warmup,
+	$iterations,
+	$lexer_only ? 'lex only' : 'end-to-end lex+parse'
+);
 printf( "  best:   %s QPS\n", number_format( $best ) );
 printf( "  median: %s QPS\n", number_format( $median ) );
 printf( "  spread: %.1f%% (best vs worst)\n", $spread * 100 );
