@@ -1093,6 +1093,69 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$this->assertSame( '3', $this->last_result[0]->r );
 	}
 
+	/**
+	 * @dataProvider regexpPosixCaseClassCases
+	 */
+	public function testRegexpPosixCaseClasses( $sql, $expected ) {
+		$this->assertQuery( "SELECT $sql AS r" );
+		$this->assertSame( $expected, $this->last_result[0]->r );
+	}
+
+	public static function regexpPosixCaseClassCases() {
+		return array(
+			// Without the "c" flag, the classes ignore case, like in MySQL.
+			'upper, lowercase'         => array( "REGEXP_LIKE('a', '[[:upper:]]')", '1' ),
+			'lower, uppercase'         => array( "REGEXP_LIKE('A', '[[:lower:]]')", '1' ),
+			'upper, non-ASCII'         => array( "REGEXP_LIKE('é', '[[:upper:]]')", '1' ),
+			'lower, non-ASCII'         => array( "REGEXP_LIKE('É', '[[:lower:]]')", '1' ),
+			'upper, digit'             => array( "REGEXP_LIKE('1', '[[:upper:]]')", '0' ),
+			'negated class'            => array( "REGEXP_LIKE('a', '[[:^upper:]]')", '0' ),
+			'negated class, digit'     => array( "REGEXP_LIKE('1', '[[:^upper:]]')", '1' ),
+			'negated set'              => array( "REGEXP_LIKE('a', '[^[:upper:]]')", '0' ),
+			'with other set members'   => array( "REGEXP_LIKE('a', '^[[:upper:]0-9]\$')", '1' ),
+			'outside of a set'         => array( "REGEXP_LIKE('a', '[:upper:]')", '1' ),
+			'REGEXP_REPLACE'           => array( "REGEXP_REPLACE('abC', '[[:lower:]]', 'x')", 'xxx' ),
+			'REGEXP_SUBSTR'            => array( "REGEXP_SUBSTR('abc1', '[[:upper:]]+')", 'abc' ),
+			'REGEXP_INSTR'             => array( "REGEXP_INSTR('1a', '[[:upper:]]')", '2' ),
+			'operator'                 => array( "'a' REGEXP '[[:upper:]]'", '1' ),
+			'negated operator'         => array( "'a' NOT REGEXP '[[:upper:]]'", '0' ),
+
+			// So do the matching Unicode properties.
+			'\\p{Lu}, lowercase'       => array( "REGEXP_LIKE('a', '\\\\p{Lu}')", '1' ),
+			'\\p{Ll}, uppercase'       => array( "REGEXP_LIKE('A', '\\\\p{Ll}')", '1' ),
+			'\\p{Lu}, non-ASCII'       => array( "REGEXP_LIKE('é', '\\\\p{Lu}')", '1' ),
+			'\\p{Lu}, digit'           => array( "REGEXP_LIKE('1', '\\\\p{Lu}')", '0' ),
+			'\\P{Lu}, lowercase'       => array( "REGEXP_LIKE('a', '\\\\P{Lu}')", '0' ),
+			'\\P{Lu}, digit'           => array( "REGEXP_LIKE('1', '\\\\P{Lu}')", '1' ),
+			'\\p{Lu} in a set'         => array( "REGEXP_LIKE('a', '[\\\\p{Lu}]')", '1' ),
+			'\\p{Lu} in a negated set' => array( "REGEXP_LIKE('a', '[^\\\\p{Lu}]')", '0' ),
+			'\\p{Lu}, REGEXP_REPLACE'  => array( "REGEXP_REPLACE('aB1', '\\\\p{Lu}', 'x')", 'xx1' ),
+			'\\p{Ll}, operator'        => array( "'A' REGEXP '\\\\p{Ll}'", '1' ),
+			'\\p{Lu}, c flag'          => array( "REGEXP_LIKE('a', '\\\\p{Lu}', 'c')", '0' ),
+			'\\p{Lu}, inline flag'     => array( "REGEXP_LIKE('a', '(?-i)\\\\p{Lu}')", '0' ),
+			'quoted \\p{Lu}'           => array( "REGEXP_LIKE('a', '\\\\Q\\\\p{Lu}\\\\E')", '0' ),
+			'escaped backslash'        => array( "REGEXP_LIKE('\\\\p{Lu}', '^\\\\\\\\p\\\\{Lu\\\\}\$')", '1' ),
+
+			// With the "c" flag, the classes keep their case.
+			'c flag, upper'            => array( "REGEXP_LIKE('A', '[[:upper:]]', 'c')", '1' ),
+			'c flag, other case'       => array( "REGEXP_LIKE('a', '[[:upper:]]', 'c')", '0' ),
+			'c flag, lower other case' => array( "REGEXP_LIKE('A', '[[:lower:]]', 'c')", '0' ),
+
+			// So they do with an inline flag, the operators' way to match case.
+			'inline flag, upper'       => array( "REGEXP_LIKE('A', '(?-i)[[:upper:]]')", '1' ),
+			'inline flag, other case'  => array( "REGEXP_LIKE('a', '(?-i)[[:upper:]]')", '0' ),
+			'inline flag in a group'   => array( "REGEXP_LIKE('a', '(?-i:[[:upper:]])')", '0' ),
+			'inline flag among others' => array( "REGEXP_LIKE('a', '(?s-i)[[:upper:]]')", '0' ),
+			'inline flag, operator'    => array( "'a' REGEXP '(?-i)[[:upper:]]'", '0' ),
+
+			// Escaped and quoted text is not a class.
+			'escaped bracket'          => array( "REGEXP_LIKE('[:upper:]', '^\\\\[:upper:]\$')", '1' ),
+			'escaped bracket, letter'  => array( "REGEXP_LIKE('a', '^\\\\[:upper:]\$')", '0' ),
+			'quoted class'             => array( "REGEXP_LIKE('[:upper:]', '^\\\\Q[:upper:]\\\\E\$')", '1' ),
+			'quoted class, letter'     => array( "REGEXP_LIKE('a', '\\\\Q[:upper:]\\\\E')", '0' ),
+		);
+	}
+
 	public function testInsertDateNow() {
 		$this->assertQuery(
 			"INSERT INTO _dates (option_name, option_value) VALUES ('first', now());"

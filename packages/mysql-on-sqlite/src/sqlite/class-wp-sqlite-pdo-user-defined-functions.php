@@ -1274,7 +1274,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		}
 
 		$newline  = $unix_lines ? '(*LF)' : '(*ANY)';
-		$compiled = '/' . $newline . $this->regexp_escape_pattern( $pattern ) . '/' . $modifiers;
+		$compiled = '/' . $newline . $this->regexp_translate_pattern( $pattern, ! $case_sensitive ) . '/' . $modifiers;
 
 		/*
 		 * Compile errors are the only preg failures that emit PHP warnings.
@@ -1295,19 +1295,36 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	}
 
 	/**
-	 * Escape pattern delimiters and NUL bytes that are not already escaped.
+	 * Translate a MySQL regex pattern to PCRE syntax.
 	 *
-	 * PHP before 8.2 rejects NUL bytes in patterns, so they become "\x00".
+	 * Escapes pattern delimiters and NUL bytes that are not already escaped. PHP
+	 * before 8.2 rejects NUL bytes in patterns, so they become "\x00". POSIX
+	 * classes that PCRE reads differently from ICU become Unicode properties.
 	 *
-	 * @param string $pattern The regex pattern.
+	 * @param string $pattern          The regex pattern.
+	 * @param bool   $case_insensitive Whether the pattern ignores case by default.
 	 *
 	 * @return string Pattern safe to wrap in slash delimiters.
 	 */
-	private function regexp_escape_pattern( $pattern ) {
+	private function regexp_translate_pattern( $pattern, $case_insensitive ) {
 		$special = array(
 			'/'  => '\\/',
 			"\0" => '\\x00',
 		);
+		$classes = array();
+
+		/*
+		 * With the "u" modifier, PCRE reads [:upper:] and [:lower:] case-sensitively
+		 * even when the pattern ignores case, where ICU matches both cases. PCRE 10.44
+		 * and older read \p{Lu} and \p{Ll} the same way. \p{L&} doesn't follow inline
+		 * flags, so a pattern with "(?-i)" keeps PCRE's reading.
+		 */
+		$match_both_cases = $case_insensitive && ! preg_match( '/\(\?[a-zA-Z]*-[a-zA-Z]*i/', $pattern );
+		if ( $match_both_cases ) {
+			$classes['upper'] = '{L&}';
+			$classes['lower'] = '{L&}';
+		}
+
 		$escaped = '';
 		$quoted  = false;
 		$length  = strlen( $pattern );
@@ -1325,13 +1342,27 @@ class WP_SQLite_PDO_User_Defined_Functions {
 				}
 				continue;
 			}
-			if ( '\\' === $character && $i + 1 < $length ) {
+			if (
+				$match_both_cases
+				&& '\\' === $character
+				&& preg_match( '/\G\\\\([pP])\{L[lu]\}/', $pattern, $property, 0, $i )
+			) {
+				$escaped .= '\\' . $property[1] . '{L&}';
+				$i       += strlen( $property[0] ) - 1;
+			} elseif ( '\\' === $character && $i + 1 < $length ) {
 				$next     = $pattern[ $i + 1 ];
 				$escaped .= isset( $special[ $next ] ) ? $special[ $next ] : $character . $next;
 				$quoted   = 'Q' === $next;
 				++$i;
 			} elseif ( isset( $special[ $character ] ) ) {
 				$escaped .= $special[ $character ];
+			} elseif (
+				'[' === $character
+				&& preg_match( '/\G\[:(\^?)(\w+):\]/', $pattern, $class, 0, $i )
+				&& isset( $classes[ $class[2] ] )
+			) {
+				$escaped .= ( '' === $class[1] ? '\\p' : '\\P' ) . $classes[ $class[2] ];
+				$i       += strlen( $class[0] ) - 1;
 			} else {
 				$escaped .= $character;
 			}
