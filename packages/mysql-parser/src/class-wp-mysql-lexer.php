@@ -1059,74 +1059,87 @@ class WP_MySQL_Lexer {
 	 */
 	private function read_identifier(): ?int {
 		$started_at = $this->bytes_already_read;
-		while ( true ) {
-			// First, let's try to parse an ASCII sequence.
-			$this->bytes_already_read += strspn(
-				$this->sql,
-				self::IDENTIFIER_MASK,
-				$this->bytes_already_read
-			);
 
-			// Check if the following byte can be part of a multibyte character
-			// in the range of U+0080 to U+10FFFF before looking at further bytes.
-			// If it can't, bail out early to avoid unnecessary UTF-8 decoding.
-			// Identifiers are usually ASCII-only, so we can optimize for that.
-			$byte_1 = ord(
-				$this->sql[ $this->bytes_already_read ] ?? "\0"
-			);
-			if ( $byte_1 < 0xC2 || $byte_1 > 0xF4 ) {
+		// Identifiers are usually ASCII-only, so only enter the loop below when the
+		// byte after the ASCII sequence can start a multibyte character. With the
+		// tracing JIT, entering the loop for every identifier slows down the lexer.
+		$this->bytes_already_read += strspn(
+			$this->sql,
+			self::IDENTIFIER_MASK,
+			$this->bytes_already_read
+		);
+		$byte_1                    = ord(
+			$this->sql[ $this->bytes_already_read ] ?? "\0"
+		);
+		if ( $byte_1 >= 0xC2 && $byte_1 <= 0xF4 ) {
+			while ( true ) {
+				// First, let's try to parse an ASCII sequence.
+				$this->bytes_already_read += strspn(
+					$this->sql,
+					self::IDENTIFIER_MASK,
+					$this->bytes_already_read
+				);
+
+				// Check if the following byte can be part of a multibyte character
+				// in the range of U+0080 to U+10FFFF before looking at further bytes.
+				// If it can't, bail out early to avoid unnecessary UTF-8 decoding.
+				$byte_1 = ord(
+					$this->sql[ $this->bytes_already_read ] ?? "\0"
+				);
+				if ( $byte_1 < 0xC2 || $byte_1 > 0xF4 ) {
+					break;
+				}
+
+				// Look for a valid 2-byte UTF-8 symbol. Covers range U+0080 - U+07FF.
+				$byte_2 = ord(
+					$this->sql[ $this->bytes_already_read + 1 ] ?? "\0"
+				);
+				if (
+					$byte_1 <= 0xDF
+					&& $byte_2 >= 0x80 && $byte_2 <= 0xBF
+				) {
+					$this->bytes_already_read += 2;
+					continue;
+				}
+
+				// Look for a valid 3-byte UTF-8 symbol in range U+0800 - U+FFFF.
+				$byte_3 = ord(
+					$this->sql[ $this->bytes_already_read + 2 ] ?? "\0"
+				);
+				if (
+					$byte_1 <= 0xEF
+					&& $byte_2 >= 0x80 && $byte_2 <= 0xBF
+					&& $byte_3 >= 0x80 && $byte_3 <= 0xBF
+					// Exclude surrogate range U+D800 to U+DFFF:
+					&& ! ( 0xED === $byte_1 && $byte_2 >= 0xA0 )
+					// Exclude overlong encodings:
+					&& ! ( 0xE0 === $byte_1 && $byte_2 < 0xA0 )
+				) {
+					$this->bytes_already_read += 3;
+					continue;
+				}
+
+				// Look for a valid 4-byte UTF-8 symbol in range U+10000 - U+10FFFF.
+				$byte_4 = ord(
+					$this->sql[ $this->bytes_already_read + 3 ] ?? "\0"
+				);
+				if (
+					$byte_1 >= 0xF0
+					&& $byte_2 >= 0x80 && $byte_2 <= 0xBF
+					&& $byte_3 >= 0x80 && $byte_3 <= 0xBF
+					&& $byte_4 >= 0x80 && $byte_4 <= 0xBF
+					// Exclude overlong encodings:
+					&& ! ( 0xF0 === $byte_1 && $byte_2 < 0x90 )
+					// Exclude codepoints above U+10FFFF:
+					&& ! ( 0xF4 === $byte_1 && $byte_2 > 0x8F )
+				) {
+					$this->bytes_already_read += 4;
+					continue;
+				}
+
+				// Not a valid identifier character.
 				break;
 			}
-
-			// Look for a valid 2-byte UTF-8 symbol. Covers range U+0080 - U+07FF.
-			$byte_2 = ord(
-				$this->sql[ $this->bytes_already_read + 1 ] ?? "\0"
-			);
-			if (
-				$byte_1 <= 0xDF
-				&& $byte_2 >= 0x80 && $byte_2 <= 0xBF
-			) {
-				$this->bytes_already_read += 2;
-				continue;
-			}
-
-			// Look for a valid 3-byte UTF-8 symbol in range U+0800 - U+FFFF.
-			$byte_3 = ord(
-				$this->sql[ $this->bytes_already_read + 2 ] ?? "\0"
-			);
-			if (
-				$byte_1 <= 0xEF
-				&& $byte_2 >= 0x80 && $byte_2 <= 0xBF
-				&& $byte_3 >= 0x80 && $byte_3 <= 0xBF
-				// Exclude surrogate range U+D800 to U+DFFF:
-				&& ! ( 0xED === $byte_1 && $byte_2 >= 0xA0 )
-				// Exclude overlong encodings:
-				&& ! ( 0xE0 === $byte_1 && $byte_2 < 0xA0 )
-			) {
-				$this->bytes_already_read += 3;
-				continue;
-			}
-
-			// Look for a valid 4-byte UTF-8 symbol in range U+10000 - U+10FFFF.
-			$byte_4 = ord(
-				$this->sql[ $this->bytes_already_read + 3 ] ?? "\0"
-			);
-			if (
-				$byte_1 >= 0xF0
-				&& $byte_2 >= 0x80 && $byte_2 <= 0xBF
-				&& $byte_3 >= 0x80 && $byte_3 <= 0xBF
-				&& $byte_4 >= 0x80 && $byte_4 <= 0xBF
-				// Exclude overlong encodings:
-				&& ! ( 0xF0 === $byte_1 && $byte_2 < 0x90 )
-				// Exclude codepoints above U+10FFFF:
-				&& ! ( 0xF4 === $byte_1 && $byte_2 > 0x8F )
-			) {
-				$this->bytes_already_read += 4;
-				continue;
-			}
-
-			// Not a valid identifier character.
-			break;
 		}
 
 		if ( $this->bytes_already_read === $started_at ) {
