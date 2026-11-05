@@ -54,7 +54,9 @@ class WP_Parser {
 		// Bail out from processing the current branch if none of its rules can
 		// possibly match the current token.
 		if ( isset( $this->grammar->lookahead_is_match_possible[ $rule_id ] ) ) {
-			$token_id = $this->tokens[ $this->position ]->id;
+			// Past the end of the token list, no warnings should be triggered.
+			$token    = $this->tokens[ $this->position ] ?? null;
+			$token_id = null === $token ? null : $token->id;
 			if (
 				! isset( $this->grammar->lookahead_is_match_possible[ $rule_id ][ $token_id ] ) &&
 				! isset( $this->grammar->lookahead_is_match_possible[ $rule_id ][ WP_Parser_Grammar::EMPTY_RULE_ID ] )

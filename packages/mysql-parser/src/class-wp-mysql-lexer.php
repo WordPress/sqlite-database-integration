@@ -1154,10 +1154,18 @@ class WP_MySQL_Lexer {
 		) {
 			$is_quoted                 = "'" === $next_byte;
 			$this->bytes_already_read += 2; // Consume "0x" or "x'".
+			$hex_digits_start          = $this->bytes_already_read;
 			$this->bytes_already_read += strspn( $this->sql, self::HEX_DIGIT_MASK, $this->bytes_already_read );
 			if ( $is_quoted ) {
+				/*
+				 * In MySQL, quoted hex literals must contain an even number of
+				 * digits, including zero digits for an empty literal. Odd-length
+				 * literals are rejected with a syntax error.
+				 */
+				$hex_digit_count = $this->bytes_already_read - $hex_digits_start;
 				if (
-					$this->bytes_already_read >= $this->sql_length
+					1 === ( $hex_digit_count % 2 )
+					|| $this->bytes_already_read >= $this->sql_length
 					|| "'" !== $this->sql[ $this->bytes_already_read ]
 				) {
 					return null; // Invalid input.

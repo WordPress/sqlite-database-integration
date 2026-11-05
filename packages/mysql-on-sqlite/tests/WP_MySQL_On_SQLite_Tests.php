@@ -11985,6 +11985,7 @@ END;
 	 */
 	public function testOddLengthQuotedHexadecimalLiteralsAreRejected( string $literal ): void {
 		$this->expectException( WP_MySQL_On_SQLite_Exception::class );
+		$this->expectExceptionMessage( 'MySQL query syntax error.' );
 		$this->assertQuery( "SELECT $literal" );
 	}
 
@@ -11994,6 +11995,22 @@ END;
 			array( "X'1'" ),
 			array( "x'711'" ),
 			array( "X'711'" ),
+		);
+	}
+
+	/**
+	 * @dataProvider malformedQueries
+	 */
+	public function testMalformedQueryIsRejectedWithASyntaxError( string $query ): void {
+		$this->expectException( WP_MySQL_On_SQLite_Exception::class );
+		$this->expectExceptionMessage( 'MySQL query syntax error.' );
+		$this->assertQuery( $query );
+	}
+
+	public static function malformedQueries(): array {
+		return array(
+			array( "SELECT 'abc" ),       // Unterminated string literal.
+			array( "SELECT x'ab01xyz'" ), // Quoted hex literal with non-hex digits.
 		);
 	}
 

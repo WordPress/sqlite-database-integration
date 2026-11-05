@@ -1615,6 +1615,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 *
 	 * @param  string          $query The MySQL query to parse.
 	 * @return WP_MySQL_Parser        A parser initialized for the MySQL query.
+	 * @throws WP_MySQL_On_SQLite_Exception When the lexer hits invalid input.
 	 */
 	public function create_parser( string $query ): WP_MySQL_Parser {
 		$lexer  = new WP_MySQL_Lexer(
@@ -1623,6 +1624,15 @@ class WP_MySQL_On_SQLite extends PDO {
 			$this->get_active_sql_mode_names()
 		);
 		$tokens = $lexer->remaining_tokens();
+
+		/*
+		 * Bail when the lexer hit invalid input and stopped before the end of
+		 * the query, which is reported with a syntax error like in MySQL.
+		 * Otherwise, the last token is the EOF token.
+		 */
+		if ( ! count( $tokens ) || WP_MySQL_Lexer::EOF !== $tokens[ count( $tokens ) - 1 ]->id ) {
+			throw $this->new_invalid_input_exception();
+		}
 
 		// Reset the reusable parser with new tokens or create it on first use.
 		if ( null === $this->mysql_parser ) {
@@ -8176,8 +8186,10 @@ class WP_MySQL_On_SQLite extends PDO {
 	/**
 	 * Create a new invalid input exception.
 	 *
-	 * This exception can be used to mark cases that should never occur according
-	 * to the MySQL grammar. It may serve as an assertion that should never fail.
+	 * This exception is used to mark input that is invalid according to the
+	 * MySQL grammar, such as malformed queries that the lexer cannot tokenize.
+	 * It also marks cases that should never occur according to the grammar,
+	 * where it serves as an assertion that should never fail.
 	 *
 	 * @return WP_MySQL_On_SQLite_Exception
 	 */
