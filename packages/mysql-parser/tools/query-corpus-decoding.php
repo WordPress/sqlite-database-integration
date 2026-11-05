@@ -84,6 +84,20 @@ const QUERY_CORPUS_CP1250_CHARACTERS = array(
 );
 
 /**
+ * Read the character set that mysqltest connects in from "default_client.cnf".
+ *
+ * The client programs in this file all use the same character set. Before MySQL 8.0,
+ * the file has no section for mysqltest, but its built-in default is the same.
+ *
+ * @param string $config The contents of the file.
+ * @return string|null The lowercase character set name; null when the file has none.
+ */
+function read_default_client_charset( string $config ): ?string {
+	$is_set = preg_match( '/^default-character-set[ \t]*=[ \t]*(\w+)/m', $config, $matches );
+	return $is_set ? strtolower( $matches[1] ) : null;
+}
+
+/**
  * Read the character set from a statement that sets the client character set.
  *
  * @param string $line The line bytes.

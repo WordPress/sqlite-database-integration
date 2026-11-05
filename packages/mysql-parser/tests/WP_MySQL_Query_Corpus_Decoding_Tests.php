@@ -94,6 +94,31 @@ class WP_MySQL_Query_Corpus_Decoding_Tests extends TestCase {
 	}
 
 	/**
+	 * @dataProvider data_client_configs
+	 */
+	public function test_read_default_client_charset( string $config, ?string $expected ): void {
+		$this->assertSame( $expected, read_default_client_charset( $config ) );
+	}
+
+	/**
+	 * @return array<string,array{0:string,1:?string}>
+	 */
+	public function data_client_configs(): array {
+		return array(
+			'mysqltest section'     => array( "[mysql]\ndefault-character-set=utf8mb4\n\n[mysqltest]\ndefault-character-set=utf8mb4\n", 'utf8mb4' ),
+			'no mysqltest section'  => array( "[mysql]\ndefault-character-set=latin1\n\n[mysqlshow]\ndefault-character-set=latin1\n", 'latin1' ),
+			'comment mentioning it' => array( "# We use default-character-set=latin1 here.\n[mysql]\ndefault-character-set=utf8mb4\n", 'utf8mb4' ),
+			'CRLF line endings'     => array( "[mysql]\r\ndefault-character-set=latin1\r\n", 'latin1' ),
+			'spaces'                => array( "[mysql]\ndefault-character-set =  latin1\n", 'latin1' ),
+			'uppercase'             => array( "[mysql]\ndefault-character-set=LATIN1\n", 'latin1' ),
+
+			'another option'        => array( "[mysqld]\ncharacter-set-server=latin1\n", null ),
+			'empty value'           => array( "[mysql]\ndefault-character-set=\ncollation=latin1\n", null ),
+			'empty file'            => array( '', null ),
+		);
+	}
+
+	/**
 	 * @dataProvider data_client_charset_statements
 	 */
 	public function test_read_client_charset( string $line, ?string $expected ): void {

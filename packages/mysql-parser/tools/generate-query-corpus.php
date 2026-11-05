@@ -182,6 +182,14 @@ if ( ! is_dir( $tests_dir ) ) {
 	exit( 1 );
 }
 
+// mysqltest connects in the default character set of the test suite.
+$client_config    = $tests_dir . '/../include/default_client.cnf';
+$default_encoding = QUERY_CORPUS_CHARSET_ENCODINGS[ read_default_client_charset( file_get_contents( $client_config ) ) ?? '' ] ?? null;
+if ( null === $default_encoding ) {
+	fwrite( STDERR, "error: no known default character set in $client_config.\n" );
+	exit( 1 );
+}
+
 $queries = array();
 foreach ( scandir( $tests_dir ) as $i => $file ) {
 	if ( substr( $file, -5 ) !== '.test' ) {
@@ -205,8 +213,7 @@ foreach ( scandir( $tests_dir ) as $i => $file ) {
 	$skip_next = false;
 
 	// Track the encoding of the client character set that a statement selects.
-	// mysqltest connects in utf8mb4.
-	$client_encoding = 'UTF-8';
+	$client_encoding = $default_encoding;
 
 	$query    = '';
 	$contents = file_get_contents( $tests_dir . '/' . $file );
@@ -262,10 +269,10 @@ foreach ( scandir( $tests_dir ) as $i => $file ) {
 		}
 
 		// Track the client character set, unless the statement is expected to fail.
-		// "DEFAULT" and character sets that the map doesn't list are read as UTF-8.
+		// "DEFAULT" and character sets that the map doesn't list use the default encoding.
 		$client_charset = read_client_charset( $line );
 		if ( null !== $client_charset && ! $skip_next ) {
-			$client_encoding = QUERY_CORPUS_CHARSET_ENCODINGS[ $client_charset ] ?? 'UTF-8';
+			$client_encoding = QUERY_CORPUS_CHARSET_ENCODINGS[ $client_charset ] ?? $default_encoding;
 		}
 
 		$line = convert_to_utf8( $line, array( $client_encoding, 'UTF-8' ) );
