@@ -1299,7 +1299,8 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 *
 	 * Escapes pattern delimiters and NUL bytes that are not already escaped. PHP
 	 * before 8.2 rejects NUL bytes in patterns, so they become "\x00". POSIX
-	 * classes that PCRE reads differently from ICU become Unicode properties.
+	 * classes that PCRE reads differently from ICU become Unicode properties, and
+	 * a hyphen after a shorthand class is escaped.
 	 *
 	 * @param string $pattern          The regex pattern.
 	 * @param bool   $case_insensitive Whether the pattern ignores case by default.
@@ -1356,6 +1357,20 @@ class WP_SQLite_PDO_User_Defined_Functions {
 				$escaped .= isset( $special[ $next ] ) ? $special[ $next ] : $character . $next;
 				$quoted   = 'Q' === $next;
 				++$i;
+
+				/*
+				 * PCRE rejects a hyphen after a shorthand class, as in "[\w-.]", where
+				 * ICU reads it literally. Escaping it is also safe outside of a set.
+				 * ICU reads "--" as a set difference, so that is left as it is.
+				 */
+				if (
+					false !== strpos( 'dDhHsSvVwW', $next )
+					&& '-' === substr( $pattern, $i + 1, 1 )
+					&& '-' !== substr( $pattern, $i + 2, 1 )
+				) {
+					$escaped .= '\\-';
+					++$i;
+				}
 			} elseif ( isset( $special[ $character ] ) ) {
 				$escaped .= $special[ $character ];
 			} elseif (

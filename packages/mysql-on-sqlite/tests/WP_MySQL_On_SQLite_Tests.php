@@ -1194,6 +1194,74 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$this->assertSame( array( '0', '1', '1' ), array_column( $this->last_result, 'r' ) );
 	}
 
+	/**
+	 * @dataProvider regexpHyphenAfterShorthandCases
+	 */
+	public function testRegexpHyphenAfterShorthand( $sql, $expected ) {
+		$this->assertQuery( "SELECT $sql AS r" );
+		$this->assertSame( $expected, $this->last_result[0]->r );
+	}
+
+	public static function regexpHyphenAfterShorthandCases() {
+		return array(
+			// Common patterns.
+			'email pattern, operator'  => array( "'a@b.co' REGEXP '^[\\\\w-\\\\.]+@'", '1' ),
+			'email pattern'            => array( "REGEXP_LIKE('foo-bar@example.com', '^[\\\\w-.]+@[\\\\w-]+\\\\.\\\\w+\$')", '1' ),
+			'slug pattern'             => array( "REGEXP_LIKE('a1', '^[a-z\\\\d-_]+\$')", '1' ),
+
+			// The hyphen is a literal, not a range.
+			'\\d, hyphen'              => array( "REGEXP_LIKE('-', '^[\\\\d-x]\$')", '1' ),
+			'\\d, shorthand'           => array( "REGEXP_LIKE('5', '^[\\\\d-x]\$')", '1' ),
+			'\\d, last character'      => array( "REGEXP_LIKE('x', '^[\\\\d-x]\$')", '1' ),
+			'\\d, past last character' => array( "REGEXP_LIKE('y', '^[\\\\d-x]\$')", '0' ),
+			'\\D, hyphen'              => array( "REGEXP_LIKE('-', '^[\\\\D-1]\$')", '1' ),
+			'\\D, last character'      => array( "REGEXP_LIKE('1', '^[\\\\D-1]\$')", '1' ),
+			'\\D, other digit'         => array( "REGEXP_LIKE('2', '^[\\\\D-1]\$')", '0' ),
+			'\\s, hyphen'              => array( "REGEXP_LIKE('-', '^[\\\\s-x]\$')", '1' ),
+			'\\s, other letter'        => array( "REGEXP_LIKE('a', '^[\\\\s-x]\$')", '0' ),
+			'\\S, hyphen'              => array( "REGEXP_LIKE('-', '^[\\\\S-x]\$')", '1' ),
+			'\\S, space'               => array( "REGEXP_LIKE(' ', '^[\\\\S-x]\$')", '0' ),
+			'\\w, hyphen'              => array( "REGEXP_LIKE('-', '^[\\\\w-.]\$')", '1' ),
+			'\\w, dot'                 => array( "REGEXP_LIKE('.', '^[\\\\w-.]\$')", '1' ),
+			'\\W, hyphen'              => array( "REGEXP_LIKE('-', '^[\\\\W-x]\$')", '1' ),
+			'\\W, other letter'        => array( "REGEXP_LIKE('y', '^[\\\\W-x]\$')", '0' ),
+			'\\h, hyphen'              => array( "REGEXP_LIKE('-', '^[\\\\h-x]\$')", '1' ),
+			'\\H, hyphen'              => array( "REGEXP_LIKE('-', '^[\\\\H-x]\$')", '1' ),
+			'\\v, hyphen'              => array( "REGEXP_LIKE('-', '^[\\\\v-x]\$')", '1' ),
+			'\\V, hyphen'              => array( "REGEXP_LIKE('-', '^[\\\\V-x]\$')", '1' ),
+			'last in the set'          => array( "REGEXP_LIKE('-', '^[\\\\w-]\$')", '1' ),
+			'before a shorthand'       => array( "REGEXP_LIKE('-', '^[\\\\w-\\\\d]\$')", '1' ),
+			'before a range, hyphen'   => array( "REGEXP_LIKE('-', '^[\\\\d-a-c]\$')", '1' ),
+			'before a range, in range' => array( "REGEXP_LIKE('b', '^[\\\\d-a-c]\$')", '1' ),
+			'before a range, past it'  => array( "REGEXP_LIKE('e', '^[\\\\d-a-c]\$')", '0' ),
+
+			// A hyphen outside of a set keeps its meaning.
+			'outside of a set'         => array( "REGEXP_LIKE('1-2', '^\\\\d-\\\\d\$')", '1' ),
+			'with a quantifier'        => array( "REGEXP_LIKE('1--', '^\\\\d-{2}\$')", '1' ),
+
+			// These are not shorthand classes, so ranges still work.
+			'escaped backslash, range' => array( "REGEXP_LIKE('a', '^[\\\\\\\\-a]\$')", '1' ),
+			'escaped backslash, past'  => array( "REGEXP_LIKE('Z', '^[\\\\\\\\-a]\$')", '0' ),
+			'literal letter after it'  => array( "REGEXP_LIKE('\\\\d-x', '^\\\\\\\\d-x\$')", '1' ),
+			'quoted shorthand'         => array( "REGEXP_LIKE('\\\\w-', '^\\\\Q\\\\w-\\\\E\$')", '1' ),
+		);
+	}
+
+	public function testRegexpSetDifferenceAfterShorthand() {
+		// ICU reads "--" as a set difference, which PCRE can't express. Escaping the
+		// first hyphen would turn PCRE's error into a range from "-" to "x", matching ".".
+		if ( PHP_VERSION_ID < 70300 ) {
+			// PCRE 8 reads it as that range by itself.
+			$this->assertQuery( "SELECT REGEXP_LIKE('.', '^[\\\\w--x]\$') AS r" );
+			$this->assertSame( '1', $this->last_result[0]->r );
+			return;
+		}
+		$this->assertQueryError(
+			"SELECT REGEXP_LIKE('.', '^[\\\\w--x]\$')",
+			'Invalid regular expression: ^[\\w--x]$.'
+		);
+	}
+
 	public function testInsertDateNow() {
 		$this->assertQuery(
 			"INSERT INTO _dates (option_name, option_value) VALUES ('first', now());"
