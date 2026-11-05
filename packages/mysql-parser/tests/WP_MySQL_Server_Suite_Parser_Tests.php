@@ -19,7 +19,7 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 	 * The exact failing set is pinned in FAILURES_PATH; update it when the accepted
 	 * language legitimately changes.
 	 */
-	const EXPECTED_QUERIES  = 69372;
+	const EXPECTED_QUERIES  = 69370;
 	const EXPECTED_FAILURES = 43;
 
 	public function test_corpus_acceptance_rate(): void {
@@ -88,6 +88,26 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 			'carriage return in a version comment'   => array( "DO 1 /*!80034\r+1*/" ),
 			'query after --error and --reap'         => array( 'CREATE PROCEDURE mIxEdCaSe() BEGIN END' ),
 			'query after --error and --remove_file'  => array( 'drop procedure if exists bug13012' ),
+		);
+	}
+
+	/**
+	 * Pin queries that test files expect to fail, using the "error" command instead of
+	 * "--error", because the tally can't see an additional query that parses.
+	 *
+	 * @dataProvider data_omitted_query_texts
+	 */
+	public function test_corpus_omits_query_text( string $query ): void {
+		$this->assertNotContains( $query, $this->read_queries( self::CORPUS_PATH ) );
+	}
+
+	/**
+	 * @return array<string,array{0:string}>
+	 */
+	public function data_omitted_query_texts(): array {
+		return array(
+			'error with a name'   => array( "BINLOG '\nRaNlZRMBAAAAMAAAAG0DAAAAAG8AAAAAAAEABHRlc3QAAnQxAAEDAAEBAQAg5VHP\nRaNlZR4BAAAAKAAAAJUDAAAAAG8AAAAAAAEAAgAB/wACAAAAczmjEA==\n'" ),
+			'error with a number' => array( "BINLOG '\njKNlZRMBAAAAMAAAAOkFAAAAAG8AAAAAAAEABHRlc3QAAnQxAAEDAAEBAQCwxzWH\njKNlZR4BAAAAKAAAABEGAAAAAG8AAAAAAAEAAgAB/wAFAAAAVI7NfA==\n'" ),
 		);
 	}
 

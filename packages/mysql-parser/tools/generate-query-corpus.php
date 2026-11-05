@@ -346,7 +346,8 @@ foreach ( scandir( $tests_dir ) as $i => $file ) {
 						$sql_modes->run_query( $query );
 					}
 				}
-				$skip_next = false;
+				// The "error" command works like "--error", but it ends with a delimiter.
+				$skip_next = 1 === preg_match( '/^error\b/i', $query );
 
 				$query = '';
 
