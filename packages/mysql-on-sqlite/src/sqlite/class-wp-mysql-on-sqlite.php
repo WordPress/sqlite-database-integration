@@ -4579,8 +4579,9 @@ class WP_MySQL_On_SQLite extends PDO {
 					$value = substr( $value, 2, -1 );
 				}
 
-				// Convert the binary string to HEX.
-				$hex = base_convert( $value, 2, 16 );
+				// Convert the binary string to HEX. An empty value stays empty,
+				// as "base_convert()" would return "0" for it.
+				$hex = '' === $value ? '' : base_convert( $value, 2, 16 );
 
 				/*
 				 * The "base_convert()" function doesn't add or preserve padding.

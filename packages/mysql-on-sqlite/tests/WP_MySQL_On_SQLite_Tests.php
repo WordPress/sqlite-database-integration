@@ -11997,6 +11997,31 @@ END;
 		);
 	}
 
+	public function testEmptyBitLiteral(): void {
+		// An empty bit-value literal is an empty binary string, like an empty
+		// hex literal, and not the one-byte value "x'0'". See #612.
+		$this->assertEquals(
+			$this->assertQuery( "SELECT x'' AS v" ),
+			$this->assertQuery( "SELECT b'' AS v" )
+		);
+		$this->assertEquals(
+			array( (object) array( 'length' => '0' ) ),
+			$this->assertQuery( "SELECT LENGTH(b'') AS length" )
+		);
+
+		$this->assertQuery( 'CREATE TABLE t (id INT PRIMARY KEY, data BLOB)' );
+		$this->assertQuery( "INSERT INTO t (id, data) VALUES (1, b'')" );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'   => '1',
+					'data' => '',
+				),
+			),
+			$this->assertQuery( 'SELECT id, HEX(data) AS data FROM t' )
+		);
+	}
+
 	public function testColumnInfo(): void {
 		$this->assertQuery(
 			'CREATE TABLE t (
