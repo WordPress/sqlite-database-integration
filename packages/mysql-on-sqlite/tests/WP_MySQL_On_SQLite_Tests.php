@@ -8110,6 +8110,190 @@ QUERY
 		$this->assertEquals( array( (object) array( 'id' => '1' ) ), $this->last_result );
 	}
 
+	public function testAlterTableWithCascadingForeignKeyPreservesChildRows(): void {
+		$this->assertQuery( 'CREATE TABLE parent (id INT PRIMARY KEY)' );
+		$this->assertQuery( 'CREATE TABLE child (id INT, pid INT, FOREIGN KEY (pid) REFERENCES parent (id) ON DELETE CASCADE)' );
+		$this->assertQuery( 'INSERT INTO parent (id) VALUES (1), (2)' );
+		$this->assertQuery( 'INSERT INTO child (id, pid) VALUES (10, 1), (20, 2)' );
+
+		$this->assertQuery( 'ALTER TABLE parent ADD COLUMN name TEXT' );
+
+		// Recreating the parent table must not trigger the foreign key actions.
+		$this->assertQuery( 'SELECT id, pid FROM child ORDER BY id' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'  => '10',
+					'pid' => '1',
+				),
+				(object) array(
+					'id'  => '20',
+					'pid' => '2',
+				),
+			),
+			$this->last_result
+		);
+
+		// Foreign keys are enforced again after the rebuild.
+		$this->assertQuery( 'CREATE TABLE no_action (id INT, pid INT, FOREIGN KEY (pid) REFERENCES parent (id))' );
+		$this->assertQuery( 'INSERT INTO no_action (id, pid) VALUES (1, 1)' );
+		$this->assertQueryError(
+			'DELETE FROM parent WHERE id = 1',
+			'SQLSTATE[23000]: Integrity constraint violation: 19 FOREIGN KEY constraint failed'
+		);
+	}
+
+	public function testAlterTableWithPopulatedChildAndNoActionForeignKeySucceeds(): void {
+		$this->assertQuery( 'CREATE TABLE parent (id INT PRIMARY KEY)' );
+		$this->assertQuery( 'CREATE TABLE child (id INT, pid INT, FOREIGN KEY (pid) REFERENCES parent (id))' );
+		$this->assertQuery( 'INSERT INTO parent (id) VALUES (1), (2)' );
+		$this->assertQuery( 'INSERT INTO child (id, pid) VALUES (10, 1)' );
+
+		$this->assertQuery( 'ALTER TABLE parent ADD COLUMN name TEXT' );
+
+		$this->assertQuery( 'SELECT COUNT(*) AS count FROM child' );
+		$this->assertSame( '1', $this->last_result[0]->count );
+	}
+
+	public function testAlterTablePreservesChildRowsWithSetNullForeignKey(): void {
+		$this->assertQuery( 'CREATE TABLE parent (id INT PRIMARY KEY)' );
+		$this->assertQuery( 'CREATE TABLE child (id INT, pid INT, FOREIGN KEY (pid) REFERENCES parent (id) ON DELETE SET NULL)' );
+		$this->assertQuery( 'INSERT INTO parent (id) VALUES (1), (2)' );
+		$this->assertQuery( 'INSERT INTO child (id, pid) VALUES (10, 1), (20, 2)' );
+
+		$this->assertQuery( 'ALTER TABLE parent ADD COLUMN name TEXT' );
+
+		$this->assertQuery( 'SELECT id, pid FROM child ORDER BY id' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'  => '10',
+					'pid' => '1',
+				),
+				(object) array(
+					'id'  => '20',
+					'pid' => '2',
+				),
+			),
+			$this->last_result
+		);
+	}
+
+	public function testAlterTableToleratesPreexistingForeignKeyViolations(): void {
+		$this->assertQuery( 'CREATE TABLE parent (id INT PRIMARY KEY)' );
+		$this->assertQuery( 'CREATE TABLE child (id INT, pid INT, FOREIGN KEY (pid) REFERENCES parent (id))' );
+		$this->assertQuery( 'INSERT INTO parent (id) VALUES (1)' );
+		$this->assertQuery( 'INSERT INTO child (id, pid) VALUES (10, 1)' );
+
+		// Insert an orphan row with foreign keys disabled, as an older driver
+		// version that didn't enforce foreign keys may have left behind.
+		$this->sqlite->exec( 'PRAGMA foreign_keys = OFF' );
+		$this->sqlite->exec( 'INSERT INTO child (id, pid) VALUES (20, 99)' );
+		$this->sqlite->exec( 'PRAGMA foreign_keys = ON' );
+
+		// The pre-existing violation is tolerated, matching MySQL, which does
+		// not re-validate existing rows when rebuilding a table.
+		$this->assertQuery( 'ALTER TABLE parent ADD COLUMN name TEXT' );
+
+		$this->assertQuery( 'SELECT COUNT(*) AS count FROM child' );
+		$this->assertSame( '2', $this->last_result[0]->count );
+	}
+
+	public function testDdlStatementImplicitlyCommitsTransaction(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT)' );
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (1)' );
+
+		$this->assertQuery( 'START TRANSACTION' );
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (2)' );
+		$this->assertQuery( 'CREATE TABLE u (id INT)' );
+
+		// Like in MySQL, the DDL statement committed the transaction.
+		$this->assertFalse( $this->engine->inTransaction() );
+
+		$this->assertQuery( 'ROLLBACK' );
+
+		$this->assertQuery( 'SELECT COUNT(*) AS count FROM t' );
+		$this->assertSame( '2', $this->last_result[0]->count );
+		$this->assertQuery( 'SELECT COUNT(*) AS count FROM u' );
+		$this->assertSame( '0', $this->last_result[0]->count );
+	}
+
+	public function testCreateTemporaryTableDoesNotCommitTransaction(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT)' );
+
+		$this->assertQuery( 'START TRANSACTION' );
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (1)' );
+		$this->assertQuery( 'CREATE TEMPORARY TABLE tmp_t (id INT)' );
+		$this->assertQuery( 'DROP TEMPORARY TABLE tmp_t' );
+
+		// The transaction is still open, like in MySQL.
+		$this->assertTrue( $this->engine->inTransaction() );
+
+		$this->assertQuery( 'ROLLBACK' );
+
+		$this->assertQuery( 'SELECT COUNT(*) AS count FROM t' );
+		$this->assertSame( '0', $this->last_result[0]->count );
+	}
+
+	public function testDropTableReferencedByForeignKeyIsRejected(): void {
+		$this->assertQuery( 'CREATE TABLE parent (id INT PRIMARY KEY)' );
+		$this->assertQuery( 'CREATE TABLE child (id INT, pid INT, FOREIGN KEY (pid) REFERENCES parent (id) ON DELETE CASCADE)' );
+		$this->assertQuery( 'INSERT INTO parent (id) VALUES (1), (2)' );
+		$this->assertQuery( 'INSERT INTO child (id, pid) VALUES (10, 1), (20, 2)' );
+
+		$this->assertQueryError(
+			'DROP TABLE parent',
+			"Cannot drop table 'parent' referenced by a foreign key constraint on table 'child'."
+		);
+
+		// Dropping the child in the same statement does not help either, as in MySQL.
+		$this->assertQueryError(
+			'DROP TABLE child, parent',
+			"Cannot drop table 'parent' referenced by a foreign key constraint on table 'child'."
+		);
+
+		// Nothing was dropped.
+		$this->assertQuery( 'SELECT COUNT(*) AS count FROM parent' );
+		$this->assertSame( '2', $this->last_result[0]->count );
+		$this->assertQuery( 'SELECT COUNT(*) AS count FROM child' );
+		$this->assertSame( '2', $this->last_result[0]->count );
+
+		// Dropping the referencing table first makes the parent droppable.
+		$this->assertQuery( 'DROP TABLE child' );
+		$this->assertQuery( 'DROP TABLE parent' );
+	}
+
+	public function testTruncateTableReferencedByForeignKeyIsRejected(): void {
+		$this->assertQuery( 'CREATE TABLE parent (id INT PRIMARY KEY)' );
+		$this->assertQuery( 'CREATE TABLE child (id INT, pid INT, FOREIGN KEY (pid) REFERENCES parent (id))' );
+		$this->assertQuery( 'INSERT INTO parent (id) VALUES (1), (2)' );
+		$this->assertQuery( 'INSERT INTO child (id, pid) VALUES (10, 1), (20, 2)' );
+
+		$this->assertQueryError(
+			'TRUNCATE TABLE parent',
+			'Cannot truncate a table referenced in a foreign key constraint (`child`)'
+		);
+
+		// Nothing was truncated.
+		$this->assertQuery( 'SELECT COUNT(*) AS count FROM parent' );
+		$this->assertSame( '2', $this->last_result[0]->count );
+		$this->assertQuery( 'SELECT COUNT(*) AS count FROM child' );
+		$this->assertSame( '2', $this->last_result[0]->count );
+
+		$this->assertQuery( 'TRUNCATE TABLE child' );
+
+		// An empty referencing table still blocks truncating the parent, as
+		// MySQL rejects the statement because of the constraint itself.
+		$this->assertQueryError(
+			'TRUNCATE TABLE parent',
+			'Cannot truncate a table referenced in a foreign key constraint (`child`)'
+		);
+
+		// Dropping the referencing table makes the parent truncatable.
+		$this->assertQuery( 'DROP TABLE child' );
+		$this->assertQuery( 'TRUNCATE TABLE parent' );
+	}
+
 	public function testConfigurationNormalizesTemporalZeroDefaultsOfReconstructedTable(): void {
 		// A table created by the legacy SQLite driver, with no information schema data.
 		$this->sqlite->exec(
