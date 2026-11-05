@@ -12009,8 +12009,9 @@ END;
 
 	public static function malformedQueries(): array {
 		return array(
-			array( "SELECT 'abc" ),       // Unterminated string literal.
-			array( "SELECT x'ab01xyz'" ), // Quoted hex literal with non-hex digits.
+			array( "SELECT 'abc" ),                 // Unterminated string literal.
+			array( "SELECT x'ab01xyz'" ),           // Quoted hex literal with non-hex digits.
+			array( "SELECT 1 END_OF_INPUT 'abc'" ), // Query continues after the "END_OF_INPUT" keyword.
 		);
 	}
 

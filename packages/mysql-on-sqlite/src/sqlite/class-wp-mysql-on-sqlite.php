@@ -1628,9 +1628,17 @@ class WP_MySQL_On_SQLite extends PDO {
 		/*
 		 * Bail when the lexer hit invalid input and stopped before the end of
 		 * the query, which is reported with a syntax error like in MySQL.
-		 * Otherwise, the last token is the EOF token.
+		 *
+		 * The last token must be an EOF token that ends the query, as the
+		 * "END_OF_INPUT" keyword is also mapped to the EOF token ID. Input
+		 * following that keyword must still be reported as a syntax error.
 		 */
-		if ( ! count( $tokens ) || WP_MySQL_Lexer::EOF !== $tokens[ count( $tokens ) - 1 ]->id ) {
+		$last_token = $tokens[ count( $tokens ) - 1 ] ?? null;
+		if (
+			null === $last_token
+			|| WP_MySQL_Lexer::EOF !== $last_token->id
+			|| strlen( $query ) !== $last_token->get_start() + $last_token->get_length()
+		) {
 			throw $this->new_invalid_input_exception();
 		}
 
