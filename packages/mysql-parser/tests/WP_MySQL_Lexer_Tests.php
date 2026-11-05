@@ -898,6 +898,128 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 		);
 	}
 
+	/**
+	 * @dataProvider data_dollar_quoted_text
+	 */
+	public function test_dollar_quoted_text( string $sql, array $expected ): void {
+		$tokens = ( new WP_MySQL_Lexer( $sql ) )->remaining_tokens();
+		$this->assertSame( 'YYEOF', array_pop( $tokens )->get_name(), $sql );
+		$this->assertSame( 'END_OF_INPUT', array_pop( $tokens )->get_name(), $sql );
+
+		$actual = array();
+		foreach ( $tokens as $token ) {
+			$actual[] = array( $token->get_name(), $token->get_bytes() );
+		}
+		$this->assertSame( $expected, $actual, $sql );
+
+		// The pull iterator follows the same path as remaining_tokens().
+		$lexer = new WP_MySQL_Lexer( $sql );
+		foreach ( $tokens as $token ) {
+			$this->assertTrue( $lexer->next_token(), $sql );
+			$this->assertSame( $token->id, $lexer->get_token()->id, $sql );
+			$this->assertSame( $token->get_bytes(), $lexer->get_token()->get_bytes(), $sql );
+		}
+	}
+
+	public function data_dollar_quoted_text(): array {
+		$dollar = 'DOLLAR_QUOTED_STRING_SYM';
+		return array(
+			// The tag can be empty, or contain identifier characters other than "$".
+			'empty tag'                         => array( '$$ a $$', array( array( $dollar, '$$ a $$' ) ) ),
+			'tag'                               => array( '$tag$ a $tag$', array( array( $dollar, '$tag$ a $tag$' ) ) ),
+			'digits in a tag'                   => array( '$1$ a $1$', array( array( $dollar, '$1$ a $1$' ) ) ),
+			'underscore in a tag'               => array( '$_$ a $_$', array( array( $dollar, '$_$ a $_$' ) ) ),
+			'a tag with a non-ASCII character'  => array( '$∂$ a $∂$', array( array( $dollar, '$∂$ a $∂$' ) ) ),
+			'a tag with a 4-byte character'     => array( '$😀$ a $😀$', array( array( $dollar, '$😀$ a $😀$' ) ) ),
+
+			// The text can contain anything except for the closing delimiter.
+			'a line break in the text'          => array( "\$\$ a\nb \$\$", array( array( $dollar, "\$\$ a\nb \$\$" ) ) ),
+			'quotes and comments in the text'   => array( "\$\$ ' \" ` /* -- # \$\$", array( array( $dollar, "\$\$ ' \" ` /* -- # \$\$" ) ) ),
+			'other delimiters in the text'      => array( '$a$ $$ $b$ $a$', array( array( $dollar, '$a$ $$ $b$ $a$' ) ) ),
+			'a tag is case-sensitive'           => array( '$a$ $A$ $a$', array( array( $dollar, '$a$ $A$ $a$' ) ) ),
+			'a partial tag in the text'         => array( '$ab$ $a $ab$', array( array( $dollar, '$ab$ $a $ab$' ) ) ),
+			'a dollar sign in the text'         => array( '$$ a$b $$', array( array( $dollar, '$$ a$b $$' ) ) ),
+			'multibyte characters in the text'  => array( '$😀$ $😔 $😀$', array( array( $dollar, '$😀$ $😔 $😀$' ) ) ),
+
+			// As in MySQL, the byte that breaks a closing delimiter match is skipped.
+			'a dollar sign just before a close' => array( '$a$ $$a$ $a$', array( array( $dollar, '$a$ $$a$ $a$' ) ) ),
+			'a broken match that ends with "$"' => array( '$ab$ $a$ab$ $ab$', array( array( $dollar, '$ab$ $a$ab$ $ab$' ) ) ),
+
+			// Dollar-quoted text ends with the closing delimiter.
+			'a name right after the text'       => array( '$$a$$b', array( array( $dollar, '$$a$$' ), array( 'IDENT', 'b' ) ) ),
+			'a name after a tagged text'        => array( '$a$b$a$c', array( array( $dollar, '$a$b$a$' ), array( 'IDENT', 'c' ) ) ),
+			'a number after the text'           => array( '$$a$$.5', array( array( $dollar, '$$a$$' ), array( 'DECIMAL_NUM', '.5' ) ) ),
+			'two texts'                         => array( '$$a$$ $$b$$', array( array( $dollar, '$$a$$' ), array( $dollar, '$$b$$' ) ) ),
+			'after a space and a comment'       => array( ' /* a */ $$b$$', array( array( $dollar, '$$b$$' ) ) ),
+			'after WITH'                        => array( 'WITH $$a$$', array( array( 'WITH', 'WITH' ), array( $dollar, '$$a$$' ) ) ),
+
+			// Without a second "$" in the identifier characters, it's an identifier.
+			'a name with a leading dollar sign' => array( '$a', array( array( 'IDENT', '$a' ) ) ),
+			'a name with digits'                => array( '$1', array( array( 'IDENT', '$1' ) ) ),
+			'a lone dollar sign'                => array( '$', array( array( 'IDENT', '$' ) ) ),
+			'two lone dollar signs'             => array( '$ $', array( array( 'IDENT', '$' ), array( 'IDENT', '$' ) ) ),
+			'a dollar sign before a dot'        => array( '$a.$', array( array( 'IDENT', '$a' ), array( 'DOT', '.' ), array( 'IDENT', '$' ) ) ),
+
+			// Only a token that starts with "$" can open dollar-quoted text.
+			'dollar signs inside a name'        => array( 'a$$b$$', array( array( 'IDENT', 'a$$b$$' ) ) ),
+			'a name after a dot'                => array( 't.$$', array( array( 'IDENT', 't' ), array( 'DOT', '.' ), array( 'IDENT', '$$' ) ) ),
+			'a tagged name after a dot'         => array( 't.$a$', array( array( 'IDENT', 't' ), array( 'DOT', '.' ), array( 'IDENT', '$a$' ) ) ),
+			'a user variable'                   => array( '@$$', array( array( 'AT_SIGN', '@' ), array( 'IDENT', '$$' ) ) ),
+			'a system variable'                 => array( '@@$$', array( array( 'AT_SIGN', '@' ), array( 'AT_SIGN', '@' ), array( 'IDENT', '$$' ) ) ),
+			'a quoted name'                     => array( '`$$`', array( array( 'IDENT_QUOTED', '`$$`' ) ) ),
+			'a string'                          => array( "'\$\$'", array( array( 'TEXT_STRING', "'\$\$'" ) ) ),
+		);
+	}
+
+	/**
+	 * @dataProvider data_invalid_dollar_quoted_text
+	 */
+	public function test_invalid_dollar_quoted_text( string $sql ): void {
+		$tokens = ( new WP_MySQL_Lexer( "SELECT $sql" ) )->remaining_tokens();
+		$this->assertCount( 1, $tokens, $sql );
+		$this->assertSame( 'SELECT', $tokens[0]->get_name(), $sql );
+
+		// The pull iterator follows the same path as remaining_tokens().
+		$lexer = new WP_MySQL_Lexer( "SELECT $sql" );
+		$this->assertTrue( $lexer->next_token(), $sql );
+		$this->assertFalse( $lexer->next_token(), $sql );
+	}
+
+	public function data_invalid_dollar_quoted_text(): array {
+		return array(
+			'empty text'             => array( '$$$$' ),
+			'empty text with a tag'  => array( '$a$$a$' ),
+			'no text'                => array( '$$' ),
+			'no closing delimiter'   => array( '$$ a' ),
+			'half a delimiter'       => array( '$$ a $' ),
+			'no text after a tag'    => array( '$a$' ),
+			'a partial closing tag'  => array( '$ab$ c $a' ),
+			'a tag without its "$"'  => array( '$a$ b $a' ),
+			'another tag'            => array( '$a$ b $b$' ),
+			'a different tag case'   => array( '$a$ b $A$' ),
+			'a dollar sign in a tag' => array( '$a$b' ),
+			'a skipped close'        => array( '$a$ $$a$' ),
+			'a broken match at end'  => array( '$ab$ $a$ab$' ),
+		);
+	}
+
+	public function test_dollar_quoted_text_requires_mysql_8_1(): void {
+		$tokens = ( new WP_MySQL_Lexer( '$$ a $$', 80099 ) )->remaining_tokens();
+		$this->assertSame(
+			array( '$$', 'a', '$$', '', '' ),
+			array_map(
+				static function ( WP_MySQL_Token $token ): string {
+					return $token->get_bytes();
+				},
+				$tokens
+			)
+		);
+		$this->assertSame( 'IDENT', $tokens[0]->get_name() );
+
+		$tokens = ( new WP_MySQL_Lexer( '$$ a $$', 80100 ) )->remaining_tokens();
+		$this->assertSame( 'DOLLAR_QUOTED_STRING_SYM', $tokens[0]->get_name() );
+	}
+
 	public function test_composite_ansi_mode_expands_to_lexer_component_modes(): void {
 		// ANSI_QUOTES: a double-quoted sequence is a quoted identifier.
 		$lexer = new WP_MySQL_Lexer( '"foo"', 80410, array( 'ANSI' ) );

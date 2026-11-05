@@ -76,6 +76,7 @@ class WP_MySQL_Lexer {
 	const IDENT_QUOTED                = 484;
 	const TEXT_STRING                 = 827;
 	const NCHAR_STRING                = 611;
+	const DOLLAR_QUOTED_STRING_SYM    = 1204;
 	const UNDERSCORE_CHARSET          = 852;
 	const BIN_NUM                     = 292;
 	const HEX_NUM                     = 474;
@@ -1007,6 +1008,16 @@ class WP_MySQL_Lexer {
 			}
 		} elseif ( null === $byte ) {
 			$type = self::EOF;
+		} elseif ( '$' === $byte ) {
+			$type = $this->read_identifier();
+
+			// From MySQL 8.1, a second "$" in the name ends the opening delimiter of
+			// dollar-quoted text. Without one, it's an identifier, such as "$a" or "$".
+			$name    = $this->get_current_token_bytes();
+			$tag_end = strpos( $name, '$', 1 );
+			if ( false !== $tag_end && $this->mysql_version >= 80100 ) {
+				$type = $this->read_dollar_quoted_text( substr( $name, 0, $tag_end + 1 ) );
+			}
 		} else {
 			$type = $this->read_identifier();
 			if ( self::IDENT === $type ) {
@@ -1368,6 +1379,53 @@ class WP_MySQL_Lexer {
 		$this->bytes_already_read = $at;
 
 		return $is_identifier_quote ? self::IDENT_QUOTED : self::TEXT_STRING;
+	}
+
+	/**
+	 * Read dollar-quoted text, which has the form $tag$text$tag$.
+	 *
+	 * Rules:
+	 *   1. The tag can be empty. Otherwise, it consists of unquoted identifier
+	 *      characters other than "$", and it is case-sensitive.
+	 *   2. The text can't be empty, and it has no escape sequences. It ends with
+	 *      the first closing delimiter.
+	 *
+	 * @param string $delimiter The opening delimiter, at the start of the current token.
+	 */
+	private function read_dollar_quoted_text( string $delimiter ): ?int {
+		// A "." that read_identifier() found after the name is a part of the text.
+		$this->next_state = self::STATE_START;
+
+		$delimiter_length = strlen( $delimiter );
+		$text_start       = $this->token_starts_at + $delimiter_length;
+		$at               = $text_start;
+		while ( $at < $this->sql_length ) {
+			$at = strpos( $this->sql, '$', $at );
+			if ( false === $at ) {
+				break;
+			}
+
+			$matched = 1;
+			while (
+				$matched < $delimiter_length
+				&& ( $this->sql[ $at + $matched ] ?? null ) === $delimiter[ $matched ]
+			) {
+				++$matched;
+			}
+			if ( $matched === $delimiter_length ) {
+				// MySQL rejects empty text, unlike an empty string as a routine body.
+				if ( $at === $text_start ) {
+					break;
+				}
+				$this->bytes_already_read = $at + $delimiter_length;
+				return self::DOLLAR_QUOTED_STRING_SYM;
+			}
+
+			// As in MySQL, the byte that breaks the match is not checked again,
+			// so "$$a$" doesn't close "$a$".
+			$at += $matched + 1;
+		}
+		return null; // Invalid input.
 	}
 
 	private function read_line_comment(): int {

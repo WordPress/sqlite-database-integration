@@ -34,6 +34,23 @@ class WP_MySQL_Token_Tests extends TestCase {
 		$this->assertSame( "new\nline", self::first_token( "SELECT n'new\\nline'", 'NCHAR_STRING' )->get_value() );
 	}
 
+	/**
+	 * @dataProvider data_dollar_quoted_values
+	 */
+	public function test_get_value_removes_dollar_quotes( string $sql, string $expected ): void {
+		$this->assertSame( $expected, self::first_token( $sql, 'DOLLAR_QUOTED_STRING_SYM' )->get_value() );
+	}
+
+	public function data_dollar_quoted_values(): array {
+		return array(
+			'empty tag'                     => array( '$$ a $$', ' a ' ),
+			'tag'                           => array( '$tag$ a $tag$', ' a ' ),
+			'a tag with a 4-byte character' => array( '$😀$ a $😀$', ' a ' ),
+			'other delimiters in the text'  => array( '$a$ $$ $b$ $a$', ' $$ $b$ ' ),
+			'no escape sequences'           => array( "\$\$ a\\nb '' \$\$", " a\\nb '' " ),
+		);
+	}
+
 	public function test_get_value_honors_no_backslash_escapes_mode(): void {
 		$token = self::first_token( "SELECT 'a\\nb'", 'TEXT_STRING', array( 'NO_BACKSLASH_ESCAPES' ) );
 		$this->assertSame( 'a\\nb', $token->get_value() );
