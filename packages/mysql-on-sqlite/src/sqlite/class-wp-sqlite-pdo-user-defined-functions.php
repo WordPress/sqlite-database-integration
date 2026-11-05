@@ -1205,6 +1205,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * - ICU supports multi-code-point case folds such as "ß" matching "ss";
 	 *   PCRE's case-insensitive mode does not.
 	 * - ICU-only syntax, such as `\uXXXX` and `\N{name}` in patterns, is an error.
+	 * - An unknown escape, such as `\y`, is an error. ICU reads it as a literal.
 	 * - ICU reads CRLF as one line break, and PCRE as two characters. `$` also
 	 *   matches between them, and `.` with the `n` flag matches only one of them.
 	 * - ICU's nested sets and set operations don't exist in PCRE. `[a[b]]` and
@@ -1276,7 +1277,11 @@ class WP_SQLite_PDO_User_Defined_Functions {
 			}
 		}
 
-		$modifiers = $binary_mode ? '' : 'u';
+		/*
+		 * PHP 7 can read an unknown escape, such as "\y" or "\u0041", as literal text.
+		 * The "X" modifier makes it an error, like in PHP 8.
+		 */
+		$modifiers = $binary_mode ? 'X' : 'uX';
 		if ( ! $case_sensitive ) {
 			$modifiers .= 'i';
 		}
