@@ -19,7 +19,7 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 	 * The exact failing set is pinned in FAILURES_PATH; update it when the accepted
 	 * language legitimately changes.
 	 */
-	const EXPECTED_QUERIES  = 69319;
+	const EXPECTED_QUERIES  = 69372;
 	const EXPECTED_FAILURES = 43;
 
 	public function test_corpus_acceptance_rate(): void {
@@ -86,6 +86,8 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 			'vertical tab in a version comment'      => array( "DO 1 /*!80034\v+1*/" ),
 			'form feed in a version comment'         => array( "DO 1 /*!80034\f+1*/" ),
 			'carriage return in a version comment'   => array( "DO 1 /*!80034\r+1*/" ),
+			'query after --error and --reap'         => array( 'CREATE PROCEDURE mIxEdCaSe() BEGIN END' ),
+			'query after --error and --remove_file'  => array( 'drop procedure if exists bug13012' ),
 		);
 	}
 

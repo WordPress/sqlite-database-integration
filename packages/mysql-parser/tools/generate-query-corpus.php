@@ -269,7 +269,8 @@ foreach ( scandir( $tests_dir ) as $i => $file ) {
 			continue;
 		}
 
-		// Skip queries that are expected to result in parse errors for now.
+		// Skip queries that are expected to fail. As in mysqltest, the "--error" command
+		// applies to the command that follows, and any other command ends it.
 		if ( 0 === strpos( strtolower( $line ), '--error' ) || 0 === strpos( strtolower( $line ), '-- error' ) ) {
 			$skip_next = true;
 			continue;
@@ -296,8 +297,12 @@ foreach ( scandir( $tests_dir ) as $i => $file ) {
 			if ( 0 === strpos( strtolower( $line ), '--delimiter' ) ) {
 				$line = substr( $line, 2 ); // remove '--'
 			} else {
-				if ( ! $skip_next ) {
-					$sql_modes->run_command( $line );
+				// Inside a query, this is an SQL comment rather than a command.
+				if ( '' === $query ) {
+					if ( ! $skip_next ) {
+						$sql_modes->run_command( $line );
+					}
+					$skip_next = false;
 				}
 				continue;
 			}
