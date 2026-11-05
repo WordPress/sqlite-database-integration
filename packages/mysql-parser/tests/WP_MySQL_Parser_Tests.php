@@ -156,6 +156,10 @@ class WP_MySQL_Parser_Tests extends TestCase {
 			'SELECT 0.select',                     // "SELECT" after "0." is a keyword.
 			'SELECT @@ version',                   // An empty name after "@@".
 			"SELECT @@'version'",                  // A single-quoted name after "@@".
+			'SELECT 1 /* a',                       // An unterminated comment.
+			'SELECT 1 /*!80000 + 2',               // An unterminated version comment.
+			'SELECT 1 /*!99999 a',                 // An unterminated skipped comment.
+			"DELETE FROM t WHERE a = 7 OR 1=1/*' AND b = 'c'", // A comment hides the rest.
 		);
 		foreach ( $statements as $sql ) {
 			$this->assertNull( self::parse( $sql ), "Should not parse: $sql" );

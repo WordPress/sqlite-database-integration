@@ -955,8 +955,7 @@ class WP_MySQL_Lexer {
 					$type = $this->read_mysql_comment();
 				} else {
 					$this->bytes_already_read += 2;
-					$this->read_comment_content();
-					$type = self::COMMENT;
+					$type                      = $this->read_comment_content();
 				}
 			} else {
 				$this->bytes_already_read += 1;
@@ -1007,7 +1006,8 @@ class WP_MySQL_Lexer {
 				$type = self::NCHAR_STRING;
 			}
 		} elseif ( null === $byte ) {
-			$type = self::EOF;
+			// An unterminated version comment is invalid input.
+			$type = $this->in_mysql_comment ? null : self::EOF;
 		} elseif ( '$' === $byte ) {
 			$type = $this->read_identifier();
 
@@ -1433,7 +1433,7 @@ class WP_MySQL_Lexer {
 		return self::COMMENT;
 	}
 
-	private function read_mysql_comment(): int {
+	private function read_mysql_comment(): ?int {
 		// @TODO: Consider supporting optimizer hints (/*+ ... */) or document
 		//        that they are not supported.
 
@@ -1464,13 +1464,13 @@ class WP_MySQL_Lexer {
 				$nested_start = strpos( $this->sql, '/*', $this->bytes_already_read );
 				$comment_end  = strpos( $this->sql, '*/', $this->bytes_already_read );
 				if ( false === $nested_start || ( false !== $comment_end && $comment_end < $nested_start ) ) {
-					break;
+					return $this->read_comment_content();
 				}
 				$this->bytes_already_read = $nested_start + 2;
-				$this->read_comment_content();
+				if ( null === $this->read_comment_content() ) {
+					return null; // Invalid input.
+				}
 			}
-			$this->read_comment_content();
-			return self::COMMENT;
 		} else {
 			// Version satisfied or not specified. Treat the content as SQL code.
 			$this->bytes_already_read += $version_length; // Skip the version number.
@@ -1479,13 +1479,13 @@ class WP_MySQL_Lexer {
 		}
 	}
 
-	private function read_comment_content(): void {
+	private function read_comment_content(): ?int {
 		$comment_end = strpos( $this->sql, '*/', $this->bytes_already_read );
 		if ( false === $comment_end ) {
-			$this->bytes_already_read = $this->sql_length;
-		} else {
-			$this->bytes_already_read = $comment_end + 2;
+			return null; // Invalid input.
 		}
+		$this->bytes_already_read = $comment_end + 2;
+		return self::COMMENT;
 	}
 
 	private function determine_identifier_or_keyword_type( string $value ): int {

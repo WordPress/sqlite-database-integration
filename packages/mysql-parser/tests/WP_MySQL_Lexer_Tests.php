@@ -167,6 +167,8 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 
 			// Other comments have their own rules.
 			'regular comment'           => array( 'SELECT 1 /* /* */ + 2', 80410, array( 'SELECT', '1', '+', '2' ) ),
+			'closed at the end'         => array( 'SELECT 1 /* a */', 80410, array( 'SELECT', '1' ) ),
+			'applied, closed at end'    => array( 'SELECT 1 /*!80000 + 2 */', 80410, array( 'SELECT', '1', '+', '2' ) ),
 			'applied version comment'   => array( 'SELECT 1 /*!80000 /* */ + 2 */', 80410, array( 'SELECT', '1', '+', '2' ) ),
 		);
 
@@ -347,6 +349,58 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 	public function test_invalid_input_returns_partial_stream_without_end_markers(): void {
 		$names = self::token_names( "SELECT 1 WITH \x01" );
 		$this->assertSame( array( 'SELECT', 'NUM', 'WITH' ), $names );
+	}
+
+	/**
+	 * @dataProvider data_unterminated_comments
+	 */
+	public function test_unterminated_comment_is_invalid_input( string $sql, array $expected_bytes ): void {
+		$read_bytes = static function ( array $tokens ): array {
+			return array_map(
+				static function ( WP_MySQL_Token $token ): string {
+					return $token->get_bytes();
+				},
+				$tokens
+			);
+		};
+		$this->assertSame( $expected_bytes, $read_bytes( ( new WP_MySQL_Lexer( $sql ) )->remaining_tokens() ) );
+
+		// The pull iterator follows the same path as remaining_tokens().
+		$lexer  = new WP_MySQL_Lexer( $sql );
+		$tokens = array();
+		while ( $lexer->next_token() ) {
+			$tokens[] = $lexer->get_token();
+		}
+		$this->assertSame( $expected_bytes, $read_bytes( $tokens ) );
+	}
+
+	public function data_unterminated_comments(): array {
+		return array(
+			// A regular comment.
+			'text'                             => array( 'SELECT 1 /* a', array( 'SELECT', '1' ) ),
+			'only an opening marker'           => array( 'SELECT 1 /*', array( 'SELECT', '1' ) ),
+			'overlapping markers'              => array( 'SELECT 1 /*/', array( 'SELECT', '1' ) ),
+			'nothing before the comment'       => array( '/* a', array() ),
+			'an earlier closed comment'        => array( 'SELECT /* a */ 1 /* b', array( 'SELECT', '1' ) ),
+			'a closing marker before it'       => array( 'SELECT 1 */ /* a', array( 'SELECT', '1', '*', '/' ) ),
+			'after WITH'                       => array( 'SELECT 1 WITH /* a', array( 'SELECT', '1', 'WITH' ) ),
+
+			// A version comment that applies.
+			'applied'                          => array( 'SELECT 1 /*!80000 + 2', array( 'SELECT', '1', '+', '2' ) ),
+			'applied, without a version'       => array( 'SELECT 1 /*! + 2', array( 'SELECT', '1', '+', '2' ) ),
+			'applied and empty'                => array( 'SELECT 1 /*!80000', array( 'SELECT', '1' ) ),
+			'applied, after a nested comment'  => array( 'SELECT 1 /*!80000 /* a */ + 2', array( 'SELECT', '1', '+', '2' ) ),
+			'applied, in a nested comment'     => array( 'SELECT 1 /*!80000 /* a', array( 'SELECT', '1' ) ),
+			'applied, a closing marker string' => array( "SELECT 1 /*!80000 + '*/'", array( 'SELECT', '1', '+', "'*/'" ) ),
+			'applied, a commented-out marker'  => array( 'SELECT 1 /*!80000 + 2 -- */', array( 'SELECT', '1', '+', '2' ) ),
+
+			// A version comment that doesn't apply.
+			'skipped'                          => array( 'SELECT 1 /*!99999 a', array( 'SELECT', '1' ) ),
+			'skipped and empty'                => array( 'SELECT 1 /*!99999', array( 'SELECT', '1' ) ),
+			'skipped, after a nested comment'  => array( 'SELECT 1 /*!99999 /* a */ b', array( 'SELECT', '1' ) ),
+			'skipped, in a nested comment'     => array( 'SELECT 1 /*!99999 /* a', array( 'SELECT', '1' ) ),
+			'skipped, overlapping markers'     => array( 'SELECT 1 /*!99999 /*/ */', array( 'SELECT', '1' ) ),
+		);
 	}
 
 	public function test_system_variable_name_must_not_be_empty(): void {
