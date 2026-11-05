@@ -1204,6 +1204,15 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 *   only the former and errors on the latter.
 	 * - ICU supports multi-code-point case folds such as "ß" matching "ss";
 	 *   PCRE's case-insensitive mode does not.
+	 * - ICU-only syntax, such as `\uXXXX` and `\N{name}` in patterns, is an error.
+	 * - ICU reads CRLF as one line break, and PCRE as two characters. `$` also
+	 *   matches between them, and `.` with the `n` flag matches only one of them.
+	 * - ICU's nested sets and set operations don't exist in PCRE. `[a[b]]` and
+	 *   `[a&&b]` silently match something else, and `[a--b]` is usually an error.
+	 * - A hyphen after a POSIX class or a property, as in `[[:alpha:]-z]` or
+	 *   `[\p{L}-x]`, is an error. ICU reads it literally.
+	 * - A POSIX class outside of a set, as in `[:alpha:]`, is usually an error. ICU
+	 *   reads it like `[[:alpha:]]`.
 	 *
 	 * Known limitations of this emulation:
 	 *
@@ -1214,7 +1223,17 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * - The `u` (UTF-8) PCRE modifier is applied to REGEXP_* functions, so
 	 *   they reject data that is not valid UTF-8 from the start position on.
 	 *   The REGEXP operators match such data, and REGEXP BINARY, byte by byte,
-	 *   like MySQL binary strings.
+	 *   like MySQL binary strings. Binary values that are valid UTF-8 match as
+	 *   text, so case sensitivity can differ between rows.
+	 * - SQLite converts float and decimal operands to text, in a different format
+	 *   from MySQL: `20e0` reads "20.0" (MySQL: "20"), `0.000001` reads "1.0e-06",
+	 *   and `1.50` reads "1.5". Integers above the BIGINT range read as floats.
+	 * - `pos`, `occurrence`, and `return_option` use PHP's integer conversion, so
+	 *   `2.6` means 2 (MySQL: 3), and `'2e1'` means 20 (MySQL: 2).
+	 * - Inline case flags don't reach [:upper:] and [:lower:], or \p{Lu} and
+	 *   \p{Ll} on PCRE 10.44 and older. They stay case-sensitive in
+	 *   `(?i)[[:upper:]]` with the `c` flag, and in the whole pattern when it
+	 *   contains "(?-i)".
 	 *
 	 * @param string $pattern     The MySQL regex pattern.
 	 * @param string $match_type  MySQL match_type flag string.
@@ -1435,6 +1454,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 *
 	 * Rules (from ICU, used by MySQL REGEXP_REPLACE):
 	 *   - "\X" for any X: emit X, drop the backslash (also applies to "\\" -> "\").
+	 *     Unlike ICU, "\uXXXX" and "\UXXXXXXXX" are not expanded.
 	 *   - Trailing lone backslash: dropped.
 	 *   - "$N" (N is one or more digits): emit the Nth capture group. Consumes
 	 *     the longest digit run that forms a valid group index; any trailing
