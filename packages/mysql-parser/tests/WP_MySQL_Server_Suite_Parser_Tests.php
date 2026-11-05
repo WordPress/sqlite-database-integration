@@ -13,14 +13,26 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 	const FAILURES_PATH = __DIR__ . '/data/corpus-failures.csv';
 
 	/**
-	 * The exact corpus tally. The rejected queries are multi-statement input, which
-	 * needs the CLIENT_MULTI_STATEMENTS client flag. MySQL rejects them too without it.
+	 * The exact corpus tally. The parser should reject a row marked as a syntax error,
+	 * and accept any other row. A failure is a row where it does the opposite.
+	 *
+	 * 57 failures are regular rows that the parser rejects:
+	 * - 43 are multi-statement input, which needs the CLIENT_MULTI_STATEMENTS client
+	 *   flag. MySQL rejects them too without it.
+	 * - 14 have a syntax error that MySQL doesn't reach, because a semantic check
+	 *   during parsing reports another error first.
+	 *
+	 * 169 failures are marked rows that the parser accepts:
+	 * - 90 are rejected by checks that run during MySQL's parsing, in grammar actions
+	 *   and parse tree classes. This parser has neither.
+	 * - 79 also parse on MySQL when prepared. Their error depends on how the test runs
+	 *   them, such as the text of a PREPARE statement or a debug build.
 	 *
 	 * The exact failing set is pinned in FAILURES_PATH; update it when the accepted
 	 * language legitimately changes.
 	 */
-	const EXPECTED_QUERIES  = 69370;
-	const EXPECTED_FAILURES = 43;
+	const EXPECTED_QUERIES  = 77319;
+	const EXPECTED_FAILURES = 226;
 
 	public function test_corpus_acceptance_rate(): void {
 		$parser = WP_MySQL_Parser_Factory::create_parser();
@@ -36,9 +48,10 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 			++$total;
 
 			// Pin the MySQL version. The failure set in FAILURES_PATH depends on it.
-			$sql_modes = isset( $record[1] ) ? explode( ',', $record[1] ) : array();
+			$sql_modes = array_filter( explode( ',', $record[1] ?? '' ) );
 			$tokens    = ( new WP_MySQL_Lexer( $query, 80410, $sql_modes ) )->remaining_tokens();
-			if ( null === $parser->parse( $tokens ) ) {
+			$is_parsed = null !== $parser->parse( $tokens );
+			if ( isset( $record[2] ) === $is_parsed ) {
 				$failures[] = $query;
 			}
 		}
@@ -86,28 +99,50 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 			'vertical tab in a version comment'      => array( "DO 1 /*!80034\v+1*/" ),
 			'form feed in a version comment'         => array( "DO 1 /*!80034\f+1*/" ),
 			'carriage return in a version comment'   => array( "DO 1 /*!80034\r+1*/" ),
-			'query after --error and --reap'         => array( 'CREATE PROCEDURE mIxEdCaSe() BEGIN END' ),
-			'query after --error and --remove_file'  => array( 'drop procedure if exists bug13012' ),
 		);
 	}
 
 	/**
-	 * Pin queries that test files expect to fail, using the "error" command instead of
-	 * "--error", because the tally can't see an additional query that parses.
+	 * Pin how queries that test files expect to fail are marked in each set of modes.
+	 * A query is a syntax error only if every occurrence of it expects one.
 	 *
-	 * @dataProvider data_omitted_query_texts
+	 * @dataProvider data_query_markers
 	 */
-	public function test_corpus_omits_query_text( string $query ): void {
-		$this->assertNotContains( $query, $this->read_queries( self::CORPUS_PATH ) );
+	public function test_corpus_marks_expected_syntax_errors( string $query, array $expected ): void {
+		static $markers = null;
+		if ( null === $markers ) {
+			$markers = array();
+			foreach ( $this->read_records( self::CORPUS_PATH ) as $record ) {
+				$markers[ $record[0] ][ $record[1] ?? '' ] = $record[2] ?? '';
+			}
+		}
+		$this->assertSame( $expected, $markers[ $query ] ?? array() );
 	}
 
 	/**
-	 * @return array<string,array{0:string}>
+	 * @return array<string,array{0:string,1:array<string,string>}>
 	 */
-	public function data_omitted_query_texts(): array {
+	public function data_query_markers(): array {
+		$regular      = array( '' => '' );
+		$syntax_error = array( '' => 'syntax_error' );
 		return array(
-			'error with a name'   => array( "BINLOG '\nRaNlZRMBAAAAMAAAAG0DAAAAAG8AAAAAAAEABHRlc3QAAnQxAAEDAAEBAQAg5VHP\nRaNlZR4BAAAAKAAAAJUDAAAAAG8AAAAAAAEAAgAB/wACAAAAczmjEA==\n'" ),
-			'error with a number' => array( "BINLOG '\njKNlZRMBAAAAMAAAAOkFAAAAAG8AAAAAAAEABHRlc3QAAnQxAAEDAAEBAQCwxzWH\njKNlZR4BAAAAKAAAABEGAAAAAG8AAAAAAAEAAgAB/wAFAAAAVI7NfA==\n'" ),
+			'--error with a name'                 => array( "select t1.* as 'with_alias' from t1", $syntax_error ),
+			'--error with a number'               => array( 'analyze table t1 extended', $syntax_error ),
+			'-- error with a number'              => array( 'CREATE TABLE t2 (a INT, b INT DEFAULT (select count(*) from t1))', $syntax_error ),
+			'--error with a comment'              => array( "prepare s from 'select GROUP_CONCAT(DISTINCT ?,? ORDER BY ? SEPARATOR ?)'", $syntax_error ),
+			'--error with another error'          => array( 'explain select cast(1 as decimal(4294967296))', $syntax_error ),
+			'--error that also allows success'    => array( '((SELECT * FROM t1 LIMIT 1) LIMIT 2) LIMIT 3', $syntax_error ),
+			'a syntax error only in IGNORE_SPACE' => array(
+				'create table SUM (a int)',
+				array(
+					''             => '',
+					'IGNORE_SPACE' => 'syntax_error',
+				),
+			),
+			'a syntax error before a regular run' => array( 'INSERT INTO th1 VALUES(1)', $regular ),
+			'a syntax error and another error'    => array( 'DELETE FROM t1', $regular ),
+			'--error with another error only'     => array( 'create table t1 select * from t1', $regular ),
+			'--error with ER_SYNTAX_ERROR'        => array( 'GRANT abc ON *.* TO testrole', $regular ),
 		);
 	}
 

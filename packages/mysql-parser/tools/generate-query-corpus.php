@@ -25,6 +25,10 @@
  * A query that runs in SQL modes that affect the lexer has them in a second column,
  * separated by commas. A query that runs in several sets of modes has a row for each.
  *
+ * A query that the test files only ever expect to fail with a syntax error has
+ * "syntax_error" in a third column. Queries that are expected to fail with any other
+ * error are regular rows, because those errors normally come after parsing.
+ *
  * The script is written on a best-effort basis and may not cover all edge cases.
  * In the future, we may consider writing a mysqltest format parser.
  */
@@ -213,8 +217,8 @@ foreach ( scandir( $tests_dir ) as $i => $file ) {
 	// Track whether we're inside a disabled block.
 	$is_disabled = false;
 
-	// Track whether we should skip the next query.
-	$skip_next = false;
+	// Track the "error" command that requires the next command to fail.
+	$expected_error = null;
 
 	// Track the encoding of the client character set that a statement selects.
 	$client_encoding = $default_encoding;
@@ -269,17 +273,17 @@ foreach ( scandir( $tests_dir ) as $i => $file ) {
 			continue;
 		}
 
-		// Skip queries that are expected to fail. As in mysqltest, the "--error" command
-		// applies to the command that follows, and any other command ends it.
+		// As in mysqltest, the "--error" command applies to the command that follows,
+		// and any other command ends it.
 		if ( 0 === strpos( strtolower( $line ), '--error' ) || 0 === strpos( strtolower( $line ), '-- error' ) ) {
-			$skip_next = true;
+			$expected_error = $line;
 			continue;
 		}
 
 		// Track the client character set, unless the statement is expected to fail.
 		// "DEFAULT" and character sets that the map doesn't list use the default encoding.
 		$client_charset = read_client_charset( $line );
-		if ( null !== $client_charset && ! $skip_next ) {
+		if ( null !== $client_charset && null === $expected_error ) {
 			$client_encoding = QUERY_CORPUS_CHARSET_ENCODINGS[ $client_charset ] ?? $default_encoding;
 		}
 
@@ -299,10 +303,10 @@ foreach ( scandir( $tests_dir ) as $i => $file ) {
 			} else {
 				// Inside a query, this is an SQL comment rather than a command.
 				if ( '' === $query ) {
-					if ( ! $skip_next ) {
+					if ( null === $expected_error ) {
 						$sql_modes->run_command( $line );
 					}
-					$skip_next = false;
+					$expected_error = null;
 				}
 				continue;
 			}
@@ -337,17 +341,23 @@ foreach ( scandir( $tests_dir ) as $i => $file ) {
 					$delimiter = trim( substr( $query, strlen( 'delimiter' ) ) );
 				} elseif ( preg_match( $skip_pattern, $query ) ) {
 					// skip commands
-					if ( ! $skip_next ) {
+					if ( null === $expected_error ) {
 						$sql_modes->run_command( $query );
 					}
-				} else {
-					if ( ! $skip_next ) {
-						$queries[ $query ][ $sql_modes->get_modes() ] = true;
+				} elseif ( '' !== $query ) {
+					$modes = $sql_modes->get_modes();
+					if ( null === $expected_error ) {
+						$queries[ $query ][ $modes ] = false;
 						$sql_modes->run_query( $query );
+					} else {
+						// A failed query changes no state. Any other result shows that it parses,
+						// including ER_SYNTAX_ERROR, which comes from semantic checks.
+						$queries[ $query ][ $modes ] = ( $queries[ $query ][ $modes ] ?? true )
+							&& 1 === preg_match( '/\b(?:ER_PARSE_ERROR|1064)\b/i', $expected_error );
 					}
 				}
 				// The "error" command works like "--error", but it ends with a delimiter.
-				$skip_next = 1 === preg_match( '/^error\b/i', $query );
+				$expected_error = preg_match( '/^error\b/i', $query ) ? $query : null;
 
 				$query = '';
 
@@ -384,8 +394,13 @@ if ( false === $output ) {
 	exit( 1 );
 }
 foreach ( $queries as $query => $query_modes ) {
-	foreach ( array_keys( $query_modes ) as $modes ) {
-		fputcsv( $output, '' === $modes ? array( $query ) : array( $query, $modes ), ',', '"', '\\' );
+	foreach ( $query_modes as $modes => $is_syntax_error ) {
+		if ( $is_syntax_error ) {
+			$record = array( $query, $modes, 'syntax_error' );
+		} else {
+			$record = '' === $modes ? array( $query ) : array( $query, $modes );
+		}
+		fputcsv( $output, $record, ',', '"', '\\' );
 	}
 }
 fclose( $output );

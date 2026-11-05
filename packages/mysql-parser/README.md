@@ -80,7 +80,7 @@ This requires `bash`, `curl`, `docker`, and `php` and executes the following ste
 3. Extract and compact the grammar and tokens, and save them in `src`.
 
 ### Building the query corpus
-This package includes a testing corpus of about 70,000 MySQL queries extracted
+This package includes a testing corpus of about 77,000 MySQL queries extracted
 from the MySQL release that corresponds to the generated MySQL grammar version.
 To regenerate it, use:
 
@@ -94,6 +94,8 @@ This requires `bash`, `git`, and `php`. It performs the following steps:
 3. Store the queries under `data/mysql-server-query-corpus/mysql-latest.csv`.
 
 A query that runs in SQL modes that affect the lexer has them in a second column.
+A query that the MySQL tests only ever expect to fail with a syntax error has
+`syntax_error` in a third column.
 
 ## Tests and benchmarks
 To run lexer and parser tests and benchmarks, use:

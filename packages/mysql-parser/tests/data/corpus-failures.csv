@@ -1,5 +1,226 @@
+"((SELECT * FROM t1 LIMIT 1) LIMIT 2) LIMIT 3"
+"ALTER EVENT ev1"
+"ALTER INSTANCE ROTATE MyISAM MASTER KEY"
+"ALTER TABLE t1 ADD PARTITION
+(PARTITION p2 VALUES IN ((71),(72),(73),(74),(75),(76),(77),(78),(79),(80),
+(81),(82),(83),(84),(85),(86),(87),(88),(89),(90)))"
+"ALTER TABLE t1 ADD PARTITION
+(PARTITION part_2 VALUES IN ((21 ,22, 23, 24, 25, 26, 27, 28, 29, 30,
+31 ,32, 33, 34, 35, 36, 37, 38, 39, 40),
+(41 ,42, 43, 44, 45, 46, 47, 48, 49, 50,
+51 ,52, 53, 54, 55, 56, 57, 58, 59, 60)))"
+"COMMIT AND CHAIN RELEASE"
 "COMMIT; INSERT INTO t2 VALUES (1); BEGIN; "
 "COMMIT; INSERT INTO t2 VALUES (1); BEGIN; INSERT INTO t1 VALUES (99); "
+"CREATE FUNCTION bug_13627_f() returns int BEGIN create trigger tr2 before insert on t1 for each row do select 1; return 1; END "
+"CREATE FUNCTION foo(a INTEGER) RETURNS INTEGER
+DETERMINISTIC LANGUAGE JAVASCRIPT
+BEGIN RETURN a-1; END "
+"CREATE FUNCTION foo(a INTEGER) RETURNS INTEGER
+DETERMINISTIC LANGUAGE SQL
+AS $$ return a-1; $$ "
+"CREATE PROCEDURE bar(a INTEGER)
+DETERMINISTIC LANGUAGE JAVASCRIPT
+BEGIN DECLARE b INTEGER DEFAULT a; END "
+"CREATE PROCEDURE p()
+BEGIN
+DECLARE v INT DEFAULT (SELECT * FROM t1);
+SET v = DEFAULT;
+END"
+"CREATE PROCEDURE p()
+BEGIN
+DECLARE v INT DEFAULT 1;
+SET v = DEFAULT;
+END"
+"CREATE PROCEDURE p()
+BEGIN
+DECLARE v INT;
+SET v = DEFAULT;
+END"
+"CREATE PROCEDURE p(p INT)
+SET p = DEFAULT"
+"CREATE PROCEDURE p1()
+BEGIN
+DECLARE d DATE;
+DO NTILE(d) OVER();
+END
+"
+"CREATE PROCEDURE p1()
+BEGIN
+DECLARE var CONDITION FOR SQLSTATE '12345';
+GET DIAGNOSTICS CONDITION 1 var = NUMBER;
+END"
+"CREATE PROCEDURE p1()
+BEGIN
+GET DIAGNOSTICS CONDITION 1 var;
+END"
+"CREATE PROCEDURE p1()
+BEGIN
+GET DIAGNOSTICS var;
+END"
+"CREATE PROCEDURE p1(n DATE) DO NTILE(n) OVER()"
+"CREATE PROCEDURE p2()
+BEGIN
+DECLARE d DATE;
+DO LEAD('x', d) OVER();
+END
+"
+"CREATE PROCEDURE p3()
+BEGIN
+DECLARE d DATE;
+DO LAG('x', d) OVER();
+END
+"
+"CREATE TABLE t1 (
+a int not null,
+b int not null,
+c int not null,
+primary key (a,b))
+partition by key (a)
+subpartition by hash (rand(a+b))"
+"CREATE TABLE t1 (
+a int not null,
+b int not null,
+c int not null,
+primary key (a,b))
+partition by list (a)
+subpartition by hash (a+b)
+( partition x1 values in (1)
+( subpartition x11 nodegroup 0,
+subpartition xextra,
+subpartition x12 nodegroup 1),
+partition x2 values in (2)
+( subpartition x21 nodegroup 0,
+subpartition x22 nodegroup 1)
+)"
+"CREATE TABLE t1 (
+a int not null,
+b int not null,
+c int not null,
+primary key (a,b))
+partition by list (a)
+subpartition by hash (a+b)
+subpartitions 3
+( partition x1 values in (1,2,4)
+( subpartition x11 nodegroup 0,
+subpartition x12 nodegroup 1),
+partition x2 values in (3,5,6)
+( subpartition x21 nodegroup 0,
+subpartition x22 nodegroup 1)
+)"
+"CREATE TABLE t1 (
+a int not null,
+b int not null,
+c int not null,
+primary key(a,b))
+partition by hash (rand(a))
+partitions 2
+(partition x1, partition x2)"
+"CREATE TABLE t1 (
+a int not null,
+b int not null,
+c int not null,
+primary key(a,b))
+partition by key (a)
+partitions 3
+(partition x1, partition x2)"
+"CREATE TABLE t1 (
+a int not null,
+b int not null,
+c int not null,
+primary key(a,b))
+partition by list (a)
+partitions 2
+(partition x1 values in (4),
+partition x2)"
+"CREATE TABLE t1 (
+a int not null,
+b int not null,
+c int not null,
+primary key(a,b))
+partition by list (a)
+partitions 2
+(partition x1 values in (4,6),
+partition x2)"
+"CREATE TABLE t1 (
+a int not null,
+b int not null,
+c int not null,
+primary key(a,b))
+partition by list (rand(a))
+partitions 2
+(partition x1 values in (1), partition x2 values in (2))"
+"CREATE TABLE t1 (
+a int not null,
+b int not null,
+c int not null,
+primary key(a,b))
+partition by range (a)
+partitions 2
+(partition x1 values less than (4),
+partition x2)"
+"CREATE TABLE t1 (
+a int not null,
+b int not null,
+c int not null,
+primary key(a,b))
+partition by range (rand(a))
+partitions 2
+(partition x1 values less than (0), partition x2 values less than (2))"
+"CREATE TABLE t1 (
+x VARCHAR(10)
+COLLATE ascii_bin
+COLLATE ascii_bin
+)"
+"CREATE TABLE t1 (a INT) PARTITION BY KEY ALGORITHM = 10 () PARTITIONS 3"
+"CREATE TABLE t1(c3 INTEGER)
+PARTITION BY HASH ((SELECT c1 FROM t0))"
+"CREATE TABLE t1(c3 INTEGER)
+PARTITION BY HASH ((SELECT c1 FROM t0))
+AS TABLE t0"
+"CREATE TABLE t1(c3 INTEGER)
+PARTITION BY LIST ((SELECT c1 FROM t0)) (PARTITION p0 VALUES IN (0))"
+"CREATE TABLE t1(c3 INTEGER)
+PARTITION BY LIST ((SELECT c1 FROM t0)) (PARTITION p0 VALUES IN (0))
+AS TABLE t0"
+"CREATE TABLE t1(c3 INTEGER)
+PARTITION BY RANGE ((SELECT c1 FROM t0)) (PARTITION a1 VALUES LESS THAN (1))"
+"CREATE TABLE t1(c3 INTEGER)
+PARTITION BY RANGE ((SELECT c1 FROM t0)) (PARTITION a1 VALUES LESS THAN (1))
+AS TABLE t0"
+"CREATE TABLE t2 (
+x VARCHAR(10)
+COLLATE ascii_bin
+COLLATE ascii_general_ci
+)"
+"CREATE TABLE t3 (
+x VARCHAR(10)
+COLLATE ascii_bin
+GENERATED ALWAYS AS(NULL)
+COLLATE ascii_bin
+)"
+"CREATE TABLE t3 (
+x VARCHAR(10)
+COLLATE ascii_bin
+NOT NULL
+COLLATE ascii_bin
+)"
+"CREATE TABLE t4 (
+x VARCHAR(10)
+GENERATED ALWAYS AS(NULL)
+COLLATE ascii_bin
+COLLATE ascii_bin
+)"
+"CREATE TABLE t8(a INTEGER AUTO_INCREMENT NOT ENFORCED)"
+"CREATE TABLE t8(a INTEGER ENFORCED)"
+"CREATE TABLE t8(a INTEGER NOT ENFORCED)"
+"CREATE TABLE „a (a int)"
+"CREATE TRIGGER t1_bu BEFORE UPDATE ON t1 FOR EACH ROW
+BEGIN
+SET NEW.a = DEFAULT;
+END"
+"CREATE TRIGGER tr1 BEFORE INSERT ON t1 FOR EACH ROW BEGIN create trigger tr2 before insert on t1 for each row do select 1; END "
+"CREATE TRIGGER tr16 AFTER UPDATE ON t1 FOR EACH ROW INSERT INTO t1 VALUES (1)"
 "DROP PROCEDURE IF EXISTS p26030; CREATE PROCEDURE p26030() BEGIN SELECT 1; END; CALL p26030()
 "
 "DROP PROCEDURE IF EXISTS p26030; CREATE PROCEDURE p26030() SELECT 1; CALL p26030()
@@ -7,8 +228,65 @@
 "DROP PROCEDURE bug6866;
 
 DROP VIEW tv"
+"FLUSH TABLES FOR EXPORT"
 "FLUSH TABLES;
 UNLOCK TABLES"
+"GET DIAGNOSTICS CONDITION 1 var"
+"GET DIAGNOSTICS var"
+"GRANT SELECT(c1) ON FUNCTION *.* TO r1"
+"INSTALL COMPONENT ""file://component_validate_password"" SET length = (SELECT a FROM t1)"
+"PREPARE ps FROM ""SELECT GET_FORMAT(?, 'ISO')"""
+"PREPARE stmt FROM ""SET PASSWORD FOR @'localhost' = 'SoSecret'"""
+"PREPARE stmt FROM ""SET PASSWORD FOR test_user1@'localhost' = NULL"""
+"PREPARE stmt FROM 'SELECT /*+ 10'"
+"REVOKE 'C' @c06 ON c02.`z1` FROM 'C' @c03"
+"REVOKE SELECT(c1) ON FUNCTION *.* FROM r1"
+"ROLLBACK AND CHAIN RELEASE"
+"SELECT 1 <=>ALL (SELECT 1)"
+"SELECT @@global.global.key_buffer_size"
+"SELECT @@global.local.key_buffer_size"
+"SELECT @@global.session.key_buffer_size"
+"SET DEBUG_SYNC=' '"
+"SET DEBUG_SYNC=''"
+"SET DEBUG_SYNC='CLEAR'"
+"SET DEBUG_SYNC='RESET p0'"
+"SET DEBUG_SYNC='RESETx'"
+"SET DEBUG_SYNC='TEST'"
+"SET DEBUG_SYNC='p0                                          EXECUTE 2'"
+"SET DEBUG_SYNC='p0                                TIMEOUT 6 EXECUTE 2'"
+"SET DEBUG_SYNC='p0                                TIMEOUT 6'"
+"SET DEBUG_SYNC='p0                  SIGNAL s1 TIMEOUT 6 EXECUTE 2'"
+"SET DEBUG_SYNC='p0                  SIGNAL s1 TIMEOUT 6'"
+"SET DEBUG_SYNC='p0 CLEAR HIT_LIMIT 3'"
+"SET DEBUG_SYNC='p0 CLEAR p0'"
+"SET DEBUG_SYNC='p0 CLEARx'"
+"SET DEBUG_SYNC='p0 EXECUTE 2 SIGNAL s1 TIMEOUT 6'"
+"SET DEBUG_SYNC='p0 EXECUTE 2 TIMEOUT 6 SIGNAL s1'"
+"SET DEBUG_SYNC='p0 RESET p0'"
+"SET DEBUG_SYNC='p0 RESET'"
+"SET DEBUG_SYNC='p0 SIGNAL '"
+"SET DEBUG_SYNC='p0 SIGNAL s1 EXECUTE '"
+"SET DEBUG_SYNC='p0 SIGNAL s1 WAIT_FOR s2 TIMEOUT 6 EXECUTE 2 HIT_LIMIx 3'"
+"SET DEBUG_SYNC='p0 SIGNAL s1 WAIT_FOR s2 TIMEOUT 6 EXECUTx 2 HIT_LIMIT 3'"
+"SET DEBUG_SYNC='p0 SIGNAL s1 WAIT_FOR s2 TIMEOUx 0 EXECUTE 2 HIT_LIMIT 3'"
+"SET DEBUG_SYNC='p0 SIGNAL s1 WAIT_FOx s2 TIMEOUT 6 EXECUTE 2 HIT_LIMIT 3'"
+"SET DEBUG_SYNC='p0 SIGNAx s1 WAIT_FOR s2 TIMEOUT 6 EXECUTE 2 HIT_LIMIT 3'"
+"SET DEBUG_SYNC='p0 TEST p0'"
+"SET DEBUG_SYNC='p0 TESTx'"
+"SET DEBUG_SYNC='p0 TIMEOUT 6 SIGNAL s1'"
+"SET DEBUG_SYNC='p0 TIMEOUT 6 WAIT_FOR s2 EXECUTE 2'"
+"SET DEBUG_SYNC='p0 TIMEOUT 6 WAIT_FOR s2'"
+"SET DEBUG_SYNC='p0 WAIT_FOR '"
+"SET DEBUG_SYNC='p0 WAIT_FOR s2 SIGNAL s1           EXECUTE 2'"
+"SET DEBUG_SYNC='p0 WAIT_FOR s2 SIGNAL s1 TIMEOUT 6 EXECUTE 2'"
+"SET DEBUG_SYNC='p0 WAIT_FOR s2 SIGNAL s1 TIMEOUT 6'"
+"SET DEBUG_SYNC='p0 WAIT_FOR s2 SIGNAL s1'"
+"SET DEBUG_SYNC='p0 WAIT_FOR s2 TIMEOUT 0x6 EXECUTE 2 HIT_LIMIT 3'"
+"SET DEBUG_SYNC='p0 WAIT_FOR s2 TIMEOUT 6 EXECUTE 0x2 HIT_LIMIT 3'"
+"SET DEBUG_SYNC='p0 WAIT_FOR s2 TIMEOUT 6 SIGNAL s1 EXECUTE 2'"
+"SET DEBUG_SYNC='p0 WAIT_FOR s2 TIMEOUT 6 SIGNAL s1'"
+"SET DEBUG_SYNC='p0 WAIT_FOR s2 TIMEOUT 7 EXECUTE 2 HIT_LIMIT 0x3'"
+"SET DEBUG_SYNC='p0'"
 "SET sql_mode = 'NO_ENGINE_SUBSTITUTION';
 create procedure test_resignal()
 begin
@@ -194,20 +472,186 @@ RETURNS VARCHAR(64) BINARY UNICODE
 BEGIN
 RETURN '';
 END"
+"START TRANSACTION READ ONLY, READ WRITE"
+"START TRANSACTION READ ONLY, WITH CONSISTENT SNAPSHOT, READ WRITE"
+"UPDATE t1 SET a = 1 WHERE a = 1"
+"XA START '1', 0x01, 18446744073709551615"
 "alter table t1 add b integer;
 call p1"
+"alter table t1 add partition
+(partition p1 values in (maxvalue, maxvalue))"
 "create function bug12812() returns char(2)
 begin
 return 'ok';
 end;
 create user user_bug12812@localhost IDENTIFIED BY 'ABC'"
+"create function f1() returns integer
+begin
+declare a integer;
+declare b, c real;
+set a = (select count(*) from t1 limit a, b);
+return a;
+end"
+"create function f1(p1 date, p2 date)
+returns int
+begin
+declare a int;
+set a = (select count(*) from t1 limit p1, p2);
+return a;
+end"
+"create function f1(p1 decimal, p2 decimal)
+returns int
+begin
+declare a int;
+set a = (select count(*) from t1 limit p1, p2);
+return a;
+end"
+"create function f1(p1 double, p2 double)
+returns int
+begin
+declare a int;
+set a = (select count(*) from t1 limit p1, p2);
+return a;
+end"
+"create function f1(p1 integer, p2 char(1))
+returns int
+begin
+declare a int;
+set a = (select count(*) from t1 limit p1, p2);
+return a;
+end"
+"create function f1(p1 integer, p2 float)
+returns int
+begin
+declare a int;
+set a = (select count(*) from t1 limit p1, p2);
+return a;
+end"
+"create function f1(p1 varchar(5), p2 char(1))
+returns int
+begin
+declare a int;
+set a = (select count(*) from t1 limit p1, p2);
+return a;
+end"
+"create function p(x int, x char(10))
+begin
+end"
 "create procedure bug5307()
 begin
 end; set @x = 3"
+"create procedure bug6600()
+unlock table t1"
+"create procedure p1(p1 date, p2 date) select * from t1 limit p1, p2"
+"create procedure p1(p1 decimal, p2 decimal) select * from t1 limit p1, p2"
+"create procedure p1(p1 double, p2 double) select * from t1 limit p1, p2"
+"create procedure p1(p1 integer, p2 char(1)) select * from t1 limit p1, p2"
+"create procedure p1(p1 integer, p2 float) select * from t1 limit p1, p2"
+"create procedure p1(p1 varchar(5), p2 char(1)) select * from t1 limit p1, p2"
+"create procedure proc_26503_error_1()
+begin
+retry:
+repeat
+begin
+declare continue handler for sqlexception
+begin
+iterate retry;
+end
+
+select ""do something"";
+end
+until true end repeat retry;
+end"
+"create procedure proc_26503_error_2()
+begin
+retry:
+repeat
+begin
+declare continue handler for sqlexception
+iterate retry;
+
+select ""do something"";
+end
+until true end repeat retry;
+end"
+"create procedure proc_26503_error_3()
+begin
+retry:
+repeat
+begin
+declare continue handler for sqlexception
+begin
+leave retry;
+end
+
+select ""do something"";
+end
+until true end repeat retry;
+end"
+"create procedure proc_26503_error_4()
+begin
+retry:
+repeat
+begin
+declare continue handler for sqlexception
+leave retry;
+
+select ""do something"";
+end
+until true end repeat retry;
+end"
+"create table t1 (a int)
+partition by hash (NOW()+a)"
+"create table t1 (a int)
+partition by hash (rand(a))"
+"create table t1 (a int)
+partition by hash(CURTIME() + a)"
+"create table t1 (a int)
+partition by key(a)
+partitions 1.5"
+"create table t1 (a int)
+partition by key(a)
+partitions 1e+300"
+"create table t1 (a int)
+partition by list columns(a)
+( partition p0 values in (2, 1),
+partition p1 values in ((4), (NULL), (3)))"
+"create table t1 (a int)
+partition by range (a + (select count(*) from t1))
+(partition p1 values less than (1))"
+"create table t1 (a int, b char(20))
+partition by range columns(a,b)
+(partition p0 values less than (1))"
+"create table t1 (a int, b int)
+partition by list (a)
+subpartition by hash(a)
+(partition p0 values in (0),
+partition p1 values in (1) (subpartition sp0))"
+"create table t1 (a int, b int)
+partition by list columns(a,b)
+( partition p0 values in ((maxvalue, 0)))"
+"create table t1 (a int, b int)
+partition by list columns(a,b)
+(partition p0 values in ((maxvalue,maxvalue)))"
+"create table t1 (a int, b int)
+partition by range (a)
+subpartition by hash(a)
+(partition p0 values less than (0) (subpartition sp0),
+partition p1 values less than (1))"
+"create table t1 (a int, b int)
+partition by range (a)
+subpartition by hash(a)
+(partition p0 values less than (0),
+partition p1 values less than (1) (subpartition sp0))"
+"create table t1 (a int, b int)
+partition by range columns(a,b)
+(partition p0 values less than (10))"
 "create table t1 (i int);
 insert into t1 values (1),(2),(3);
 select * from t1 where i = 2;
 drop table t1;"
+"create table t4 (c1 int) engine=myisam pack_keys=2"
+"create view information_schema.v1"
 "create view v1 as select a from t3;
 create procedure bug10100pt(level int, lim int)
 begin
@@ -219,6 +663,7 @@ else
 select * from t3;
 end if;
 end"
+"drop database AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 "drop function if exists t_slow_sysdate;
 create function t_slow_sysdate() returns timestamp
 begin
@@ -251,6 +696,44 @@ subpartition x22));
 end"
 "drop temporary table temp_t1;
 drop table t3, t4"
+"explain select cast(1 as decimal(4294967296))"
+"explain select cast(1 as decimal(999999999999999999999999999999999999))"
+"prepare bar from ""DELETE FROM table_28779 WHERE a = 7 OR 1=1/*! AND 2=2;"""
+"prepare bar from ""DELETE FROM table_28779 WHERE a = 7 OR 1=1/*! AND 2=2;*"""
+"prepare bar from ""DELETE FROM table_28779 WHERE a = 7 OR 1=1/*!98765' AND b = 'bar';"""
+"prepare bar from ""DELETE FROM table_28779 WHERE a = 7 OR 1=1/*!98765' AND b = 'bar';*"""
+"prepare bar from ""DELETE FROM table_28779 WHERE a = 7 OR 1=1/*' AND b = 'bar';"""
+"prepare bar from ""DELETE FROM table_28779 WHERE a = 7 OR 1=1/*' AND b = 'bar';*"""
+"prepare s from
+'SELECT *
+FROM
+JSON_TABLE(
+?,
+?
+COLUMNS(
+rowid FOR ORDINALITY,
+ac VARCHAR(100) PATH ""$.a"" DEFAULT ''999'' ON ERROR DEFAULT ''111'' ON EMPTY,
+aj JSON PATH ""$.a"" DEFAULT ''{""x"": 333}'' ON EMPTY,
+bx INT EXISTS PATH ""$.b""
+)
+) AS tt'"
+"prepare s from 'select GROUP_CONCAT(DISTINCT ?,? ORDER BY ? SEPARATOR ?)'"
+"prepare stmt from ""select ??"""
+"prepare stmt from ""select ?FROM t1"""
+"prepare stmt from ""select FROM t1 WHERE?=1"""
+"prepare stmt from ""show engine all logs where (1) in (select * from t1)"""
+"prepare stmt from ""show engine all mutex where (1) in (select * from t1)"""
+"prepare stmt from ""show engine all status where (1) in (select * from t1)"""
+"prepare stmt from ""show processlist where (1) in (select * from t1)"""
+"prepare stmt from ""update t1 set a=a+?WHERE 1"""
+"prepare stmt1 from ' insert into t1 values(? ' "
+"prepare stmt1 from ' select a, b from t1
+where a=? and where ' "
+"prepare stmt1 from ' select_garbage 1 ' "
+"prepare stmt1 from @arg01"
+"prepare stmt1 from @fvar"
+"prepare stmt1 from @ivar"
+"prepare stmt1 from @nosuchvar"
 "prepare stmt2 from ""select * from t3;"";
 create procedure bug10100pd(level int, lim int)
 begin
@@ -271,6 +754,9 @@ else
 execute stmt2;
 end if;
 end"
+"prepare stmt6 from 'insert into t1 values (5,""five""); select2'"
+"prepare stmt6 from 'select 1; select2'"
+"purge binary logs before (select adddate(current_timestamp(), interval -4 day))"
 "select ""stmt 1"";             select ""space, stmt 2"""
 "select ""stmt 1"";/* comment */select ""comment, stmt 2"""
 "select ""stmt 1"";select ""stmt 2 non terminated"""
@@ -282,8 +768,12 @@ end"
 "select 2;
 select 3;
 select 4"
+"select ?"
+"select ? from t1"
 "select @update_failed;
 select * from t1"
+"select hex(weight_string('a' as char(0)))"
+"set @@global.global.key_buffer_size= 1"
 "set @@sql_mode=@old_mode;
 
 drop procedure bug6129"
@@ -291,8 +781,11 @@ drop procedure bug6129"
 set @@sql_mode= ""ERROR_FOR_DIVISION_BY_ZERO"";
 create procedure bug6129()
 select @@sql_mode"
+"set GLOBAL global.key_buffer_size= 1"
+"set names='foo2'"
 "set time_zone='+03:00';
 
 call bug3426(1000, @i)"
 "update t1 set data=42 where id = ""b"";
 select row_count()"
+"xa start 'zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz'"
