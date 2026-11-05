@@ -13,11 +13,11 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 	const FAILURES_PATH = __DIR__ . '/data/corpus-failures.csv';
 
 	/**
-	 * The exact corpus tally: rejected queries are multi-statement input, a few
-	 * unsupported statements (such as LANGUAGE JAVASCRIPT function bodies), and
-	 * session-dependent or lexer edge cases (see the README). The exact failing
-	 * set is pinned in FAILURES_PATH; update it when the accepted language
-	 * legitimately changes.
+	 * The exact corpus tally. The rejected queries are multi-statement input, which
+	 * needs the CLIENT_MULTI_STATEMENTS client flag. MySQL rejects them too without it.
+	 *
+	 * The exact failing set is pinned in FAILURES_PATH; update it when the accepted
+	 * language legitimately changes.
 	 */
 	const EXPECTED_QUERIES  = 69319;
 	const EXPECTED_FAILURES = 43;
