@@ -19,8 +19,8 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 	 * set is pinned in FAILURES_PATH; update it when the accepted language
 	 * legitimately changes.
 	 */
-	const EXPECTED_QUERIES  = 69076;
-	const EXPECTED_FAILURES = 63;
+	const EXPECTED_QUERIES  = 69319;
+	const EXPECTED_FAILURES = 43;
 
 	public function test_corpus_acceptance_rate(): void {
 		$parser = WP_MySQL_Parser_Factory::create_parser();
@@ -36,7 +36,8 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 			++$total;
 
 			// Pin the MySQL version. The failure set in FAILURES_PATH depends on it.
-			$tokens = ( new WP_MySQL_Lexer( $query, 80410 ) )->remaining_tokens();
+			$sql_modes = isset( $record[1] ) ? explode( ',', $record[1] ) : array();
+			$tokens    = ( new WP_MySQL_Lexer( $query, 80410, $sql_modes ) )->remaining_tokens();
 			if ( null === $parser->parse( $tokens ) ) {
 				$failures[] = $query;
 			}
@@ -89,6 +90,39 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 	}
 
 	/**
+	 * Pin the SQL modes of queries that test files select them for in different ways,
+	 * because the tally can't see a change in the modes of a query that still parses.
+	 *
+	 * @dataProvider data_query_sql_modes
+	 */
+	public function test_corpus_stores_query_sql_modes( string $query, array $expected ): void {
+		static $sql_modes = null;
+		if ( null === $sql_modes ) {
+			$sql_modes = array();
+			foreach ( $this->read_records( self::CORPUS_PATH ) as $record ) {
+				$sql_modes[ $record[0] ][] = $record[1] ?? '';
+			}
+		}
+		$this->assertSame( $expected, $sql_modes[ $query ] ?? array() );
+	}
+
+	/**
+	 * @return array<string,array{0:string,1:string[]}>
+	 */
+	public function data_query_sql_modes(): array {
+		return array(
+			'no modes'             => array( "DO 1 /*!80034\n+1*/", array( '' ) ),
+			'SET sql_mode'         => array( 'SELECT * from "full"', array( 'ANSI_QUOTES' ) ),
+			'the ANSI mode'        => array( 'create table t1 ("a*b" int)', array( 'ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT' ) ),
+			'CONCAT(@@sql_mode)'   => array( "SELECT 'a%' LIKE 'a!%' ESCAPE '!', 'a%' LIKE 'a!' || '%' ESCAPE '!'", array( 'PIPES_AS_CONCAT' ) ),
+			'sys.LIST_ADD'         => array( 'select "$id2", "$$$" from t where t."$id" = 0', array( 'ANSI_QUOTES' ) ),
+			'NO_BACKSLASH_ESCAPES' => array( "INSERT INTO t1 (id, val1) VALUES (1, '\\aa')", array( 'NO_BACKSLASH_ESCAPES', '' ) ),
+			'two sets of modes'    => array( 'select * from t1 where not a between 2 and 3', array( 'HIGH_NOT_PRECEDENCE', '' ) ),
+			'IGNORE_SPACE'         => array( 'create table ADDDATE (a int)', array( '', 'IGNORE_SPACE' ) ),
+		);
+	}
+
+	/**
 	 * Read the pinned set of failing queries, sorted to match the live set.
 	 *
 	 * @return string[] The expected failing queries.
@@ -106,16 +140,26 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 	 * @return string[] The queries.
 	 */
 	private function read_queries( string $path ): array {
+		return array_column( $this->read_records( $path ), 0 );
+	}
+
+	/**
+	 * Read the records of the queries in a CSV file.
+	 *
+	 * @param string $path The path to the CSV file.
+	 * @return array<int,string[]> The records.
+	 */
+	private function read_records( string $path ): array {
 		$handle  = fopen( $path, 'r' );
-		$queries = array();
+		$records = array();
 		while ( ( $record = fgetcsv( $handle, null, ',', '"', '\\' ) ) !== false ) {
 			$query = $record[0] ?? null;
 			if ( null === $query || '' === $query ) {
 				continue;
 			}
-			$queries[] = $query;
+			$records[] = $record;
 		}
 		fclose( $handle );
-		return $queries;
+		return $records;
 	}
 }

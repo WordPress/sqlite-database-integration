@@ -60,7 +60,7 @@ while ( ( $record = fgetcsv( $handle, null, ',', '"', '\\' ) ) !== false ) {
 	if ( null === $query || '' === $query ) {
 		continue;
 	}
-	$queries[] = $query;
+	$queries[] = array( $query, isset( $record[1] ) ? explode( ',', $record[1] ) : array() );
 	if ( null !== $limit && count( $queries ) >= $limit ) {
 		break;
 	}
@@ -75,9 +75,9 @@ $exceptions = 0;
 $run_pass   = function () use ( $queries, $parser, &$failures, &$exceptions ) {
 	$failures   = 0;
 	$exceptions = 0;
-	foreach ( $queries as $query ) {
+	foreach ( $queries as list( $query, $sql_modes ) ) {
 		try {
-			$tokens = ( new WP_MySQL_Lexer( $query ) )->remaining_tokens();
+			$tokens = ( new WP_MySQL_Lexer( $query, 80410, $sql_modes ) )->remaining_tokens();
 			if ( null !== $parser && null === $parser->parse( $tokens ) ) {
 				++$failures;
 			}

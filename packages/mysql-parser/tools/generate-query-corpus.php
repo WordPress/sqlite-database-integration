@@ -22,10 +22,14 @@
  * The queries are saved in UTF-8. Each line of a test file is read in the character
  * set of the client that the test selects, as "query-corpus-decoding.php" explains.
  *
+ * A query that runs in SQL modes that affect the lexer has them in a second column,
+ * separated by commas. A query that runs in several sets of modes has a row for each.
+ *
  * The script is written on a best-effort basis and may not cover all edge cases.
  * In the future, we may consider writing a mysqltest format parser.
  */
 
+require_once __DIR__ . '/class-query-corpus-sql-modes.php';
 require_once __DIR__ . '/query-corpus-decoding.php';
 
 // Paths:
@@ -215,6 +219,9 @@ foreach ( scandir( $tests_dir ) as $i => $file ) {
 	// Track the encoding of the client character set that a statement selects.
 	$client_encoding = $default_encoding;
 
+	// Track the SQL modes that the statements select.
+	$sql_modes = new Query_Corpus_SQL_Modes();
+
 	$query    = '';
 	$contents = file_get_contents( $tests_dir . '/' . $file );
 
@@ -289,6 +296,9 @@ foreach ( scandir( $tests_dir ) as $i => $file ) {
 			if ( 0 === strpos( strtolower( $line ), '--delimiter' ) ) {
 				$line = substr( $line, 2 ); // remove '--'
 			} else {
+				if ( ! $skip_next ) {
+					$sql_modes->run_command( $line );
+				}
 				continue;
 			}
 		}
@@ -322,9 +332,13 @@ foreach ( scandir( $tests_dir ) as $i => $file ) {
 					$delimiter = trim( substr( $query, strlen( 'delimiter' ) ) );
 				} elseif ( preg_match( $skip_pattern, $query ) ) {
 					// skip commands
+					if ( ! $skip_next ) {
+						$sql_modes->run_command( $query );
+					}
 				} else {
 					if ( ! $skip_next ) {
-						$queries[ $query ] = true;
+						$queries[ $query ][ $sql_modes->get_modes() ] = true;
+						$sql_modes->run_query( $query );
 					}
 				}
 				$skip_next = false;
@@ -363,7 +377,9 @@ if ( false === $output ) {
 	fwrite( STDERR, "error: cannot open $query_file for writing.\n" );
 	exit( 1 );
 }
-foreach ( $queries as $query => $_ ) {
-	fputcsv( $output, array( $query ), ',', '"', '\\' );
+foreach ( $queries as $query => $query_modes ) {
+	foreach ( array_keys( $query_modes ) as $modes ) {
+		fputcsv( $output, '' === $modes ? array( $query ) : array( $query, $modes ), ',', '"', '\\' );
+	}
 }
 fclose( $output );

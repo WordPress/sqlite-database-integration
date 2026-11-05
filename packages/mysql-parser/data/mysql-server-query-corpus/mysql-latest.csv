@@ -1,6 +1,7 @@
 "select schema_name from information_schema.schemata order by schema_name"
 "show tables in mysql where Tables_in_mysql != 'ndb_binlog_index'"
 "DROP TABLE IF EXISTS t1"
+"DROP TABLE IF EXISTS t1","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "SET sql_mode = 'NO_ENGINE_SUBSTITUTION'"
 "CREATE TABLE t1 (
 cont_nr int(11) NOT NULL auto_increment,
@@ -60,6 +61,8 @@ KEY p_nr(p_nr,suffix)
 "INSERT INTO t1 VALUES (3359362,406,3359362,'Mustermann Musterfrau',7001,'2000-05-20','workflow','Auftrag erledigt','Originalvertrag eingegangen und geprüft','','privat',1509984,2145874,'+','','P',1909154,'MobilComSuper92000D1(Akquise)',NULL,NULL,'MS9ND1',327,24,'MobilCom Intern',7003,NULL,'auto',20010202105916,'Mobilfunk','PP','','','')"
 "SELECT ELT(FIELD(kundentyp,'PP','PPA','PG','PGA','FK','FKA','FP','FPA','K','KA','V','VA',''), 'Privat (Private Nutzung)','Privat (Private Nutzung) Sitz im Ausland','Privat (geschaeftliche Nutzung)','Privat (geschaeftliche Nutzung) Sitz im Ausland','Firma (Kapitalgesellschaft)','Firma (Kapitalgesellschaft) Sitz im Ausland','Firma (Personengesellschaft)','Firma (Personengesellschaft) Sitz im Ausland','oeff. rechtl. Koerperschaft','oeff. rechtl. Koerperschaft Sitz im Ausland','Eingetragener Verein','Eingetragener Verein Sitz im Ausland','Typ unbekannt') AS Kundentyp ,kategorie FROM t1 WHERE hdl_nr < 2000000 AND kategorie IN ('Prepaid','Mobilfunk') AND st_klasse = 'Workflow' GROUP BY kundentyp ORDER BY kategorie"
 "drop table t1"
+"drop table t1","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"drop table t1",ANSI_QUOTES
 "CREATE TABLE t1 (
 AUFNR varchar(12) NOT NULL default '',
 PLNFL varchar(6) NOT NULL default '',
@@ -137,6 +140,7 @@ ORDER BY variable_name"
 "DROP TABLE global_vars"
 "call mtr.add_suppression(""The table 't1' is full"")"
 "drop table if exists t1"
+"drop table if exists t1","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "set global myisam_data_pointer_size=2"
 "CREATE TABLE t1 (a int auto_increment primary key not null, b longtext) ENGINE=MyISAM"
 "DELETE FROM t1 WHERE a=1 or a=5"
@@ -156,6 +160,9 @@ ORDER BY variable_name"
 "KILL QUERY @thread_id"
 "SET DEBUG_SYNC= 'now SIGNAL cont'"
 "DROP TABLE t1"
+"DROP TABLE t1",IGNORE_SPACE
+"DROP TABLE t1","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"DROP TABLE t1",NO_BACKSLASH_ESCAPES
 "SET DEBUG_SYNC= 'RESET'"
 "DROP SCHEMA IF EXISTS test_i_s"
 "CREATE SCHEMA test_i_s"
@@ -178,6 +185,7 @@ ORDER BY variable_name"
 "set debug_sync='now WAIT_FOR parked'"
 "set debug_sync='now SIGNAL go'"
 "select * from t1"
+"select * from t1","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "drop table t2"
 "select * from t2"
 "rename table t1 to t3"
@@ -197,6 +205,8 @@ ORDER BY variable_name"
 "LOCK TABLES t1 READ, t2 WRITE"
 "ALTER TABLE t2 RENAME TO t3"
 "SELECT * FROM t1"
+"SELECT * FROM t1",NO_BACKSLASH_ESCAPES
+"SELECT * FROM t1","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "INSERT INTO t3 values (1)"
 "LOCK TABLES t1 READ, t3 WRITE, t3 AS a WRITE, t3 AS b READ"
 "ALTER TABLE t3 RENAME TO t4"
@@ -238,6 +248,7 @@ WHERE TABLE_SCHEMA='test' AND TABLE_NAME like '#sql%'"
 "SHOW EXTENDED TABLES FROM test"
 "SHOW EXTENDED FULL TABLES FROM test"
 "drop table if exists t1, t2"
+"drop table if exists t1, t2","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "create table t1 (n1 int, n2 int, n3 int,
 key (n1, n2, n3),
 key (n2, n3, n1),
@@ -336,7 +347,9 @@ KEY  (Host)
 "INSERT INTO t1 VALUES ('localhost','root'),('localhost','')"
 "ALTER TABLE t1 RENAME t2"
 "DROP TABLE t2"
+"DROP TABLE t2","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "create table t1 (a int)"
+"create table t1 (a int)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "create table t1 ( a varchar(10) not null primary key ) engine=myisam"
 "create table t2 ( a varchar(10) not null primary key ) engine=merge union=(t1)"
 "flush tables"
@@ -359,6 +372,9 @@ KEY  (Host)
 "alter table t1 change a a text character set cp1251"
 "delete from t1"
 "show create table t1"
+"show create table t1",ANSI_QUOTES
+"show create table t1",IGNORE_SPACE
+"show create table t1","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "alter table t1 DEFAULT CHARACTER SET latin1"
 "alter table t1 CONVERT TO CHARACTER SET latin1"
 "alter table t1 DEFAULT CHARACTER SET cp1251"
@@ -368,6 +384,9 @@ default charset latin1 collate latin1_general_cs"
 "CREATE TABLE t1 (a int PRIMARY KEY, b INT UNIQUE)"
 "ALTER TABLE t1 DROP PRIMARY KEY"
 "SHOW CREATE TABLE t1"
+"SHOW CREATE TABLE t1",IGNORE_SPACE
+"SHOW CREATE TABLE t1",ANSI_QUOTES
+"SHOW CREATE TABLE t1","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "create table t1 (a int, b int, key(a))"
 "insert into t1 values (1,1), (2,2)"
 "alter table t1 drop key a"
@@ -789,6 +808,8 @@ COMMIT
 "alter table t1 algorithm=inplace, rename key kkkk to k, alter column i set default 100"
 "alter table t2 algorithm=inplace, rename key kkkk to k, alter column i set default 100"
 "drop table t1, t2"
+"drop table t1, t2","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"drop table t1, t2",ANSI_QUOTES
 "create table t1 (i int, key k(i)) engine=innodb"
 "alter table t1 algorithm=copy, rename key kk to kkk"
 "create table t1 ( a int, b int, c int, d int,
@@ -838,6 +859,7 @@ ON I.INDEX_ID = F.INDEX_ID AND I.TABLE_ID = T.TABLE_ID
 WHERE T.NAME = 'test/t1' ORDER BY I.NAME, F.NAME"
 "SET @orig_sql_mode = @@sql_mode"
 "SET sql_mode= ''"
+"SET sql_mode= ''",ANSI_QUOTES
 "CREATE TABLE t1(fld1 VARCHAR(767), KEY a(fld1)) charset latin1 ENGINE= INNODB
 ROW_FORMAT=COMPACT"
 "ALTER TABLE t1 CHANGE fld1 fld1 VARCHAR(768), ALGORITHM= INPLACE"
@@ -870,6 +892,7 @@ ENGINE=INNODB"
 "CREATE TABLE t (i int) TABLESPACE s ENGINE InnoDB"
 "ALTER TABLE t TABLESPACE s"
 "DROP TABLE t"
+"DROP TABLE t","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "DROP TABLESPACE s"
 "CREATE TABLE t1 (f1 INT)"
 "ALTER TABLE t1 CHARACTER SET utf8mb3, CHARACTER SET utf8mb3"
@@ -945,6 +968,7 @@ KEY nameloc (name(64))
 "CREATE TABLE t2 (fk INT, FOREIGN KEY (fk) REFERENCES t1 (pk)) ENGINE=InnoDB"
 "ALTER TABLE t2 ADD COLUMN j INT, RENAME TO t3, ALGORITHM=INPLACE"
 "SHOW CREATE TABLE t3"
+"SHOW CREATE TABLE t3",IGNORE_SPACE
 "CREATE TRIGGER t1_bi BEFORE INSERT ON t1 FOR EACH ROW SET @a:=0"
 "ALTER TABLE t1 ADD COLUMN j INT, RENAME TO t4, ALGORITHM=INPLACE"
 "SELECT trigger_name, event_object_schema, event_object_table, action_statement
@@ -988,6 +1012,7 @@ ST_PointFromText('POINT(10 10)'))"
 "INSERT INTO t1 VALUES(1,'abcd',1.234)"
 "CREATE TABLE t2(a INT, b VARCHAR(30), c FLOAT) ENGINE=MyIsam"
 "SHOW CREATE TABLE t2"
+"SHOW CREATE TABLE t2",IGNORE_SPACE
 "INSERT INTO t2 VALUES(1,'abcd',1.234)"
 "ALTER TABLE t1 RENAME COLUMN a TO a"
 "ALTER TABLE t1 RENAME COLUMN a TO m"
@@ -1069,6 +1094,7 @@ ADD COLUMN d DATE GENERATED ALWAYS AS (NULL) VIRTUAL NOT NULL"
 "ALTER TABLE t1 CONVERT TO CHARACTER SET utf16 COLLATE utf16_turkish_ci,
 DEFAULT CHARACTER SET utf16 COLLATE utf16_slovak_ci"
 "SET SQL_MODE=''"
+"SET SQL_MODE=''",IGNORE_SPACE
 "CREATE TABLE t1 SELECT 100000000000000000000000000000000000000000000000000000000000000001 AS c1"
 "ALTER TABLE t1 ADD INDEX (c1)"
 "SET SQL_MODE=default"
@@ -1110,6 +1136,7 @@ fld3 INT GENERATED ALWAYS AS (-fld1) STORED)"
 "SELECT LENGTH(my_t2_fld1) FROM t2"
 "SELECT LENGTH(my_t3_fld1) FROM t3"
 "DROP TABLE t1, t2, t3"
+"DROP TABLE t1, t2, t3",IGNORE_SPACE
 "SET GLOBAL max_allowed_packet=default"
 "CREATE TABLE t1(c1 VARCHAR(512) CHARSET SWE7)"
 "ALTER TABLE t1 MODIFY COLUMN c1 VARCHAR(512) CHARSET BINARY,
@@ -1428,10 +1455,13 @@ INDEX b (b)
 ('a7', 'b7', POINT(0, 0))"
 "SHOW INDEXES FROM t2"
 "set @@sql_mode=""ANSI"""
+"select @@sql_mode","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "select @@sql_mode"
-"SELECT 'A' || 'B'"
-"CREATE TABLE t1 (id INT, id2 int)"
-"SELECT id,NULL,1,1.1,'a' FROM t1 GROUP BY id"
+"select @@sql_mode",ANSI_QUOTES
+"SELECT 'A' || 'B'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CREATE TABLE t1 (id INT, id2 int)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"SELECT id,NULL,1,1.1,'a' FROM t1 GROUP BY id","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"SET @@SQL_MODE=""""","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "SET @@SQL_MODE="""""
 "CALL mtr.add_suppression(""Unsafe statement written to the binary log using statement format since BINLOG_FORMAT = STATEMENT"")"
 "DROP TABLE if exists t1,t2,t3,t4,t5,t6"
@@ -2934,6 +2964,7 @@ PRIMARY KEY USING HASH (dummyKey) ) engine=archive"
 "INSERT INTO t1 VALUES (NULL, ""red"")"
 "INSERT INTO t1 VALUES (NULL, ""yellow"")"
 "SET @org_mode=@@sql_mode"
+"SET @org_mode=@@sql_mode","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "SET @@sql_mode='NO_DIR_IN_CREATE'"
 "SELECT @@sql_mode"
 "set @@sql_mode=@org_mode"
@@ -2963,6 +2994,7 @@ PRIMARY KEY USING HASH (dummyKey) ) engine=archive"
 "CREATE USER 'plug_user' IDENTIFIED WITH 'test_plugin_server' AS 'plug_user'"
 "GRANT REPLICATION SLAVE ON *.* TO plug_user"
 "FLUSH PRIVILEGES"
+"FLUSH PRIVILEGES","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CHANGE REPLICATION SOURCE TO
 SOURCE_USER=     'plug_user',
 SOURCE_PASSWORD= 'plug_user',
@@ -3454,7 +3486,9 @@ PRIMARY KEY (id,lang)
 "INSERT INTO t1 VALUES (32, 'en', 'yyyyyyy')"
 "SELECT * FROM t1 WHERE id=32"
 "USE test"
+"USE test","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "DROP TABLE IF EXISTS t1, t2"
+"DROP TABLE IF EXISTS t1, t2","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE TABLE t1 (c1  TINYBLOB,
 c2  BLOB,
 c3  MEDIUMBLOB,
@@ -3500,8 +3534,12 @@ POINT(1, 1))"
 "SELECT * FROM t1 where (1 AND a)=1"
 "SELECT * FROM t1 where (1 AND a) IS NULL"
 "set sql_mode='high_not_precedence'"
+"select * from t1 where not a between 2 and 3",HIGH_NOT_PRECEDENCE
 "select * from t1 where not a between 2 and 3"
+"set sql_mode=default",HIGH_NOT_PRECEDENCE
 "set sql_mode=default"
+"set sql_mode=default",ANSI_QUOTES
+"set sql_mode=default","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "select a, a is false, a is true, a is unknown from t1"
 "select a, a is not false, a is not true, a is not unknown from t1"
 "SET @a=0, @b=0"
@@ -3753,6 +3791,7 @@ join t2 on t1.a=t2.c where b=11120436154190595086 order by d"
 "CREATE TABLE t1(a YEAR)"
 "SELECT 1 FROM t1 WHERE a=1 AND CASE 1 WHEN a THEN 1 ELSE 1 END"
 "set @@sql_mode=''"
+"set @@sql_mode=''","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE TABLE t1(c1 SET('','')CHARACTER SET ucs2) engine=innodb"
 "INSERT INTO t1 VALUES(990101.102)"
 "SELECT COALESCE(c1)FROM t1 ORDER BY 1"
@@ -3819,6 +3858,7 @@ WHERE c >= 0"
 FROM t00 LEFT JOIN t01 USING(a)
 WHERE f(t01.a) >= 0"
 "DROP FUNCTION f"
+"DROP FUNCTION f","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "DROP VIEW v0, v1, v2"
 "DROP TABLE t00, t01"
 "CREATE TABLE t (i1 INT,
@@ -4334,6 +4374,7 @@ WHERE (table3.col_char_key < table2.col_datetime_key)"
 "SET @invalid_datetime = '2000-02-31 00:00:00.000000'"
 "SET @bad_datetime = 'YYYY-MM-DD HH:MM:SS.ffffff'"
 "SET SQL_MODE=DEFAULT"
+"SET SQL_MODE=DEFAULT","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "SELECT CAST('0000-00-00' AS DATE) AS d1,
 CAST(@zero_date AS DATE) AS d2,
 CAST('0000-00-00 00:00:00.000000' AS DATETIME(6)) AS dt1,
@@ -4444,6 +4485,7 @@ AND a = (SELECT 1 FROM t)"
 "CREATE FUNCTION f7 ( a NCHAR ) RETURNS INT RETURN 1"
 "CREATE FUNCTION f8 ( a NVARCHAR(1) ) RETURNS INT RETURN 1"
 "DROP FUNCTION f1"
+"DROP FUNCTION f1","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "DROP FUNCTION f2"
 "DROP FUNCTION f3"
 "DROP FUNCTION f4"
@@ -4575,6 +4617,7 @@ val varchar(32) NOT NULL) collate utf8mb4_sv_0900_ai_ci"
 "Create view v1 as Select * from t1"
 "Check Table v1,t2"
 "drop view v1"
+"drop view v1","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "LOCK TABLE t1 WRITE"
 "SET lock_wait_timeout= 1"
 "CREATE TABLE t1(i INT)"
@@ -5236,6 +5279,7 @@ ADD CONSTRAINT t1_chk_1 CHECK (f11 < 10)"
 "SELECT @@global.default_tmp_storage_engine"
 "SELECT @@session.default_tmp_storage_engine"
 "CREATE TEMPORARY TABLE t1(a INT)"
+"CREATE TEMPORARY TABLE t1(a INT)",IGNORE_SPACE
 "CREATE TABLE t2(i INT) ENGINE=MYISAM"
 "CHECK TABLE t2 FOR UPGRADE"
 "ALTER TABLE t2 CHANGE COLUMN i j INT, ALGORITHM=INPLACE"
@@ -5579,10 +5623,13 @@ END"
 "ALTER TABLE t1 ADD COLUMN c11 INTEGER COMMENT 'ABCDEfghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdABCDEfghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdABCDEfghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcd'"
 "set sql_mode='TRADITIONAL'"
 "set sql_mode=''"
+"set sql_mode=''",PIPES_AS_CONCAT
+"set sql_mode=''","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "ALTER TABLE t1 ADD COLUMN c12 CHAR(100) COMMENT 'ABCDefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcd'"
 "create table t1 (c1 VARCHAR(10) NOT NULL COMMENT 'Abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcd', c2 INTEGER COMMENT 'aBcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdaBcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcd',c3 INTEGER COMMENT '012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789', c4 INTEGER, c5 INTEGER, c6 INTEGER, c7 INTEGER, INDEX i1 (c1) COMMENT 'i1 comment',INDEX i2(c2)
 ) COMMENT='ABCDEFGHIJabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcd'"
 "SET sql_mode=''"
+"SET sql_mode=''",NO_BACKSLASH_ESCAPES
 "CREATE TABLE t1_toupg (c1 INT, c2 VARCHAR(10) COMMENT
 '01234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234')
 COMMENT='abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcde'"
@@ -5847,8 +5894,11 @@ END"
 "CREATE PROCEDURE p2() DELETE FROM temp_t2"
 "SELECT f2()"
 "CALL p2()"
+"CALL p2()","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "DROP PROCEDURE p1"
+"DROP PROCEDURE p1","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "DROP PROCEDURE p2"
+"DROP PROCEDURE p2","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE VIEW v1 AS SELECT a FROM t1"
 "LOCK TABLE t1 READ"
 "DROP TABLE temp_t2, t1"
@@ -5861,6 +5911,7 @@ BEGIN
 DECLARE only INT DEFAULT 1;
 END"
 "CALL p1()"
+"CALL p1()","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "XA START 'test1'"
 "XA END 'test1'"
 "XA PREPARE 'test1'"
@@ -5875,6 +5926,7 @@ SET SESSION TRANSACTION READ ONLY;
 RETURN 1;
 END"
 "SELECT f1()"
+"SELECT f1()","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE FUNCTION f1() RETURNS INT
 BEGIN
 SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE, READ ONLY;
@@ -6125,6 +6177,7 @@ FROM INFORMATION_SCHEMA.OPTIMIZER_TRACE"
 "SET @save_optimizer_switch= @@optimizer_switch"
 "SET @@optimizer_switch= 'semijoin=off'"
 "CREATE TABLE t1 (a INT)"
+"CREATE TABLE t1 (a INT)",IGNORE_SPACE
 "CREATE TABLE t2 (b INT)"
 "INSERT INTO t2 VALUES (1), (2), (3)"
 "SELECT * FROM t1 WHERE a IN (SELECT * FROM (
@@ -6989,6 +7042,7 @@ return 0"
 "drop view имя_вью_кодировке_утф8_длиной_больше_чем_42"
 "drop table имя_таблицы_в_кодировке_утф8_длиной_больше_чем_48"
 "drop function if exists f1"
+"drop function if exists f1","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE PROCEDURE IF NOT EXISTS sp1() BEGIN END"
 "CREATE FUNCTION IF NOT EXISTS sf1() RETURNS INT DETERMINISTIC return 0"
 "DROP FUNCTION sf1"
@@ -7004,6 +7058,7 @@ return 0"
 "INSERT INTO t3 VALUES (0)"
 "SET sql_mode = TRADITIONAL"
 "SET sql_mode = ''"
+"SET sql_mode = ''",NO_BACKSLASH_ESCAPES
 "create table `about:text` (
 _id int not null auto_increment,
 `about:text` varchar(255) not null default '',
@@ -9171,6 +9226,7 @@ name varchar(64)
 "CREATE INDEX i1 ON t1 (s1)"
 "CREATE TABLE t1 ENGINE=FALCON AS SELECT repeat('a', 5) AS s1 LIMIT 0"
 "SET sql_mode=DEFAULT"
+"SET sql_mode=DEFAULT",PIPES_AS_CONCAT
 "CREATE TABLE t1 ENGINE=MARIA AS SELECT repeat('a', 5) AS s1 LIMIT 0"
 "CREATE TABLE t2(colours SET('red','blue','yellow'))CHARACTER SET latin2 COLLATE
 latin2_czech_cs"
@@ -15272,6 +15328,7 @@ WHERE SCHEMA_NAME = 's'"
 "UPDATE mysql.schemata SET options = 'abc' WHERE name = 's'"
 "SELECT options FROM mysql.schemata WHERE name = 's'"
 "DROP SCHEMA s"
+"DROP SCHEMA s",ANSI_QUOTES
 "CREATE TABLE time_zone(f1 INT PRIMARY KEY) ENGINE=MyISAM"
 "INSERT INTO time_zone VALUES (10)"
 "SET SESSION DEBUG=""+d,simulate_kill_query_on_open_table"""
@@ -16898,6 +16955,7 @@ INDEX(a), INDEX(b), INDEX(c)) engine=myisam"
 "CREATE DATABASE wl7766"
 "USE wl7766"
 "SET @@session.session_track_schema=ON"
+"SET @@session.session_track_schema=ON","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "SET @@session.session_track_system_variables='*'"
 "SET @@session.session_track_state_change=ON"
 "CREATE PROCEDURE t1_sel()
@@ -17091,9 +17149,11 @@ end"
 "drop procedure if exists p"
 "drop function if exists f"
 "set sql_mode=pipes_as_concat"
+"select 2 || 3",PIPES_AS_CONCAT
 "select 2 || 3"
+"select 2 or 3",PIPES_AS_CONCAT
 "select 2 or 3"
-"select concat(2,3)"
+"select concat(2,3)",PIPES_AS_CONCAT
 "create table t1 (v varchar(10) binary)"
 "create table t1 (v varchar(10) character set latin1 binary)"
 "create table t1 (v varchar(10) binary character set latin1)"
@@ -18604,6 +18664,7 @@ ON dtaa.c or w"""
 "INSERT INTO t1 VALUES (123)"
 "SELECT * FROM t1 LEFT JOIN ( SELECT 1 FROM t1 ) d1 ON TRUE ORDER BY a"
 "SET sql_mode="""""
+"SET sql_mode=""""","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "SELECT (
 SELECT 1 FROM (
 SELECT avg(1) FROM t1
@@ -18701,6 +18762,8 @@ FROM t0 AS a0"
 "ANALYZE TABLE t0, t1"
 "SET optimizer_switch=""derived_merge=off,derived_condition_pushdown=on"""
 "set sql_mode="""""
+"set sql_mode=""""",ANSI_QUOTES
+"set sql_mode=""""","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "SET @p1 = 3"
 "DROP PREPARE p"
 "SET @p1 = 1"
@@ -19231,6 +19294,7 @@ ON *.* FROM normal_user"
 "DROP TRIGGER trig1"
 "CREATE USER dummy"
 "DROP USER u1"
+"DROP USER u1",NO_BACKSLASH_ESCAPES
 "RENAME USER dummy to u1"
 "DROP USER normal_user, power_user"
 "CREATE USER ABC"
@@ -19766,8 +19830,8 @@ from t1 t1_outer"
 `$$$` int, id$$$ int, 1$ int, `$$` int, _$ int, b$$lit$$ int)"
 "select `$1`, `$$$`,`$$id`, '$someli$teral' from t where t.`$id` = 0"
 "SET sql_mode = sys.LIST_ADD(@@sql_mode, 'ANSI_QUOTES')"
-"select ""$id2"", ""$$$"" from t where t.""$id"" = 0"
-"SET sql_mode = sys.LIST_DROP(@@sql_mode, 'ANSI_QUOTES')"
+"select ""$id2"", ""$$$"" from t where t.""$id"" = 0",ANSI_QUOTES
+"SET sql_mode = sys.LIST_DROP(@@sql_mode, 'ANSI_QUOTES')",ANSI_QUOTES
 "select * from t where t.`$id` = 0 or `$id2` = 0 or b$$lit$$ = 0"
 "select id+$id+$id from t"
 "create view $view as select id, $id2 from t"
@@ -20062,6 +20126,7 @@ SELECT * FROM t1 LEFT JOIN t2 ON ( t2.a < 10 OR t2.b < 10 )"
 "set debug='d,bug19656296'"
 "SET debug= DEFAULT"
 "set sql_mode='traditional'"
+"set sql_mode='traditional'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "SELECT a FROM t1 WHERE a IN(1, (SELECT IF(1=0,1,2/0)))"
 "INSERT INTO t1 VALUES(2),(3)"
 "CREATE TABLE t1( a INT )"
@@ -20079,6 +20144,7 @@ return 2;
 end"
 "show status like 'Com_insert'"
 "drop function f1"
+"drop function f1","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "drop function f2"
 "CREATE TABLE t1(c1 BINARY(10), c2 BINARY(10), c3 BINARY(10),
 PRIMARY KEY(c1,c2,c3))"
@@ -20357,23 +20423,27 @@ NOW() + INTERVAL 1 SECOND ON COMPLETION NOT PRESERVE DO SELECT 1"
 "create event e_55 on schedule at 20000101000000 do drop table t"
 "show events"
 "set global event_scheduler= on"
+"set global event_scheduler= on","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "set @old_sql_mode:=@@sql_mode"
 "set sql_mode=ansi"
-"select get_lock('test_bug16407', 60)"
+"select get_lock('test_bug16407', 60)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "create event e_16407 on schedule every 60 second do
 begin
 select get_lock('test_bug16407', 60);
-end"
+end","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "select /*1*/ user, host, db, info from information_schema.processlist
-where state = 'User lock' and info = 'select get_lock(\'test_bug16407\', 60)'"
-"select release_lock('test_bug16407')"
+where state = 'User lock' and info = 'select get_lock(\'test_bug16407\', 60)'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"select release_lock('test_bug16407')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"set global event_scheduler= off","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "set global event_scheduler= off"
+"select event_schema, event_name, sql_mode from information_schema.events order by event_schema, event_name","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "select event_schema, event_name, sql_mode from information_schema.events order by event_schema, event_name"
 "alter event e_16407 do select 1"
 "drop event e_16407"
 "set sql_mode=""ansi"""
-"select get_lock('ee_16407_2', 60)"
-"set global event_scheduler= 1"
+"select get_lock('ee_16407_2', 60)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"set global event_scheduler= 1","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"set sql_mode=""traditional""","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "set sql_mode=""traditional"""
 "create table events_smode_test(ev_name char(10), a date)"
 "create event ee_16407_2 on schedule every 60 second do
@@ -20406,7 +20476,7 @@ where state = 'User lock' and info = 'select get_lock(\'ee_16407_2\', 60)'"
 "drop event ee_16407_4"
 "delete from events_test.events_smode_test"
 "set sql_mode='ansi'"
-"select get_lock('ee_16407_5', 60)"
+"select get_lock('ee_16407_5', 60)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "create procedure ee_16407_5_pendant() begin insert into events_test.events_smode_test values('ee_16407_5','2001-02-29'); end"
 "create procedure ee_16407_6_pendant() begin insert into events_test.events_smode_test values('ee_16407_6','2004-02-29'); end"
 "create event ee_16407_5 on schedule every 60 second do
@@ -20435,6 +20505,7 @@ where state = 'User lock' and info = 'select get_lock(\'ee_16407_5\', 60)'"
 "delete from mysql.user where User like 'mysqltest_%'"
 "delete from mysql.db where User like 'mysqltest_%'"
 "flush privileges"
+"flush privileges","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "create user mysqltest_user1@localhost"
 "create database mysqltest_db1"
 "grant event on events_test.* to mysqltest_user1@localhost"
@@ -20900,6 +20971,12 @@ ON COMPLETION PRESERVE
 ENABLE
 DO
 INSERT INTO s.modes VALUES (now(), @@SESSION.sql_mode, @@GLOBAL.sql_mode)"
+"CREATE EVENT s.ev
+ON SCHEDULE EVERY 1 SECOND
+ON COMPLETION PRESERVE
+ENABLE
+DO
+INSERT INTO s.modes VALUES (now(), @@SESSION.sql_mode, @@GLOBAL.sql_mode)",ANSI_QUOTES
 "SELECT data
 FROM performance_schema.error_log
 WHERE error_code=@err_code
@@ -20912,14 +20989,15 @@ AND logged>@pfs_errlog_latest
 LIMIT 3"
 "SET @@GLOBAL.sql_mode = 'ANSI_QUOTES'"
 "TRUNCATE s.modes"
+"TRUNCATE s.modes",ANSI_QUOTES
 "DROP EVENT s.ev"
 "SET @@SESSION.sql_mode = 'ANSI_QUOTES'"
 "SELECT data
 FROM performance_schema.error_log
 WHERE error_code=@err_code
-ORDER BY logged DESC LIMIT 1"
-"SET @@GLOBAL.sql_mode = DEFAULT"
-"SET @@global.debug=""-d,log_event_query_string"""
+ORDER BY logged DESC LIMIT 1",ANSI_QUOTES
+"SET @@GLOBAL.sql_mode = DEFAULT",ANSI_QUOTES
+"SET @@global.debug=""-d,log_event_query_string""",ANSI_QUOTES
 "CREATE DATABASE events_conn1_test2"
 "CREATE TABLE events_test.fill_it1(test_name varchar(20), occur datetime)"
 "CREATE TABLE events_test.fill_it2(test_name varchar(20), occur datetime)"
@@ -23237,6 +23315,7 @@ SELECT * FROM t2"
 "DROP USER user6@localhost"
 "DROP USER user7@localhost"
 "DROP PROCEDURE p3"
+"DROP PROCEDURE p3","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "DROP DATABASE wl8910db"
 "CREATE TABLE t1 (
 id INT NOT NULL AUTO_INCREMENT PRIMARY KEY
@@ -25064,6 +25143,7 @@ dt2 DATETIME(6))"
 "EXPLAIN SELECT * FROM (SELECT UNCOMPRESSED_LENGTH(c1) FROM t1) AS s"
 "SELECT UNCOMPRESS( CAST( 0 AS BINARY(5) ) )"
 "DROP PROCEDURE IF EXISTS p1"
+"DROP PROCEDURE IF EXISTS p1","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE TABLE t1 ( number INT NOT NULL, alpha CHAR(6) NOT NULL )"
 "INSERT INTO t1 VALUES (1413006,'idlfmv'),
 (1413065,'smpsfz'),(1413127,'sljrhx'),(1413304,'qerfnd')"
@@ -25722,8 +25802,11 @@ IS NULL"
 "SELECT statement_digest( ""LOCK TABLE t1 READ"" ) IS NULL"
 "SET sql_mode = 'PIPES_AS_CONCAT'"
 "SELECT statement_digest( "" CREATE ALGORITHM = MERGE VIEW v1 AS "" ||
-""SELECT a FROM ( SELECT a1 FROM v2 ) AS SELECT1"" )"
+""SELECT a FROM ( SELECT a1 FROM v2 ) AS SELECT1"" )",PIPES_AS_CONCAT
+"SET sql_mode = DEFAULT",PIPES_AS_CONCAT
+"SET sql_mode = DEFAULT",NO_BACKSLASH_ESCAPES
 "SET sql_mode = DEFAULT"
+"SET sql_mode = DEFAULT","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "TRUNCATE TABLE performance_schema.events_statements_summary_by_digest"
 "SELECT DIGEST_TEXT
 FROM performance_schema.events_statements_summary_by_digest
@@ -27447,7 +27530,7 @@ _utf8mb4'abc' LIKE _utf8mb4'a\\bc' ESCAPE _utf8mb4'' AS col2,
 _latin1'abc' LIKE _latin1'a\\bc' ESCAPE _ascii'' AS col3"
 "SET sql_mode = CONCAT(@@sql_mode, ',NO_BACKSLASH_ESCAPES')"
 "SELECT _latin1'a\bc' LIKE _latin1'a\%' AS col1,
-_utf8mb4'a\bc' LIKE _utf8mb4'a\%' AS col2"
+_utf8mb4'a\bc' LIKE _utf8mb4'a\%' AS col2",NO_BACKSLASH_ESCAPES
 "CREATE TABLE t1(c1 VARCHAR(20) NOT NULL)"
 "INSERT INTO t1 VALUES ('100'), ('abc\\d')"
 "SELECT * FROM t1 WHERE c1 LIKE c1"
@@ -28008,6 +28091,7 @@ VALUES ('1.2.3.4', '1.2.3.4', '1.2.3.4', '1.2.3.4')"
 start_ts DATETIME, end_ts DATETIME,
 start_cached INTEGER, end_cached INTEGER)"
 "CREATE TABLE t1 (f1 BIGINT)"
+"CREATE TABLE t1 (f1 BIGINT)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "SELECT @aux1 AS ""Expect 1"""
 "DROP TEMPORARY TABLE t_history"
 "create table t1 select INET_ATON('255.255.0.1') as `a`"
@@ -29918,6 +30002,7 @@ GROUP BY field1 WITH ROLLUP
 "SELECT _utf8mb4 'ss' = _utf8mb3 'ß' AS c"
 "SELECT _utf8mb3 'ß' = _utf8mb4 'ss' AS c"
 "SET @@sql_mode=''"
+"SET @@sql_mode=''","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "DO SPACE(SHA(UUID_SHORT()))"
 "SET @@sql_mode = default"
 "CREATE TABLE t1 (
@@ -31590,6 +31675,7 @@ DROP TABLE t1, t2, t3;
 end
 "
 "call p1()"
+"call p1()","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE TABLE t(f1 INT)"
 "PREPARE stmt1 FROM 'CREATE TABLE t1(f1 INT, f2 INT)'"
 "PREPARE stmt2 FROM 'CREATE TABLE t2 AS SELECT * FROM t'"
@@ -34752,6 +34838,7 @@ SPATIAL KEY coord (geom)
 "set sql_mode=ansi_quotes"
 "set sql_quote_show_create=0"
 "set sql_mode=""ansi_quotes"""
+"set sql_quote_show_create=1",ANSI_QUOTES
 "set sql_quote_show_create=1"
 "revoke all privileges, grant option from drop_user@localhost"
 "show grants for drop_user@localhost"
@@ -34856,6 +34943,7 @@ drop_user4@localhost"
 "create table mysqltest_2.t1 select 1 c, 2 s"
 "create table mysqltest_2.t2 select 1 d, 2 t"
 "create user mysqltest_3@localhost"
+"create user mysqltest_3@localhost","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "grant update (a) on mysqltest_1.t1 to mysqltest_3@localhost"
 "grant select (b) on mysqltest_1.t2 to mysqltest_3@localhost"
 "grant select (c) on mysqltest_2.t1 to mysqltest_3@localhost"
@@ -35680,6 +35768,7 @@ END"
 "grant all privileges on `my\_1`.* to mysqltest_1@localhost with grant option"
 "grant create user on *.* to mysqltest_1@localhost"
 "create user mysqltest_2@localhost"
+"create user mysqltest_2@localhost","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "grant select on `my\_1`.* to mysqltest_2@localhost"
 "grant update on mysql.* to mysqltest_1@localhost"
 "grant select on `my\_1`.* to mysqltest_3@localhost"
@@ -35713,54 +35802,56 @@ mysqltest_5@host5, mysqltest_6@host6, mysqltest_7@host7"
 "delete from mysql.user where user like 'mysqltest\_1'"
 "delete from mysql.db where user like 'mysqltest\_1'"
 "set sql_mode='ANSI'"
+"create table t1(c1 int)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "create table t1(c1 int)"
-"create table t2(c1 int, c2 int)"
-"create user 'mysqltest_1'"
-"create user 'mysqltest_2' identified by 'Mysqltest-2'"
-"grant select on *.* to 'mysqltest_2'"
-"grant insert on test.* to 'mysqltest_2'"
-"grant update on test.t1 to 'mysqltest_2'"
-"grant update (c2) on test.t2 to 'mysqltest_2'"
-"select host,user,length(authentication_string) from mysql.user where user like 'mysqltest_%' order by host,user,authentication_string"
-"select host,db,user from mysql.db where user like 'mysqltest_%' order by host,db,user"
-"select host,db,user,table_name from mysql.tables_priv where user like 'mysqltest_%' order by host,db,user,table_name"
-"select host,db,user,table_name,column_name from mysql.columns_priv where user like 'mysqltest_%' order by host,db,user,table_name,column_name"
-"show grants for 'mysqltest_1'"
-"show grants for 'mysqltest_2'"
-"drop user 'mysqltest_1'"
-"rename user 'mysqltest_2' to 'mysqltest_1'"
-"insert into mysql.db set user='mysqltest_1', db='%', host='%'"
-"select host,db,user from mysql.db where user = 'mysqltest_1' order by host,db,user"
-"insert into mysql.tables_priv set host='%', db='test', user='mysqltest_1', table_name='t1'"
-"select host,db,user,table_name from mysql.tables_priv where user = 'mysqltest_1' order by host,db,user,table_name"
-"insert into mysql.columns_priv set host='%', db='test', user='mysqltest_1', table_name='t1', column_name='c1'"
-"select host,db,user,table_name,column_name from mysql.columns_priv where user = 'mysqltest_1' order by host,db,user,table_name,column_name"
-"create user 'mysqltest_1', 'mysqltest_2', 'mysqltest_3'"
-"drop user 'mysqltest_1', 'mysqltest_2', 'mysqltest_3'"
-"create user 'mysqltest_1', 'mysqltest_2' identified by 'Mysqltest-2', 'mysqltest_3' identified by 'haha'"
-"rename user 'mysqltest_1' to 'mysqltest_1a', 'mysqltest_2' TO 'mysqltest_2a', 'mysqltest_3' TO 'mysqltest_3a'"
-"drop user 'mysqltest_1a', 'mysqltest_2a', 'mysqltest_3a'"
-"create user 'mysqltest_1a', 'mysqltest_3a'"
-"drop user 'mysqltest_1a', 'mysqltest_3a'"
-"drop user 'mysqltest_2'"
-"create user '%@b'@'b'"
-"show grants for '%@b'@'b'"
-"grant select on mysql.* to '%@b'@'b'"
-"rename user '%@b'@'b' to '%@a'@'a'"
-"show grants for '%@a'@'a'"
-"drop user '%@a'@'a'"
-"grant create user on *.* to mysqltest_2@localhost"
+"create table t2(c1 int, c2 int)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"create user 'mysqltest_1'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"create user 'mysqltest_2' identified by 'Mysqltest-2'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"grant select on *.* to 'mysqltest_2'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"grant insert on test.* to 'mysqltest_2'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"grant update on test.t1 to 'mysqltest_2'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"grant update (c2) on test.t2 to 'mysqltest_2'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"select host,user,length(authentication_string) from mysql.user where user like 'mysqltest_%' order by host,user,authentication_string","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"select host,db,user from mysql.db where user like 'mysqltest_%' order by host,db,user","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"select host,db,user,table_name from mysql.tables_priv where user like 'mysqltest_%' order by host,db,user,table_name","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"select host,db,user,table_name,column_name from mysql.columns_priv where user like 'mysqltest_%' order by host,db,user,table_name,column_name","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"show grants for 'mysqltest_1'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"show grants for 'mysqltest_2'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"drop user 'mysqltest_1'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"rename user 'mysqltest_2' to 'mysqltest_1'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"insert into mysql.db set user='mysqltest_1', db='%', host='%'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"select host,db,user from mysql.db where user = 'mysqltest_1' order by host,db,user","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"insert into mysql.tables_priv set host='%', db='test', user='mysqltest_1', table_name='t1'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"select host,db,user,table_name from mysql.tables_priv where user = 'mysqltest_1' order by host,db,user,table_name","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"insert into mysql.columns_priv set host='%', db='test', user='mysqltest_1', table_name='t1', column_name='c1'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"select host,db,user,table_name,column_name from mysql.columns_priv where user = 'mysqltest_1' order by host,db,user,table_name,column_name","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"create user 'mysqltest_1', 'mysqltest_2', 'mysqltest_3'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"drop user 'mysqltest_1', 'mysqltest_2', 'mysqltest_3'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"create user 'mysqltest_1', 'mysqltest_2' identified by 'Mysqltest-2', 'mysqltest_3' identified by 'haha'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"rename user 'mysqltest_1' to 'mysqltest_1a', 'mysqltest_2' TO 'mysqltest_2a', 'mysqltest_3' TO 'mysqltest_3a'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"drop user 'mysqltest_1a', 'mysqltest_2a', 'mysqltest_3a'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"create user 'mysqltest_1a', 'mysqltest_3a'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"drop user 'mysqltest_1a', 'mysqltest_3a'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"drop user 'mysqltest_2'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"create user '%@b'@'b'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"show grants for '%@b'@'b'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"grant select on mysql.* to '%@b'@'b'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"rename user '%@b'@'b' to '%@a'@'a'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"show grants for '%@a'@'a'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"drop user '%@a'@'a'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"grant create user on *.* to mysqltest_2@localhost","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "create user mysqltest_A@'%'"
 "rename user mysqltest_A@'%' to mysqltest_B@'%'"
 "drop user mysqltest_B@'%'"
+"drop user mysqltest_2@localhost","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "drop user mysqltest_2@localhost"
-"grant INSERT,DELETE,UPDATE on mysql.* to mysqltest_3@localhost"
+"grant INSERT,DELETE,UPDATE on mysql.* to mysqltest_3@localhost","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "show grants"
 "insert ignore into mysql.user set host='%', user='mysqltest_B'"
 "rename user mysqltest_B@'%' to mysqltest_C@'%'"
 "drop user mysqltest_C@'%'"
 "drop user mysqltest_A@'%'"
-"drop user mysqltest_3@localhost"
+"drop user mysqltest_3@localhost","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "create user mysqltest_1@'127.0.0.0/255.0.0.0'"
 "create table mysqltest_1.t1 (i int)"
 "insert into mysqltest_1.t1 values (1),(2),(3)"
@@ -35820,6 +35911,7 @@ BEGIN DECLARE v INT; SELECT s1 FROM t2 INTO v; RETURN v; END"
 "DROP TABLE db1.t1, db1.t2"
 "DROP USER mysqltest1@localhost"
 "USE mysql"
+"USE mysql","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "SELECT LEFT(CURRENT_USER(),INSTR(CURRENT_USER(),'@')-1) INTO @u"
 "SELECT MID(CURRENT_USER(),INSTR(CURRENT_USER(),'@')+1)  INTO @h"
 "SELECT authentication_string FROM user WHERE user=@u AND host=@h INTO @pwd"
@@ -37896,10 +37988,13 @@ FROM t1 LEFT JOIN t2 ON t1.id=t2.id GROUP BY comment"
 "select sql_buffer_result max(f1) is null from t1"
 "select sql_buffer_result max(f1)+1 from t1"
 "SELECT a FROM t1 GROUP BY 'a'"
+"SELECT a FROM t1 GROUP BY 'a'",ANSI_QUOTES
 "SELECT a FROM t1 GROUP BY ""a"""
+"SELECT a FROM t1 GROUP BY ""a""",ANSI_QUOTES
 "SELECT a FROM t1 GROUP BY `a`"
+"SELECT a FROM t1 GROUP BY `a`",ANSI_QUOTES
 "set sql_mode=ANSI_QUOTES"
-"set sql_mode=DEFAULT"
+"set sql_mode=DEFAULT",ANSI_QUOTES
 "SELECT a FROM t1 HAVING 'a' > 1"
 "SELECT a FROM t1 HAVING ""a"" > 1"
 "SELECT a FROM t1 HAVING `a` > 1"
@@ -37970,6 +38065,7 @@ FROM t1 AS t1_outer GROUP BY t1_outer.b"
 "SELECT (SELECT SUM(t1_inner.a) FROM t1 AS t1_inner GROUP BY t1_inner.b LIMIT 1)
 FROM t1 AS t1_outer"
 "SET SQL_MODE = ''"
+"SET SQL_MODE = ''",ANSI_QUOTES
 "SELECT 1 FROM t1 as t1_outer
 WHERE (SELECT t1_outer.b FROM t1 AS t1_inner GROUP BY t1_inner.b LIMIT 1)"
 "SELECT b FROM t1 GROUP BY b HAVING CEILING(b) > 0"
@@ -44238,6 +44334,7 @@ where table_name='v1' or table_name='v2'"
 "select concat(@a, table_name), @a, table_name
 from information_schema.tables where table_schema = 'test' order by table_name"
 "DROP FUNCTION IF EXISTS f1"
+"DROP FUNCTION IF EXISTS f1","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE PROCEDURE p1() SET @a= 1"
 "CREATE FUNCTION f1() RETURNS INT RETURN @a + 1"
 "CREATE USER mysql_bug20230@localhost"
@@ -48129,6 +48226,7 @@ select @a:= A.a + 10*(B.a + 10*C.a), @a, 'filler' from t1 A, t1 B, t1 C"
 "SELECT * FROM t1 JOIN t2 ON b=c ORDER BY a"
 "SELECT * FROM t1 JOIN t2 ON a=c ORDER BY a"
 "DROP TABLE IF EXISTS t1,t2"
+"DROP TABLE IF EXISTS t1,t2","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE TABLE t3 (a INT, INDEX (a))"
 "CREATE TABLE t4 (a INT)"
 "CREATE TABLE t5 (a INT)"
@@ -51803,6 +51901,7 @@ END WHILE source_heartbeat_period;
 
 END"
 "call p2()"
+"call p2()","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "DROP TABLE IF EXISTS t1, t2, t3"
 "DROP FUNCTION IF EXISTS MY_KILL"
 "CREATE FUNCTION MY_KILL(tid INT) RETURNS INT
@@ -52926,14 +53025,19 @@ LINES TERMINATED BY '\n' (c1, c2)"
 "SET @OLD_SQL_MODE=@@SESSION.SQL_MODE"
 "CREATE TABLE t1 (id INT, val1 CHAR(3))"
 "SET sql_mode = 'NO_BACKSLASH_ESCAPES'"
+"INSERT INTO t1 (id, val1) VALUES (1, '\aa')",NO_BACKSLASH_ESCAPES
 "INSERT INTO t1 (id, val1) VALUES (1, '\aa')"
 "CREATE TABLE t1 (id INT PRIMARY KEY, val1 CHAR(4))"
 "INSERT INTO t1 (id, val1) VALUES (5, '\ttab')"
 "INSERT INTO t1 (id, val1) VALUES (4, '\\r')"
-"INSERT INTO t1 (id, val1) VALUES (3, '\tx')"
+"INSERT INTO t1 (id, val1) VALUES (3, '\tx')",NO_BACKSLASH_ESCAPES
+"SELECT 'before' AS t, id, val1, hex(val1) FROM t1 UNION
+SELECT 'after' AS t, id, val1, hex(val1) FROM t2 ORDER BY id,t DESC",NO_BACKSLASH_ESCAPES
 "SELECT 'before' AS t, id, val1, hex(val1) FROM t1 UNION
 SELECT 'after' AS t, id, val1, hex(val1) FROM t2 ORDER BY id,t DESC"
+"TRUNCATE t2",NO_BACKSLASH_ESCAPES
 "TRUNCATE t2"
+"set session sql_mode=@OLD_SQL_MODE",NO_BACKSLASH_ESCAPES
 "set session sql_mode=@OLD_SQL_MODE"
 "select load_file(0x0A9FB76C661B409C4BEC88098C5DD71B1072F9691F2E827D7EC8F092B299868A3CE196C04F0FB18CAB4E1557EB72331D812379DE7A75CA21C32E7C722C59E5CC33EF262EF04187B0F0EE756FA984DF2EAD37B1E4ADB064C3C5038F2E3B2D661B1C1150AAEB5425512E14D7506166D92D4533872E662F4B2D1428AAB5CCA72E75AA2EF325E196A5A02E2E8278873C64375845994B0F39BE2FF7B478332A7B0AA5E48877C47B6F513E997848AF8CCB8A899F3393AB35333CF0871E36698193862D486B4B9078B70C0A0A507B8A250F3F876F5A067632D5E65193E4445A1EC3A2C9B4C6F07AC334F0F62BC33357CB502E9B1C19D2398B6972AEC2EF21630F8C9134C4F7DD662D8AD7BDC9E19C46720F334B66C22D4BF32ED275144E20E7669FFCF6FC143667C9F02A577F32960FA9F2371BE1FA90E49CBC69C01531F140556854D588DD0E55E1307D78CA38E975CD999F9AEA604266329EE62BFB5ADDA67F549E211ECFBA906C60063696352ABB82AA782D25B17E872EA587871F450446DB1BAE0123D20404A8F2D2698B371002E986C8FCB969A99FF0E150A2709E2ED7633D02ADA87D5B3C9487D27B2BD9D21E2EC3215DCC3CDCD884371281B95A2E9987AAF82EB499C058D9C3E7DC1B66635F60DB121C72F929622DD47B6B2E69F59FF2AE6B63CC2EC60FFBA20EA50569DBAB5DAEFAEB4F03966C9637AB55662EDD28439155A82D053A5299448EDB2E7BEB0F62889E2F84E6C7F34B3212C9AAC32D521D5AB8480993F1906D5450FAB342A0FA6ED223E178BAC036B81E15783604C32A961EA1EF20BE2EBB93D34ED37BC03142B7583303E4557E48551E4BD7CBDDEA146D5485A5D212C35189F0BD6497E66912D2780A59A53B532E12C0A5ED1EC0445D96E8F2DD825221CFE4A65A87AA21DC8750481B9849DD81694C3357A0ED9B78D608D8EDDE28FAFBEC17844DE5709F41E121838DB55639D77E32A259A416D7013B2EB1259FDE1B498CBB9CAEE1D601DF3C915EA91C69B44E6B72062F5F4B3C73F06F2D5AD185E1692E2E0A01E7DD5133693681C52EE13B2BE42D03BDCF48E4E133CF06662339B778E1C3034F9939A433E157449172F7969ACCE1F5D2F65A4E09E4A5D5611EBEDDDBDB0C0C0A)"
 "SET character_set_filesystem=binary"
@@ -58829,7 +58933,7 @@ ST_AsText(g) FROM t1"
 `pho""\ne` VARCHAR(15),
 ""created'_'at"" TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 ""updated'_'at"" TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-)"
+)",ANSI_QUOTES
 "CREATE TABLE ""prod'ucts"" (
 ""product`_`id"" INT AUTO_INCREMENT PRIMARY KEY,
 ""product'_`name"" VARCHAR(100) NOT NULL,
@@ -58839,7 +58943,7 @@ ST_AsText(g) FROM t1"
 `created'_'at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 `updated""_'at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 INDEX (""product'_`name"")
-)"
+)",ANSI_QUOTES
 "CREATE TABLE ""orders"" (
 ""order_id"" INT AUTO_INCREMENT PRIMARY KEY,
 ""customer_id"" INT NOT NULL,
@@ -58848,7 +58952,7 @@ INDEX (""product'_`name"")
 ""total\n"" DECIMAL(10, 2) NOT NULL CHECK (""total\n"" >= 0),
 FOREIGN KEY (customer_id) REFERENCES ""custo`mers""(""customer'_id"") ON DELETE CASCADE,
 INDEX (order_date)
-)"
+)",ANSI_QUOTES
 "CREATE TABLE `'order'_'items'` (
 `order'_'item_id` INT AUTO_INCREMENT PRIMARY KEY,
 `'order'_'id'` INT NOT NULL,
@@ -58858,8 +58962,8 @@ INDEX (order_date)
 FOREIGN KEY (`'order'_'id'`) REFERENCES ""orders""(order_id) ON DELETE CASCADE,
 FOREIGN KEY (`product'_'id`) REFERENCES ""prod'ucts""(""product`_`id"") ON DELETE CASCADE,
 UNIQUE KEY (`'order'_'id'`, `product'_'id`)
-)"
-"SET @@sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'"
+)",ANSI_QUOTES
+"SET @@sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'",ANSI_QUOTES
 "DROP DATABASE bug37607195"
 "SET @OLD_CONCURRENT_INSERT = @@GLOBAL.CONCURRENT_INSERT"
 "SET @@GLOBAL.CONCURRENT_INSERT = 0"
@@ -58876,10 +58980,12 @@ UNIQUE KEY (`'order'_'id'`, `product'_'id`)
 "INSERT IGNORE INTO t1 VALUES ('-9e999999')"
 "CREATE TABLE t1 (a DECIMAL(10,5), b FLOAT)"
 "INSERT INTO t1 VALUES (1.2345, 2.3456)"
+"INSERT INTO t1 VALUES (1.2345, 2.3456)",ANSI_QUOTES
 "INSERT INTO t1 VALUES ('1.2345', 2.3456)"
+"INSERT INTO t1 VALUES ('1.2345', 2.3456)",ANSI_QUOTES
 "INSERT INTO t1 VALUES (""1.2345"", 2.3456)"
 "SET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='ANSI_QUOTES'"
-"SET SQL_MODE=@OLD_SQL_MODE"
+"SET SQL_MODE=@OLD_SQL_MODE",ANSI_QUOTES
 "CREATE TABLE t1(a int, b text, c varchar(3))"
 "INSERT INTO t1 VALUES (1, ""test"", ""tes""), (2, ""TEST"", ""TES"")"
 "CREATE TABLE t1 (`a""b""` char(2))"
@@ -59350,7 +59456,7 @@ end "
 BEGIN
 select sum(id) from t1 into a;
 END "
-"create procedure `a'b` () select 1"
+"create procedure `a'b` () select 1","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "DROP FUNCTION bug9056_func1"
 "DROP FUNCTION bug9056_func2"
 "DROP PROCEDURE bug9056_proc1"
@@ -59393,8 +59499,8 @@ INSERT INTO `t2 test` SET a2 = NEW.a1; END  "
 FOR EACH ROW
 BEGIN
 SET new.a = 0;
-END"
-"SET SQL_MODE = @old_sql_mode"
+END",IGNORE_SPACE
+"SET SQL_MODE = @old_sql_mode",IGNORE_SPACE
 "DROP TRIGGER tr1"
 "create table t1 (a binary(1), b blob)"
 "insert into t1 values ('','')"
@@ -61591,12 +61697,14 @@ INDEX idx1(f2, f3), INDEX idx2(f3)
 "SELECT /*+ BKA(` quoted name тест`@`select#1`) */ 1 FROM t1"
 "DROP TABLE ` quoted name тест`"
 "SET SQL_MODE = 'ANSI_QUOTES'"
-"CREATE TABLE "" quoted name тест"" (i INT)"
+"SET SQL_MODE = 'ANSI_QUOTES'",IGNORE_SPACE
+"CREATE TABLE "" quoted name тест"" (i INT)",ANSI_QUOTES
+"SELECT /*+ BKA("" quoted name тест"") */ 1 FROM t1",ANSI_QUOTES
 "SELECT /*+ BKA("" quoted name тест"") */ 1 FROM t1"
-"SELECT /*+ BKA("" quoted name тест""@""select#1"") */ 1 FROM t1"
-"CREATE TABLE `test1``test2``` (i INT)"
-"SELECT /*+ BKA(`test1``test2```) */ 1"
-"SELECT /*+ BKA(""test1""""test2"""""") */ 1"
+"SELECT /*+ BKA("" quoted name тест""@""select#1"") */ 1 FROM t1",ANSI_QUOTES
+"CREATE TABLE `test1``test2``` (i INT)",ANSI_QUOTES
+"SELECT /*+ BKA(`test1``test2```) */ 1",ANSI_QUOTES
+"SELECT /*+ BKA(""test1""""test2"""""") */ 1",ANSI_QUOTES
 "DROP TABLE `test1``test2```"
 "EXPLAIN SELECT /*+ QB_NAME(`*`) */ 1"
 "EXPLAIN SELECT /*+ QB_NAME(`a*`) */ 1"
@@ -63531,8 +63639,11 @@ FROM t3"
 "DROP TABLE t3, t4"
 "set SQL_MODE=''"
 "create table ADDDATE(a int)"
+"create table ADDDATE(a int)",IGNORE_SPACE
 "drop table ADDDATE"
+"drop table ADDDATE",IGNORE_SPACE
 "create table ADDDATE (a int)"
+"create table ADDDATE (a int)",IGNORE_SPACE
 "create table BIT_AND (a int)"
 "drop table BIT_AND"
 "create table BIT_OR (a int)"
@@ -63556,8 +63667,11 @@ FROM t3"
 "create table GROUP_CONCAT (a int)"
 "drop table GROUP_CONCAT"
 "create table GROUP_UNIQUE_USERS(a int)"
+"create table GROUP_UNIQUE_USERS(a int)",IGNORE_SPACE
 "drop table GROUP_UNIQUE_USERS"
+"drop table GROUP_UNIQUE_USERS",IGNORE_SPACE
 "create table GROUP_UNIQUE_USERS (a int)"
+"create table GROUP_UNIQUE_USERS (a int)",IGNORE_SPACE
 "create table MAX (a int)"
 "drop table MAX"
 "create table MID (a int)"
@@ -63569,8 +63683,11 @@ FROM t3"
 "create table POSITION (a int)"
 "drop table POSITION"
 "create table SESSION_USER(a int)"
+"create table SESSION_USER(a int)",IGNORE_SPACE
 "drop table SESSION_USER"
+"drop table SESSION_USER",IGNORE_SPACE
 "create table SESSION_USER (a int)"
+"create table SESSION_USER (a int)",IGNORE_SPACE
 "create table STD (a int)"
 "drop table STD"
 "create table STDDEV (a int)"
@@ -63580,8 +63697,11 @@ FROM t3"
 "create table STDDEV_SAMP (a int)"
 "drop table STDDEV_SAMP"
 "create table SUBDATE(a int)"
+"create table SUBDATE(a int)",IGNORE_SPACE
 "drop table SUBDATE"
+"drop table SUBDATE",IGNORE_SPACE
 "create table SUBDATE (a int)"
+"create table SUBDATE (a int)",IGNORE_SPACE
 "create table SUBSTR (a int)"
 "drop table SUBSTR"
 "create table SUBSTRING (a int)"
@@ -63591,13 +63711,19 @@ FROM t3"
 "create table SYSDATE (a int)"
 "drop table SYSDATE"
 "create table SYSTEM_USER(a int)"
+"create table SYSTEM_USER(a int)",IGNORE_SPACE
 "drop table SYSTEM_USER"
+"drop table SYSTEM_USER",IGNORE_SPACE
 "create table SYSTEM_USER (a int)"
+"create table SYSTEM_USER (a int)",IGNORE_SPACE
 "create table TRIM (a int)"
 "drop table TRIM"
 "create table UNIQUE_USERS(a int)"
+"create table UNIQUE_USERS(a int)",IGNORE_SPACE
 "drop table UNIQUE_USERS"
+"drop table UNIQUE_USERS",IGNORE_SPACE
 "create table UNIQUE_USERS (a int)"
+"create table UNIQUE_USERS (a int)",IGNORE_SPACE
 "create table VARIANCE (a int)"
 "drop table VARIANCE"
 "create table VAR_POP (a int)"
@@ -63605,17 +63731,21 @@ FROM t3"
 "create table VAR_SAMP (a int)"
 "drop table VAR_SAMP"
 "set SQL_MODE='IGNORE_SPACE'"
+"CREATE TABLE t1 (i INT KEY)",IGNORE_SPACE
 "CREATE TABLE t1 (i INT KEY)"
-"CREATE TABLE t2 (i INT UNIQUE)"
-"CREATE TABLE t3 (i INT UNIQUE KEY)"
-"DROP TABLE IF EXISTS table_25930_a"
-"DROP TABLE IF EXISTS table_25930_b"
-"CREATE TABLE table_25930_a ( ""blah"" INT )"
-"CREATE TABLE table_25930_b SELECT ""blah"" - 1 FROM table_25930_a"
-"desc table_25930_b"
-"DROP TABLE table_25930_a"
-"DROP TABLE table_25930_b"
+"CREATE TABLE t2 (i INT UNIQUE)",IGNORE_SPACE
+"CREATE TABLE t3 (i INT UNIQUE KEY)",IGNORE_SPACE
+"DROP TABLE IF EXISTS table_25930_a",IGNORE_SPACE
+"DROP TABLE IF EXISTS table_25930_b",IGNORE_SPACE
+"CREATE TABLE table_25930_a ( ""blah"" INT )",ANSI_QUOTES
+"CREATE TABLE table_25930_b SELECT ""blah"" - 1 FROM table_25930_a",ANSI_QUOTES
+"desc table_25930_b",ANSI_QUOTES
+"DROP TABLE table_25930_a",ANSI_QUOTES
+"DROP TABLE table_25930_b",ANSI_QUOTES
+"SET @@sql_mode=@save_sql_mode",ANSI_QUOTES
+"SET @@sql_mode=@save_sql_mode",IGNORE_SPACE
 "SET @@sql_mode=@save_sql_mode"
+"SET @@sql_mode=@save_sql_mode",PIPES_AS_CONCAT
 "DROP PROCEDURE IF EXISTS p26030"
 "select ""non terminated"""
 "select ""terminated"";"
@@ -64030,7 +64160,7 @@ o INT
 "ROLLBACK AND NO CHAIN NO RELEASE"
 "CREATE TABLE t1 (a INT PRIMARY KEY) PARTITION BY HASH (a) PARTITIONS 1"
 "SET sql_mode='IGNORE_SPACE'"
-"SHOW COLUMNS FROM t1 WHERE FIELD='a'"
+"SHOW COLUMNS FROM t1 WHERE FIELD='a'",IGNORE_SPACE
 "CREATE TEMPORARY TABLE admin (admin INT)"
 "DROP TABLE admin"
 "SELECT @@default_collation_for_utf8mb4"
@@ -64094,20 +64224,20 @@ END"
 ORDER BY b DESC LIMIT 2)
 ORDER BY c LIMIT 1"
 "SET sql_mode=(SELECT CONCAT(@@sql_mode, ',PIPES_AS_CONCAT'))"
-"SELECT 'ab' LIKE 'a%', 'ab' LIKE 'a' || '%'"
-"SELECT 'ab' NOT LIKE 'a%', 'ab' NOT LIKE 'a' || '%'"
-"SELECT 'ab' LIKE 'ac', 'ab' LIKE 'a' || 'c'"
-"SELECT 'ab' NOT LIKE 'ac', 'ab' NOT LIKE 'a' || 'c'"
-"SELECT 'a%' LIKE 'a!%' ESCAPE '!', 'a%' LIKE 'a!' || '%' ESCAPE '!'"
-"SELECT 'a%' NOT LIKE 'a!%' ESCAPE '!', 'a%' NOT LIKE 'a!' || '%' ESCAPE '!'"
-"SELECT 'a%' LIKE 'a!%' ESCAPE '$', 'a%' LIKE 'a!' || '%' ESCAPE '$'"
-"SELECT 'a%' NOT LIKE 'a!%' ESCAPE '$', 'a%' NOT LIKE 'a!' || '%' ESCAPE '$'"
-"SELECT 'a%' LIKE 'a!%' ESCAPE '!', 'a%' LIKE 'a!%' ESCAPE '' || '!'"
-"SELECT 'a%' NOT LIKE 'a!%' ESCAPE '!', 'a%' NOT LIKE 'a!%' ESCAPE '' || '!'"
-"SELECT 'a%' LIKE 'a!%' ESCAPE '' || '$', 'a%' LIKE 'a!%' ESCAPE '' || '$'"
-"SELECT 'a%' NOT LIKE 'a!%' ESCAPE '' || '$', 'a%' NOT LIKE 'a!%' ESCAPE '' || '$'"
-"SELECT 1 ^ 100, 1 ^ '10' || '0'"
-"SELECT -1 || '0'"
+"SELECT 'ab' LIKE 'a%', 'ab' LIKE 'a' || '%'",PIPES_AS_CONCAT
+"SELECT 'ab' NOT LIKE 'a%', 'ab' NOT LIKE 'a' || '%'",PIPES_AS_CONCAT
+"SELECT 'ab' LIKE 'ac', 'ab' LIKE 'a' || 'c'",PIPES_AS_CONCAT
+"SELECT 'ab' NOT LIKE 'ac', 'ab' NOT LIKE 'a' || 'c'",PIPES_AS_CONCAT
+"SELECT 'a%' LIKE 'a!%' ESCAPE '!', 'a%' LIKE 'a!' || '%' ESCAPE '!'",PIPES_AS_CONCAT
+"SELECT 'a%' NOT LIKE 'a!%' ESCAPE '!', 'a%' NOT LIKE 'a!' || '%' ESCAPE '!'",PIPES_AS_CONCAT
+"SELECT 'a%' LIKE 'a!%' ESCAPE '$', 'a%' LIKE 'a!' || '%' ESCAPE '$'",PIPES_AS_CONCAT
+"SELECT 'a%' NOT LIKE 'a!%' ESCAPE '$', 'a%' NOT LIKE 'a!' || '%' ESCAPE '$'",PIPES_AS_CONCAT
+"SELECT 'a%' LIKE 'a!%' ESCAPE '!', 'a%' LIKE 'a!%' ESCAPE '' || '!'",PIPES_AS_CONCAT
+"SELECT 'a%' NOT LIKE 'a!%' ESCAPE '!', 'a%' NOT LIKE 'a!%' ESCAPE '' || '!'",PIPES_AS_CONCAT
+"SELECT 'a%' LIKE 'a!%' ESCAPE '' || '$', 'a%' LIKE 'a!%' ESCAPE '' || '$'",PIPES_AS_CONCAT
+"SELECT 'a%' NOT LIKE 'a!%' ESCAPE '' || '$', 'a%' NOT LIKE 'a!%' ESCAPE '' || '$'",PIPES_AS_CONCAT
+"SELECT 1 ^ 100, 1 ^ '10' || '0'",PIPES_AS_CONCAT
+"SELECT -1 || '0'",PIPES_AS_CONCAT
 "SELECT 1 UNION SELECT 1 INTO @var"
 "(SELECT 1 UNION SELECT 1 INTO @var)"
 "SELECT 1 UNION SELECT 1 FROM DUAL INTO @var"
@@ -64147,12 +64277,14 @@ ORDER BY c LIMIT 1"
 "DROP TABLE full"
 "CREATE TABLE `full`(i INT)"
 "SELECT * from `full`"
+"SELECT * from `full`",ANSI_QUOTES
 "SELECT * from `full` AS full"
 "SELECT * from `full` AS `full`"
 "SELECT * from full"
+"SELECT * from full",ANSI_QUOTES
 "SELECT * from full as full"
 "SELECT * from `full` full"
-"SELECT * from ""full"""
+"SELECT * from ""full""",ANSI_QUOTES
 "DROP TABLE `full`"
 "CREATE TABLE get_source_public_key(i INT)"
 "CREATE TABLE source_auto_position(i INT)"
@@ -65472,10 +65604,12 @@ PARTITION p1 VALUES LESS THAN MAXVALUE(
 SUBPARTITION s2,
 SUBPARTITION s3 tablespace=""innodb_file_per_table""
 )
-)"
+)",ANSI_QUOTES
+"SELECT partition_expression FROM information_schema.partitions
+WHERE table_schema = 'test' AND table_name = 't1'",ANSI_QUOTES
 "SELECT partition_expression FROM information_schema.partitions
 WHERE table_schema = 'test' AND table_name = 't1'"
-"SET @@SQL_MODE= DEFAULT"
+"SET @@SQL_MODE= DEFAULT",ANSI_QUOTES
 "SET @@SQL_QUOTE_SHOW_CREATE= 0"
 "SET @@SQL_QUOTE_SHOW_CREATE= 1"
 "SELECT 1 FROM t WHERE a = 0x8000000000000000"
@@ -66352,6 +66486,7 @@ PARTITION BY RANGE(YEAR(purchased))
 DATA DIRECTORY = '/tmp/not-existing'
 INDEX DIRECTORY = '/tmp/not-existing')"
 "SET @@sql_mode= @org_mode"
+"SET @@sql_mode= @org_mode",NO_BACKSLASH_ESCAPES
 "CREATE TABLE t1 (a INTEGER NOT NULL, PRIMARY KEY (a))"
 "CREATE TABLE t1 (a INTEGER NOT NULL, PRIMARY KEY (a))
 PARTITION BY KEY (a) PARTITIONS 2"
@@ -71878,6 +72013,7 @@ end"
 "select * from t1 order by 1"
 "prepare stmt from ""select * from t1 order by ?+1"""
 "set @a=0"
+"set @a=0","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "select * from t1 order by 1+1"
 "prepare stmt from ""repair table t1"""
 "prepare stmt from ""optimize table t1"""
@@ -71962,6 +72098,8 @@ WHERE t1.i = ?"""
 "insert into t1 values (3,1), (1,2), (2,3)"
 "prepare stmt from ""create view v1 as select * from t1"""
 "show create view v1"
+"show create view v1",ANSI_QUOTES
+"show create view v1","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "prepare stmt from ""create view v1 (c,d) as select a,b from t1"""
 "prepare stmt from ""create view v1 (c) as select b+1 from t1"""
 "prepare stmt from ""create view v1 (c,d,e,f) as select a,b,a in (select a+2 from t1), a = all (select a from t1) from t1"""
@@ -72190,6 +72328,7 @@ END"
 "DROP PROCEDURE p_int"
 "DROP PROCEDURE p_decimal"
 "DROP PROCEDURE IF EXISTS p2"
+"DROP PROCEDURE IF EXISTS p2","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE PROCEDURE p1(OUT v1 CHAR(10))
 SET v1 = 'test1'"
 "CREATE PROCEDURE p2(OUT v2 CHAR(10))
@@ -72723,6 +72862,7 @@ a int primary key, b char(10)
 "select '2' || '3' "
 "prepare stmt5 from ' select ''2'' || ''3'' ' "
 "execute stmt5"
+"execute stmt5","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "SET sql_mode=ansi"
 "prepare stmt1 from ' flush local privileges ' "
 "prepare stmt1 from ' KILL 0 '"
@@ -77694,7 +77834,9 @@ WHERE t1.x=t2.x AND (SELECT DISTINCT t3.x>0 FROM t2 AS t3)"
 "SET DEBUG_SYNC='materialize_session_variable_array_THD_locked SIGNAL lock_thd_data_acquired'"
 "CALL mtr.add_suppression(""Source's UUID has changed, its old UUID is"")"
 "SELECT @@session.session_track_schema"
+"SELECT @@session.session_track_schema","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "SELECT @@session.session_track_system_variables"
+"SELECT @@session.session_track_system_variables","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "SELECT @@global.session_track_schema"
 "SELECT @@session.character_set_client, @@session.character_set_results, @@session.character_set_connection"
 "SET NAMES 'big5'"
@@ -77708,6 +77850,7 @@ WHERE t1.x=t2.x AND (SELECT DISTINCT t3.x>0 FROM t2 AS t3)"
 "SET @@session.autocommit= ON"
 "SET @@session.autocommit=OFF, @@time_zone='SYSTEM'"
 "SELECT @@session.sql_mode"
+"SELECT @@session.sql_mode","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "SET @@session.session_track_system_variables='sql_mode'"
 "SET @sql_mode_saved= @@session.sql_mode"
 "SET @@session.sql_mode='traditional'"
@@ -77727,9 +77870,9 @@ END;"
 "SHOW VARIABLES LIKE 'var1'"
 "SET @@session.session_track_system_variables='var1,sql_mode,var2'"
 "SET @@session.sql_mode='ANSI'"
-"SET @@session.sql_mode=@@session.sql_mode"
-"SET @@session.session_track_system_variables='session_track_system_variables'"
-"SET @@session.session_track_schema=false"
+"SET @@session.sql_mode=@@session.sql_mode","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"SET @@session.session_track_system_variables='session_track_system_variables'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"SET @@session.session_track_schema=false","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "SET @@session.session_track_schema=OFF"
 "SET @@session.session_track_schema=@@global.session_track_schema"
 "SET @@session.session_track_system_variables='validate_password_policy,autocommit'"
@@ -77973,9 +78116,9 @@ c int not null comment 'int column',
 "SHOW CREATE TABLE `a.1`"
 "DROP TABLE `a.1`"
 "SET sql_mode= 'ANSI_QUOTES'"
-"CREATE TABLE """"""a"" (i INT)"
-"SHOW CREATE TABLE """"""a"""
-"DROP TABLE """"""a"""
+"CREATE TABLE """"""a"" (i INT)",ANSI_QUOTES
+"SHOW CREATE TABLE """"""a""",ANSI_QUOTES
+"DROP TABLE """"""a""",ANSI_QUOTES
 "SET sql_quote_show_create= OFF"
 "CREATE TABLE `table` (i INT)"
 "SHOW CREATE TABLE `table`"
@@ -79244,6 +79387,7 @@ MESSAGE_TEXT = msg,
 MYSQL_ERRNO = 1012;
 end "
 "drop table t1 "
+"drop table t1 ",IGNORE_SPACE
 "create table t1 (errno integer, msg varchar(128)) "
 "create trigger t1_ai after insert on t1 for each row
 begin
@@ -79989,8 +80133,11 @@ END "
 "CALL p5()"
 "CALL p6()"
 "DROP PROCEDURE p4"
+"DROP PROCEDURE p4","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "DROP PROCEDURE p5"
+"DROP PROCEDURE p5","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "DROP PROCEDURE p6"
+"DROP PROCEDURE p6","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE PROCEDURE p1()
 BEGIN
 DECLARE CONTINUE HANDLER FOR SQLEXCEPTION RESIGNAL SET MESSAGE_TEXT = asdf;
@@ -80708,6 +80855,7 @@ INDEX c1_idx (c1_idx)
 "SELECT * FROM t1 WHERE c1_idx = 'y' ORDER BY pk DESC"
 "DELETE FROM t1 WHERE c1_idx = 'y' ORDER BY pk DESC LIMIT 2"
 "DROP PROCEDURE IF EXISTS p3"
+"DROP PROCEDURE IF EXISTS p3","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "DROP FUNCTION IF EXISTS f3"
 "CREATE TRIGGER t1_bi BEFORE INSERT ON t1
 FOR EACH ROW
@@ -81631,6 +81779,7 @@ end"
 "create procedure p_20906_a() SET @a=@a+1, @b=@b+1"
 "show procedure code p_20906_a"
 "set @b=1"
+"set @b=1","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "call p_20906_a()"
 "create procedure p_20906_b() SET @a=@a+1, @b=@b+1, @c=@c+1"
 "show procedure code p_20906_b"
@@ -83998,21 +84147,36 @@ RETURN 0"
 "DROP FUNCTION IF EXISTS sp_vars_check_ret4"
 "DROP FUNCTION IF EXISTS sp_vars_div_zero"
 "SET @@sql_mode = 'ansi'"
+"CALL sp_vars_check_dflt()","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CALL sp_vars_check_dflt()"
+"CALL sp_vars_check_assignment()","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CALL sp_vars_check_assignment()"
+"SELECT sp_vars_check_ret1()","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "SELECT sp_vars_check_ret1()"
+"SELECT sp_vars_check_ret2()","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "SELECT sp_vars_check_ret2()"
+"SELECT sp_vars_check_ret3()","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "SELECT sp_vars_check_ret3()"
+"SELECT sp_vars_check_ret4()","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "SELECT sp_vars_check_ret4()"
+"SELECT sp_vars_div_zero()","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "SELECT sp_vars_div_zero()"
+"SET @@sql_mode = 'traditional'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "SET @@sql_mode = 'traditional'"
 "DROP PROCEDURE sp_vars_check_dflt"
+"DROP PROCEDURE sp_vars_check_dflt","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "DROP PROCEDURE sp_vars_check_assignment"
+"DROP PROCEDURE sp_vars_check_assignment","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "DROP FUNCTION sp_vars_check_ret1"
+"DROP FUNCTION sp_vars_check_ret1","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "DROP FUNCTION sp_vars_check_ret2"
+"DROP FUNCTION sp_vars_check_ret2","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "DROP FUNCTION sp_vars_check_ret3"
+"DROP FUNCTION sp_vars_check_ret3","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "DROP FUNCTION sp_vars_check_ret4"
+"DROP FUNCTION sp_vars_check_ret4","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "DROP FUNCTION sp_vars_div_zero"
+"DROP FUNCTION sp_vars_div_zero","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE PROCEDURE p1()
 BEGIN
 DECLARE v1 BIT;
@@ -84042,8 +84206,8 @@ SELECT HEX(v7);
 SELECT HEX(v8);
 SELECT HEX(v9);
 SELECT HEX(v10);
-END"
-"CREATE TABLE t1(log_msg VARCHAR(1024))"
+END","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CREATE TABLE t1(log_msg VARCHAR(1024))","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE PROCEDURE p1(arg VARCHAR(255))
 BEGIN
 INSERT INTO t1 VALUES('p1: step1');
@@ -84135,7 +84299,7 @@ END;
 ELSE
 INSERT INTO t1 VALUES('p1: case4: ERROR');
 END CASE;
-END"
+END","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE PROCEDURE p2()
 BEGIN
 DECLARE i TINYINT DEFAULT 3;
@@ -84158,34 +84322,35 @@ END CASE;
 
 SET i = i - 1;
 END WHILE;
-END"
-"CALL p1(10)"
-"CALL p1(20)"
-"CREATE TABLE t1(col BIGINT UNSIGNED)"
-"INSERT INTO t1 VALUE(18446744073709551614)"
+END","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CALL p1(10)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CALL p1(20)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CREATE TABLE t1(col BIGINT UNSIGNED)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO t1 VALUE(18446744073709551614)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE PROCEDURE p1(IN arg BIGINT UNSIGNED)
 BEGIN
 SELECT arg;
 SELECT * FROM t1;
 SELECT * FROM t1 WHERE col = arg;
-END"
-"CALL p1(18446744073709551614)"
+END","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CALL p1(18446744073709551614)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE PROCEDURE p1(x VARCHAR(10), y CHAR(3)) READS SQL DATA
 BEGIN
 SELECT x, y;
-END"
-"CALL p1('alpha', 'abc')"
-"CALL p1('alpha', 'abcdef')"
+END","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CALL p1('alpha', 'abc')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CALL p1('alpha', 'abcdef')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE PROCEDURE p1(x DATETIME)
 BEGIN
 CREATE TABLE t1 SELECT x;
 SHOW CREATE TABLE t1;
 DROP TABLE t1;
-END"
+END","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CALL p1(NOW())","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CALL p1(NOW())"
-"CALL p1('test')"
-"CREATE TABLE t1(b BIT(1))"
-"INSERT INTO t1(b) VALUES(b'0'), (b'1')"
+"CALL p1('test')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CREATE TABLE t1(b BIT(1))","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO t1(b) VALUES(b'0'), (b'1')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE PROCEDURE p1()
 BEGIN
 SELECT HEX(b),
@@ -84196,7 +84361,7 @@ b = 1,
 b = TRUE,
 b IS TRUE
 FROM t1;
-END"
+END","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE PROCEDURE p2()
 BEGIN
 DECLARE vb BIT(1);
@@ -84219,23 +84384,23 @@ vb IS FALSE,
 vb = 1,
 vb = TRUE,
 vb IS TRUE;
-END"
-"DROP TABLE IF EXISTS table_12976_a"
-"DROP TABLE IF EXISTS table_12976_b"
-"DROP PROCEDURE IF EXISTS proc_12976_a"
-"DROP PROCEDURE IF EXISTS proc_12976_b"
-"CREATE TABLE table_12976_a (val bit(1))"
+END","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"DROP TABLE IF EXISTS table_12976_a","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"DROP TABLE IF EXISTS table_12976_b","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"DROP PROCEDURE IF EXISTS proc_12976_a","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"DROP PROCEDURE IF EXISTS proc_12976_b","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CREATE TABLE table_12976_a (val bit(1))","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE TABLE table_12976_b(
 appname varchar(15),
 emailperm bit not null default 1,
-phoneperm bit not null default 0)"
-"insert into table_12976_b values ('A', b'1', b'1'), ('B', b'0', b'0')"
+phoneperm bit not null default 0)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"insert into table_12976_b values ('A', b'1', b'1'), ('B', b'0', b'0')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE PROCEDURE proc_12976_a()
 BEGIN
 declare localvar bit(1);
 SELECT val INTO localvar FROM table_12976_a;
 SELECT coalesce(localvar, 1)+1, coalesce(val, 1)+1 FROM table_12976_a;
-END"
+END","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE PROCEDURE proc_12976_b(
 name varchar(15),
 out ep bit,
@@ -84247,20 +84412,21 @@ SET msg = 'True';
 ELSE
 SET msg = 'False';
 END IF;
-END"
-"INSERT table_12976_a VALUES (0)"
-"call proc_12976_a()"
-"UPDATE table_12976_a set val=1"
-"call proc_12976_b('A', @ep, @msg)"
-"select @ep, @msg"
-"call proc_12976_b('B', @ep, @msg)"
-"DROP TABLE table_12976_a"
-"DROP TABLE table_12976_b"
-"DROP PROCEDURE proc_12976_a"
-"DROP PROCEDURE proc_12976_b"
+END","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT table_12976_a VALUES (0)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"call proc_12976_a()","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"UPDATE table_12976_a set val=1","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"call proc_12976_b('A', @ep, @msg)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"select @ep, @msg","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"call proc_12976_b('B', @ep, @msg)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"DROP TABLE table_12976_a","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"DROP TABLE table_12976_b","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"DROP PROCEDURE proc_12976_a","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"DROP PROCEDURE proc_12976_b","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"DROP PROCEDURE IF EXISTS p4","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "DROP PROCEDURE IF EXISTS p4"
-"DROP PROCEDURE IF EXISTS p5"
-"DROP PROCEDURE IF EXISTS p6"
+"DROP PROCEDURE IF EXISTS p5","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"DROP PROCEDURE IF EXISTS p6","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE PROCEDURE p1()
 BEGIN
 DECLARE v TINYINT DEFAULT 1e200;
@@ -84300,22 +84466,30 @@ DECLARE var DECIMAL(64,2);
 
 SET var = arg;
 SELECT var;
-END"
-"CALL p1(1929)"
-"CALL p1(1929.00)"
-"CALL p1(1929.003)"
+END","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CALL p1(1929)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CALL p1(1929.00)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CALL p1(1929.003)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CREATE FUNCTION f1(arg TINYINT UNSIGNED) RETURNS TINYINT
+BEGIN
+RETURN arg;
+END","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE FUNCTION f1(arg TINYINT UNSIGNED) RETURNS TINYINT
 BEGIN
 RETURN arg;
 END"
-"SELECT f1(-2500)"
+"SELECT f1(-2500)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CREATE FUNCTION f1(arg MEDIUMINT) RETURNS MEDIUMINT
+BEGIN
+RETURN arg;
+END","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE FUNCTION f1(arg MEDIUMINT) RETURNS MEDIUMINT
 BEGIN
 RETURN arg;
 END"
-"SELECT f1(8388699)"
-"CREATE TABLE t1(col VARCHAR(255))"
-"INSERT INTO t1(col) VALUES('Hello, world!')"
+"SELECT f1(8388699)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CREATE TABLE t1(col VARCHAR(255))","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO t1(col) VALUES('Hello, world!')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE PROCEDURE p1()
 BEGIN
 DECLARE sp_var INTEGER;
@@ -84326,8 +84500,8 @@ SET @user_var = sp_var;
 
 SELECT sp_var;
 SELECT @user_var;
-END"
-"CREATE TABLE t1(txt VARCHAR(255))"
+END","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CREATE TABLE t1(txt VARCHAR(255))","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE FUNCTION f1(arg VARCHAR(255)) RETURNS VARCHAR(255)
 BEGIN
 DECLARE v1 VARCHAR(255);
@@ -84339,37 +84513,37 @@ SET v2 = CONCAT(LOWER(v1), UPPER(v1));
 INSERT INTO t1 VALUES(v1), (v2);
 
 RETURN CONCAT(LOWER(arg), UPPER(arg));
-END"
-"SELECT f1('_aBcDe_')"
+END","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"SELECT f1('_aBcDe_')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE PROCEDURE p1(arg ENUM('a', 'b'))
 BEGIN
 SELECT arg;
-END"
+END","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE PROCEDURE p2(arg ENUM('a', 'b'))
 BEGIN
 DECLARE var ENUM('c', 'd') DEFAULT arg;
 SHOW WARNINGS;
 SELECT arg, var;
-END"
+END","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE FUNCTION f1(arg ENUM('a', 'b')) RETURNS ENUM('c', 'd')
 BEGIN
 RETURN arg;
-END"
-"CALL p1('c')"
-"CALL p2('a')"
-"SELECT f1('a')"
+END","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CALL p1('c')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CALL p2('a')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"SELECT f1('a')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE PROCEDURE p1(arg VARCHAR(255))
 BEGIN
 SELECT CHARSET(arg);
-END"
+END","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE PROCEDURE p2(arg VARCHAR(255) CHARACTER SET utf8mb3)
 BEGIN
 SELECT CHARSET(arg);
-END"
-"CALL p1('t')"
-"CALL p1(_UTF8MB3 't')"
-"CALL p2('t')"
-"CALL p2(_LATIN1 't')"
+END","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CALL p1('t')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CALL p1(_UTF8MB3 't')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CALL p2('t')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CALL p2(_LATIN1 't')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE PROCEDURE p1(arg1 BINARY(2), arg2 VARBINARY(2))
 BEGIN
 DECLARE var1 BINARY(2) DEFAULT 0x41;
@@ -84377,25 +84551,25 @@ DECLARE var2 VARBINARY(2) DEFAULT 0x42;
 
 SELECT HEX(arg1), HEX(arg2);
 SELECT HEX(var1), HEX(var2);
-END"
-"CALL p1(0x41, 0x42)"
-"CREATE TABLE t1(col1 TINYINT, col2 TINYINT)"
-"INSERT INTO t1 VALUES(1, 2), (11, 12)"
+END","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CALL p1(0x41, 0x42)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CREATE TABLE t1(col1 TINYINT, col2 TINYINT)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO t1 VALUES(1, 2), (11, 12)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE PROCEDURE p1(arg TINYINT)
 BEGIN
 SELECT arg;
-END"
+END","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE PROCEDURE p1(x VARCHAR(50))
 BEGIN
 SET x = SUBSTRING(x, 1, 3);
 SELECT x;
-END"
+END","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE FUNCTION f1(x VARCHAR(50)) RETURNS VARCHAR(50)
 BEGIN
 RETURN SUBSTRING(x, 1, 3);
-END"
-"CALL p1('abcdef')"
-"SELECT f1('ABCDEF')"
+END","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CALL p1('abcdef')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"SELECT f1('ABCDEF')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE FUNCTION f1() RETURNS VARCHAR(2000)
 BEGIN
 DECLARE var VARCHAR(2000);
@@ -84405,7 +84579,7 @@ SET var = CONCAT(var, 'abc');
 SET var = CONCAT(var, '');
 
 RETURN var;
-END"
+END","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE PROCEDURE p1()
 BEGIN
 DECLARE v_char VARCHAR(255);
@@ -84420,9 +84594,9 @@ SET v_char = 'def';
 SET v_text = concat(v_text, '|', v_char);
 
 SELECT v_text;
-END"
-"DROP PROCEDURE IF EXISTS bug27415_text_test"
-"DROP PROCEDURE IF EXISTS bug27415_text_test2"
+END","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"DROP PROCEDURE IF EXISTS bug27415_text_test","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"DROP PROCEDURE IF EXISTS bug27415_text_test2","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE PROCEDURE bug27415_text_test(entity_id_str_in text)
 BEGIN
 DECLARE str_remainder text;
@@ -84432,7 +84606,7 @@ SET str_remainder = entity_id_str_in;
 select 'before substr', str_remainder;
 SET str_remainder = SUBSTRING(str_remainder, 3);
 select 'after substr', str_remainder;
-END"
+END","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE PROCEDURE bug27415_text_test2(entity_id_str_in text)
 BEGIN
 DECLARE str_remainder text;
@@ -84442,11 +84616,11 @@ SET str_remainder2 = entity_id_str_in;
 select 'before substr', str_remainder2;
 SET str_remainder = SUBSTRING(str_remainder2, 3);
 select 'after substr', str_remainder;
-END"
-"CALL bug27415_text_test('a,b,c')"
-"CALL bug27415_text_test2('a,b,c')"
-"DROP PROCEDURE bug27415_text_test"
-"DROP PROCEDURE bug27415_text_test2"
+END","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CALL bug27415_text_test('a,b,c')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CALL bug27415_text_test2('a,b,c')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"DROP PROCEDURE bug27415_text_test","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"DROP PROCEDURE bug27415_text_test2","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "create function f1() returns int
 begin
 if @a=1 then set @b='abc';
@@ -84454,33 +84628,33 @@ else set @b=1;
 end if;
 set @a=1;
 return 0;
-end"
-"insert into t1 (a) values (1), (2)"
-"select f1(), @b from t1"
-"set @b:='test'"
+end","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"insert into t1 (a) values (1), (2)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"select f1(), @b from t1","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"set @b:='test'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE PROCEDURE ctest()
 BEGIN
 DECLARE i CHAR(16);
 DECLARE j INT;
 SET i= 'string';
 SET j= 1 + i;
-END"
-"CALL ctest()"
-"DROP PROCEDURE ctest"
+END","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CALL ctest()","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"DROP PROCEDURE ctest","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE PROCEDURE vctest()
 BEGIN
 DECLARE i VARCHAR(16);
 DECLARE j INT;
 SET i= 'string';
 SET j= 1 + i;
-END"
-"CALL vctest()"
-"DROP PROCEDURE vctest"
-"CREATE TABLE t (a INT PRIMARY KEY, b TEXT, FULLTEXT(b)) ENGINE=InnoDB"
-"CREATE FUNCTION f() RETURNS TEXT RETURN @@GLOBAL.innodb_ft_aux_table"
-"SELECT @@GLOBAL.innodb_ft_aux_table, f()"
-"SET GLOBAL innodb_ft_aux_table=""test/t"""
-"SET GLOBAL innodb_ft_aux_table= default"
+END","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CALL vctest()","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"DROP PROCEDURE vctest","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CREATE TABLE t (a INT PRIMARY KEY, b TEXT, FULLTEXT(b)) ENGINE=InnoDB","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CREATE FUNCTION f() RETURNS TEXT RETURN @@GLOBAL.innodb_ft_aux_table","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"SELECT @@GLOBAL.innodb_ft_aux_table, f()","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"SET GLOBAL innodb_ft_aux_table=""test/t""","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"SET GLOBAL innodb_ft_aux_table= default","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "create table t1 (
 id   char(16) not null default '',
 data int not null
@@ -85058,7 +85232,7 @@ comment 'Characteristics function test'"
 "drop function chistics"
 "insert into t1 values (""foo"", 1), (""bar"", 2), (""zip"", 3)"
 "set @@sql_mode = 'ANSI'"
-"drop procedure if exists modes"
+"drop procedure if exists modes","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "create procedure modes(out c1 int, out c2 int)
 begin
 declare done int default 0;
@@ -85076,8 +85250,10 @@ set c2 = c2 + 1;
 end if;
 until done end repeat;
 close c;
-end"
+end","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"set @@sql_mode = ''","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "set @@sql_mode = ''"
+"set @@sql_mode = ''",ANSI_QUOTES
 "set sql_select_limit = 1"
 "call modes(@c1, @c2)"
 "set sql_select_limit = default"
@@ -85327,6 +85503,7 @@ select (select s1 from t3) from t3"
 return 5"
 "select `foo` ()"
 "drop function `foo`"
+"drop function `foo`",ANSI_QUOTES
 "drop function if exists t1max"
 "create function t1max() returns int
 begin
@@ -86034,15 +86211,15 @@ end"
 comment 'Joe''s procedure'
 insert into `t1` values (""foo"", 1)"
 "set @@sql_mode = 'ANSI_QUOTES'"
-"drop procedure if exists bug2564_2"
+"drop procedure if exists bug2564_2",ANSI_QUOTES
 "create procedure bug2564_2()
-insert into ""t1"" values ('foo', 1)"
+insert into ""t1"" values ('foo', 1)",ANSI_QUOTES
 "drop function if exists bug2564_3"
 "create function bug2564_3(x int, y int) returns int
 return x || y"
-"drop function if exists bug2564_4"
+"drop function if exists bug2564_4","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "create function bug2564_4(x int, y int) returns int
-return x || y"
+return x || y","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "show create procedure bug2564_1"
 "show create procedure bug2564_2"
 "show create function bug2564_3"
@@ -88168,7 +88345,9 @@ FROM t3 LEFT JOIN v1 ON t3.t3_id = 0"
 "create function pi() returns varchar(50)
 return ""pie, my favorite desert."""
 "SET SQL_MODE='IGNORE_SPACE'"
+"select pi(), pi ()",IGNORE_SPACE
 "select pi(), pi ()"
+"select test.pi(), test.pi ()",IGNORE_SPACE
 "select test.pi(), test.pi ()"
 "drop function pi"
 "drop function if exists test.database"
@@ -88177,8 +88356,11 @@ return ""pie, my favorite desert."""
 "create database nowhere"
 "use nowhere"
 "drop database nowhere"
+"select database(), database ()",IGNORE_SPACE
 "select database(), database ()"
+"select current_user(), current_user ()",IGNORE_SPACE
 "select current_user(), current_user ()"
+"select sha2(""aaa"", 0), sha2 (""aaa"", 0)",IGNORE_SPACE
 "select sha2(""aaa"", 0), sha2 (""aaa"", 0)"
 "create function `database`() returns varchar(50)
 return ""Stored function database"""
@@ -88186,8 +88368,11 @@ return ""Stored function database"""
 return ""Stored function current_user"""
 "create function sha2(x varchar(50), y integer) returns varchar(50)
 return ""Stored function sha2"""
+"select test.database(), test.database ()",IGNORE_SPACE
 "select test.database(), test.database ()"
+"select test.current_user(), test.current_user ()",IGNORE_SPACE
 "select test.current_user(), test.current_user ()"
+"select test.sha2(""aaa"", 0), test.sha2 (""aaa"", 0)",IGNORE_SPACE
 "select test.sha2(""aaa"", 0), test.sha2 (""aaa"", 0)"
 "drop function test.database"
 "drop function test.current_user"
@@ -89072,6 +89257,7 @@ SET @@default_storage_engine = DEFAULT"
 "SET @@default_storage_engine = InnoDB"
 "SET @@default_storage_engine = @default_storage_engine_saved"
 "SET @org_mode= @@sql_mode"
+"SET @org_mode= @@sql_mode","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE PROCEDURE p1()
 BEGIN
 DECLARE `v` TINYINT;
@@ -90368,18 +90554,22 @@ UNIQUE KEY `email` USING BTREE (`email`)
 ) ENGINE=HEAP CHARSET=latin1 ROW_FORMAT DYNAMIC"
 "set @@sql_mode="""""
 "show variables like 'sql_mode'"
+"show variables like 'sql_mode'",ANSI_QUOTES
 "set @@sql_mode=""ansi_quotes"""
-"set session sql_mode = ''"
+"set session sql_mode = ''",ANSI_QUOTES
 "create table t1 ( min_num   dec(6,6)     default .000001)"
+"create table t1 ( min_num   dec(6,6)     default .000001)",IGNORE_SPACE
 "set session sql_mode = 'IGNORE_SPACE'"
-"create table t1 ( min_num   dec(6,6)     default 0.000001)"
-"set session sql_mode=ansi"
+"create table t1 ( min_num   dec(6,6)     default 0.000001)",IGNORE_SPACE
+"set session sql_mode=ansi",IGNORE_SPACE
 "create table t1
 (f1 integer auto_increment primary key,
-f2 timestamp not null default current_timestamp on update current_timestamp)"
-"SET @OLD_SQL_MODE=@@SQL_MODE, @@SQL_MODE=''"
+f2 timestamp not null default current_timestamp on update current_timestamp)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"SET @OLD_SQL_MODE=@@SQL_MODE, @@SQL_MODE=''","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "show local variables like 'SQL_MODE'"
+"show local variables like 'SQL_MODE'",NO_BACKSLASH_ESCAPES
 "CREATE TABLE t1 (p int not null auto_increment, a varchar(20), primary key(p)) charset latin1"
+"CREATE TABLE t1 (p int not null auto_increment, a varchar(20), primary key(p)) charset latin1",NO_BACKSLASH_ESCAPES
 "INSERT t1 (a) VALUES
 ('\\'),
 ('\n'),
@@ -90402,8 +90592,32 @@ f2 timestamp not null default current_timestamp on update current_timestamp)"
 ('\\\%'),
 ('\\\\%')
 "
+"INSERT t1 (a) VALUES
+('\\'),
+('\n'),
+('\b'),
+('\r'),
+('\t'),
+('\x'),
+('\a'),
+('\aa'),
+('\\a'),
+('\\aa'),
+('_'),
+('\_'),
+('\\_'),
+('\\\_'),
+('\\\\_'),
+('%'),
+('\%'),
+('\\%'),
+('\\\%'),
+('\\\\%')
+",NO_BACKSLASH_ESCAPES
 "SELECT p, hex(a) FROM t1"
+"SELECT p, hex(a) FROM t1",NO_BACKSLASH_ESCAPES
 "delete from t1 where a in ('\n','\r','\t', '\b')"
+"delete from t1 where a in ('\n','\r','\t', '\b')",NO_BACKSLASH_ESCAPES
 "select
 masks.p,
 masks.a as mask,
@@ -90412,45 +90626,62 @@ from
 t1 as masks
 left join t1 as examples on examples.a LIKE masks.a
 order by masks.p, example"
+"select
+masks.p,
+masks.a as mask,
+examples.a as example
+from
+t1 as masks
+left join t1 as examples on examples.a LIKE masks.a
+order by masks.p, example",NO_BACKSLASH_ESCAPES
 "SET @@SQL_MODE='NO_BACKSLASH_ESCAPES'"
+"SET @@SQL_MODE='NO_BACKSLASH_ESCAPES'",NO_BACKSLASH_ESCAPES
+"SELECT 'a\\b', 'a\\\"b', 'a''\\b', 'a''\\\"b'",NO_BACKSLASH_ESCAPES
 "SELECT 'a\\b', 'a\\\"b', 'a''\\b', 'a''\\\"b'"
+"SELECT ""a\\b"", ""a\\\'b"", ""a""""\\b"", ""a""""\\\'b""",NO_BACKSLASH_ESCAPES
 "SELECT ""a\\b"", ""a\\\'b"", ""a""""\\b"", ""a""""\\\'b"""
+"SET @@SQL_MODE=''",NO_BACKSLASH_ESCAPES
 "SET @@SQL_MODE=''"
+"SET @@SQL_MODE=''",ANSI_QUOTES
 "create function `foo` () returns int return 5"
+"create function `foo` () returns int return 5",ANSI_QUOTES
 "show create function `foo`"
+"show create function `foo`",ANSI_QUOTES
 "SET @@SQL_MODE='ANSI_QUOTES'"
+"create view v2 as select a from t2 where a in (select a from v1)",ANSI_QUOTES
 "create view v2 as select a from t2 where a in (select a from v1)"
+"drop view v2, v1",ANSI_QUOTES
 "drop view v2, v1"
-"set sql_mode=2097152"
-"set sql_mode=4194304"
-"set sql_mode=32+(65536*4)"
-"set sql_mode=PAD_CHAR_TO_FULL_LENGTH"
+"set sql_mode=2097152",ANSI_QUOTES
+"set sql_mode=4194304",ANSI_QUOTES
+"set sql_mode=32+(65536*4)",ANSI_QUOTES
+"set sql_mode=PAD_CHAR_TO_FULL_LENGTH",ANSI_QUOTES
 "create table t1 (a int auto_increment primary key, b char(5))"
 "insert into t1 (b) values('a'),('b\t'),('c ')"
 "select concat('x',b,'x') from t1"
 "set sql_mode=0"
-"create user mysqltest_32753@localhost"
-"set @OLD_SQL_MODE=@@SESSION.SQL_MODE"
-"set session sql_mode='PAD_CHAR_TO_FULL_LENGTH'"
-"drop user mysqltest_32753@localhost"
-"SET @@sql_mode='traditional'"
+"create user mysqltest_32753@localhost","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"set @OLD_SQL_MODE=@@SESSION.SQL_MODE","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"set session sql_mode='PAD_CHAR_TO_FULL_LENGTH'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"drop user mysqltest_32753@localhost","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"SET @@sql_mode='traditional'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "SELECT @@sql_mode LIKE '%NO_ENGINE_SUBSTITUTION%'"
-"CREATE USER 'user_PCTFL'@'localhost' identified by 'PWD'"
-"CREATE USER 'user_no_PCTFL'@'localhost' identified by 'PWD'"
-"CREATE TABLE t2 (f1 CHAR(3) NOT NULL, f2 CHAR(20))"
-"GRANT ALL ON t1 TO 'user_PCTFL'@'localhost','user_no_PCTFL'@'localhost'"
-"GRANT SELECT(f1) ON t2 TO 'user_PCTFL'@'localhost','user_no_PCTFL'@'localhost'"
-"SET @OLD_SQL_MODE = @@SESSION.SQL_MODE"
-"SET SESSION SQL_MODE = 'PAD_CHAR_TO_FULL_LENGTH'"
+"CREATE USER 'user_PCTFL'@'localhost' identified by 'PWD'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CREATE USER 'user_no_PCTFL'@'localhost' identified by 'PWD'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CREATE TABLE t2 (f1 CHAR(3) NOT NULL, f2 CHAR(20))","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"GRANT ALL ON t1 TO 'user_PCTFL'@'localhost','user_no_PCTFL'@'localhost'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"GRANT SELECT(f1) ON t2 TO 'user_PCTFL'@'localhost','user_no_PCTFL'@'localhost'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"SET @OLD_SQL_MODE = @@SESSION.SQL_MODE","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"SET SESSION SQL_MODE = 'PAD_CHAR_TO_FULL_LENGTH'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "DROP USER 'user_PCTFL'@'localhost'"
 "SET SESSION SQL_MODE = @OLD_SQL_MODE"
-"DROP USER 'user_no_PCTFL'@'localhost'"
-"SELECT * FROM mysql.db WHERE Host = 'localhost' AND User LIKE 'user_%PCTFL'"
-"SELECT * FROM mysql.tables_priv WHERE Host = 'localhost' AND User LIKE 'user_%PCTFL'"
-"SELECT * FROM mysql.columns_priv WHERE Host = 'localhost' AND User LIKE 'user_%PCTFL'"
-"DROP TABLE IF EXISTS test_table"
-"DROP FUNCTION IF EXISTS test_function"
-"CREATE TABLE test_table (c1 CHAR(50))"
+"DROP USER 'user_no_PCTFL'@'localhost'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"SELECT * FROM mysql.db WHERE Host = 'localhost' AND User LIKE 'user_%PCTFL'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"SELECT * FROM mysql.tables_priv WHERE Host = 'localhost' AND User LIKE 'user_%PCTFL'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"SELECT * FROM mysql.columns_priv WHERE Host = 'localhost' AND User LIKE 'user_%PCTFL'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"DROP TABLE IF EXISTS test_table","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"DROP FUNCTION IF EXISTS test_function","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CREATE TABLE test_table (c1 CHAR(50))","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "PREPARE insert_stmt FROM 'INSERT INTO test_table VALUES (?)'"
 "PREPARE update_stmt FROM 'UPDATE test_table SET c1= ? WHERE c1= ?'"
 "CREATE FUNCTION test_function(var CHAR(50)) RETURNS CHAR(50)
@@ -90460,6 +90691,13 @@ SELECT c1 INTO char_val FROM test_table WHERE c1=var;
 RETURN char_val;
 END
 "
+"CREATE FUNCTION test_function(var CHAR(50)) RETURNS CHAR(50)
+BEGIN
+DECLARE char_val CHAR(50);
+SELECT c1 INTO char_val FROM test_table WHERE c1=var;
+RETURN char_val;
+END
+",NO_BACKSLASH_ESCAPES
 "SET @var1='abcd\'ef'"
 "SET @var2='abcd\"ef'"
 "SET @var3='abcd\bef'"
@@ -90479,59 +90717,104 @@ END
 "SET @to_var8='wxyz\%ef'"
 "SET @to_var9='wxyz\_ef'"
 "EXECUTE insert_stmt USING @var1"
+"EXECUTE insert_stmt USING @var1",NO_BACKSLASH_ESCAPES
 "EXECUTE insert_stmt USING @var2"
+"EXECUTE insert_stmt USING @var2",NO_BACKSLASH_ESCAPES
 "EXECUTE insert_stmt USING @var3"
+"EXECUTE insert_stmt USING @var3",NO_BACKSLASH_ESCAPES
 "EXECUTE insert_stmt USING @var4"
+"EXECUTE insert_stmt USING @var4",NO_BACKSLASH_ESCAPES
 "EXECUTE insert_stmt USING @var5"
+"EXECUTE insert_stmt USING @var5",NO_BACKSLASH_ESCAPES
 "EXECUTE insert_stmt USING @var6"
+"EXECUTE insert_stmt USING @var6",NO_BACKSLASH_ESCAPES
 "EXECUTE insert_stmt USING @var7"
+"EXECUTE insert_stmt USING @var7",NO_BACKSLASH_ESCAPES
 "EXECUTE insert_stmt USING @var8"
+"EXECUTE insert_stmt USING @var8",NO_BACKSLASH_ESCAPES
 "EXECUTE insert_stmt USING @var9"
+"EXECUTE insert_stmt USING @var9",NO_BACKSLASH_ESCAPES
 "SELECT * FROM test_table"
+"SELECT * FROM test_table",NO_BACKSLASH_ESCAPES
 "EXECUTE update_stmt USING @to_var1, @var1"
+"EXECUTE update_stmt USING @to_var1, @var1",NO_BACKSLASH_ESCAPES
 "EXECUTE update_stmt USING @to_var2, @var2"
+"EXECUTE update_stmt USING @to_var2, @var2",NO_BACKSLASH_ESCAPES
 "EXECUTE update_stmt USING @to_var3, @var3"
+"EXECUTE update_stmt USING @to_var3, @var3",NO_BACKSLASH_ESCAPES
 "EXECUTE update_stmt USING @to_var4, @var4"
+"EXECUTE update_stmt USING @to_var4, @var4",NO_BACKSLASH_ESCAPES
 "EXECUTE update_stmt USING @to_var5, @var5"
+"EXECUTE update_stmt USING @to_var5, @var5",NO_BACKSLASH_ESCAPES
 "EXECUTE update_stmt USING @to_var6, @var6"
+"EXECUTE update_stmt USING @to_var6, @var6",NO_BACKSLASH_ESCAPES
 "EXECUTE update_stmt USING @to_var7, @var7"
+"EXECUTE update_stmt USING @to_var7, @var7",NO_BACKSLASH_ESCAPES
 "EXECUTE update_stmt USING @to_var8, @var8"
+"EXECUTE update_stmt USING @to_var8, @var8",NO_BACKSLASH_ESCAPES
 "EXECUTE update_stmt USING @to_var9, @var9"
+"EXECUTE update_stmt USING @to_var9, @var9",NO_BACKSLASH_ESCAPES
 "select test_function(@to_var1)"
+"select test_function(@to_var1)",NO_BACKSLASH_ESCAPES
 "SELECT test_function(@to_var2)"
+"SELECT test_function(@to_var2)",NO_BACKSLASH_ESCAPES
 "SELECT test_function(@to_var3)"
+"SELECT test_function(@to_var3)",NO_BACKSLASH_ESCAPES
 "SELECT test_function(@to_var4)"
+"SELECT test_function(@to_var4)",NO_BACKSLASH_ESCAPES
 "SELECT test_function(@to_var5)"
+"SELECT test_function(@to_var5)",NO_BACKSLASH_ESCAPES
 "SELECT test_function(@to_var6)"
+"SELECT test_function(@to_var6)",NO_BACKSLASH_ESCAPES
 "SELECT test_function(@to_var7)"
+"SELECT test_function(@to_var7)",NO_BACKSLASH_ESCAPES
 "SELECT test_function(@to_var8)"
+"SELECT test_function(@to_var8)",NO_BACKSLASH_ESCAPES
 "SELECT test_function(@to_var9)"
+"SELECT test_function(@to_var9)",NO_BACKSLASH_ESCAPES
 "DELETE FROM test_table"
 "DROP FUNCTION test_function"
+"DROP FUNCTION test_function",NO_BACKSLASH_ESCAPES
 "SET @@sql_mode='NO_BACKSLASH_ESCAPES'"
-"DROP TABLE test_table"
-"SET sql_mode= 'NO_ZERO_DATE'"
+"DROP TABLE test_table",NO_BACKSLASH_ESCAPES
+"SET sql_mode= 'NO_ZERO_DATE'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "SET sql_mode= 'NO_ZERO_IN_DATE'"
 "SET sql_mode= 'ERROR_FOR_DIVISION_BY_ZERO'"
 "CREATE USER 'user\'s_12601974'@'localhost'"
 "DROP USER 'user\'s_12601974'@'localhost'"
 "CREATE USER 'user\"s_12601974'@'localhost'"
+"CREATE USER 'user\"s_12601974'@'localhost'",NO_BACKSLASH_ESCAPES
 "DROP USER 'user\"s_12601974'@'localhost'"
+"DROP USER 'user\"s_12601974'@'localhost'",NO_BACKSLASH_ESCAPES
 "CREATE USER 'user\bs_12601974'@'localhost'"
+"CREATE USER 'user\bs_12601974'@'localhost'",NO_BACKSLASH_ESCAPES
 "DROP USER 'user\bs_12601974'@'localhost'"
+"DROP USER 'user\bs_12601974'@'localhost'",NO_BACKSLASH_ESCAPES
 "CREATE USER 'user\ns_12601974'@'localhost'"
+"CREATE USER 'user\ns_12601974'@'localhost'",NO_BACKSLASH_ESCAPES
 "DROP USER 'user\ns_12601974'@'localhost'"
+"DROP USER 'user\ns_12601974'@'localhost'",NO_BACKSLASH_ESCAPES
 "CREATE USER 'user\rs_12601974'@'localhost'"
+"CREATE USER 'user\rs_12601974'@'localhost'",NO_BACKSLASH_ESCAPES
 "DROP USER 'user\rs_12601974'@'localhost'"
+"DROP USER 'user\rs_12601974'@'localhost'",NO_BACKSLASH_ESCAPES
 "CREATE USER 'user\ts_12601974'@'localhost'"
+"CREATE USER 'user\ts_12601974'@'localhost'",NO_BACKSLASH_ESCAPES
 "DROP USER 'user\ts_12601974'@'localhost'"
+"DROP USER 'user\ts_12601974'@'localhost'",NO_BACKSLASH_ESCAPES
 "CREATE USER 'user\\s_12601974'@'localhost'"
+"CREATE USER 'user\\s_12601974'@'localhost'",NO_BACKSLASH_ESCAPES
 "DROP USER 'user\\s_12601974'@'localhost'"
+"DROP USER 'user\\s_12601974'@'localhost'",NO_BACKSLASH_ESCAPES
 "CREATE USER 'user\%s_12601974'@'localhost'"
+"CREATE USER 'user\%s_12601974'@'localhost'",NO_BACKSLASH_ESCAPES
 "DROP USER 'user\%s_12601974'@'localhost'"
+"DROP USER 'user\%s_12601974'@'localhost'",NO_BACKSLASH_ESCAPES
 "CREATE USER 'user\_s_12601974'@'localhost'"
+"CREATE USER 'user\_s_12601974'@'localhost'",NO_BACKSLASH_ESCAPES
 "DROP USER 'user\_s_12601974'@'localhost'"
-"SELECT '\''"
+"DROP USER 'user\_s_12601974'@'localhost'",NO_BACKSLASH_ESCAPES
+"SELECT '\''","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE TABLE test(id INT, count DOUBLE)"
 "INSERT INTO test VALUES (1,0), (2,0)"
 "PREPARE stmt FROM 'UPDATE test SET count = count + 1 WHERE id = ?'"
@@ -90757,10 +91040,11 @@ END;
 "SET @binlog_handler_commit= IF(@@global.log_bin, 1, 0)"
 "SELECT (SELECT val FROM t1 WHERE id = 3) - (SELECT val FROM t1 WHERE id = 2) = 1 + @binlog_handler_commit"
 "set @@sql_mode='ansi,traditional'"
-"CREATE TABLE t1 (col1 date)"
-"INSERT INTO t1 VALUES('2004-01-01'),('2004-02-29')"
-"INSERT INTO t1 VALUES('0000-10-31')"
-"set @@sql_mode='STRICT_ALL_TABLES'"
+"set @@sql_mode='ansi,traditional'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CREATE TABLE t1 (col1 date)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO t1 VALUES('2004-01-01'),('2004-02-29')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO t1 VALUES('0000-10-31')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"set @@sql_mode='STRICT_ALL_TABLES'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "INSERT INTO t1 VALUES('2004-01-03'),('2004-0-31')"
 "set @@sql_mode='STRICT_ALL_TABLES,NO_ZERO_IN_DATE'"
 "INSERT IGNORE INTO t1 VALUES('2004-0-29')"
@@ -90768,8 +91052,10 @@ END;
 "INSERT IGNORE INTO t1 VALUES('0000-00-00')"
 "INSERT INTO t1 VALUES ('2004-0-30')"
 "set @@sql_mode='STRICT_ALL_TABLES,ALLOW_INVALID_DATES'"
+"set @@sql_mode='STRICT_ALL_TABLES,ALLOW_INVALID_DATES'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "INSERT INTO t1 VALUES ('2004-2-30')"
-"INSERT IGNORE INTO t1 VALUES('2004-02-29'),('2004-13-15'),('0000-00-00')"
+"INSERT IGNORE INTO t1 VALUES('2004-02-29'),('2004-13-15'),('0000-00-00')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"set @@sql_mode='strict_trans_tables'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "set @@sql_mode='strict_trans_tables'"
 "CREATE TABLE t1 (col1 date) engine=myisam"
 "INSERT INTO t1 VALUES ('2004-1-2'), ('2004-13-31'),('2004-1-3')"
@@ -90777,100 +91063,102 @@ END;
 "INSERT ignore INTO t1 VALUES('2003-02-30')"
 "INSERT ignore INTO t1 VALUES('2003-02-31')"
 "CREATE TABLE t1 (col1 date) engine=innodb"
-"CREATE TABLE t1 (col1 datetime)"
-"INSERT INTO t1 VALUES('2004-10-31 15:30:00'),('2004-02-29 15:30:00')"
-"INSERT INTO t1 VALUES('0000-10-31 15:30:00')"
-"CREATE TABLE t1 (col1 timestamp)"
+"CREATE TABLE t1 (col1 datetime)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO t1 VALUES('2004-10-31 15:30:00'),('2004-02-29 15:30:00')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO t1 VALUES('0000-10-31 15:30:00')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CREATE TABLE t1 (col1 timestamp)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT IGNORE INTO t1 VALUES('0000-00-00 00:00:00')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "INSERT IGNORE INTO t1 VALUES('0000-00-00 00:00:00')"
 "INSERT INTO t1 VALUES('0000-00-00 00:00:00')"
-"CREATE TABLE t1 (col1 date, col2 datetime, col3 timestamp)"
-"INSERT INTO t1 (col1) VALUES (STR_TO_DATE('15.10.2004','%d.%m.%Y'))"
-"INSERT INTO t1 (col2) VALUES (STR_TO_DATE('15.10.2004 10.15','%d.%m.%Y %H.%i'))"
-"INSERT INTO t1 (col3) VALUES (STR_TO_DATE('15.10.2004 10.15','%d.%m.%Y %H.%i'))"
-"INSERT INTO t1 (col1) VALUES (CAST('2004-10-15' AS DATE))"
-"INSERT INTO t1 (col2) VALUES (CAST('2004-10-15 10:15' AS DATETIME))"
-"INSERT INTO t1 (col3) VALUES (CAST('2004-10-15 10:15' AS DATETIME))"
-"INSERT INTO t1 (col1) VALUES(CAST('0000-10-31' AS DATE))"
-"INSERT INTO t1 (col2) VALUES(CAST('0000-10-31 15:30' AS DATETIME))"
-"INSERT INTO t1 (col1) VALUES (CONVERT('2004-10-15',DATE))"
-"INSERT INTO t1 (col2) VALUES (CONVERT('2004-10-15 10:15',DATETIME))"
-"INSERT INTO t1 (col3) VALUES (CONVERT('2004-10-15 10:15',DATETIME))"
-"INSERT INTO t1 (col1) VALUES(CONVERT('0000-10-31' , DATE))"
-"INSERT INTO t1 (col2) VALUES(CONVERT('0000-10-31 15:30',DATETIME))"
-"CREATE TABLE t1(col1 TINYINT, col2 TINYINT UNSIGNED)"
-"INSERT INTO t1 VALUES(-128,0),(0,0),(127,255),('-128','0'),('0','0'),('127','255'),(-128.0,0.0),(0.0,0.0),(127.0,255.0)"
-"SELECT MOD(col1,0) FROM t1 WHERE col1 > 0 LIMIT 2"
-"SELECT MOD(col1,0) FROM t1 WHERE col1 > 0 LIMIT 1"
-"set @@sql_mode='ERROR_FOR_DIVISION_BY_ZERO'"
+"CREATE TABLE t1 (col1 date, col2 datetime, col3 timestamp)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO t1 (col1) VALUES (STR_TO_DATE('15.10.2004','%d.%m.%Y'))","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO t1 (col2) VALUES (STR_TO_DATE('15.10.2004 10.15','%d.%m.%Y %H.%i'))","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO t1 (col3) VALUES (STR_TO_DATE('15.10.2004 10.15','%d.%m.%Y %H.%i'))","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO t1 (col1) VALUES (CAST('2004-10-15' AS DATE))","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO t1 (col2) VALUES (CAST('2004-10-15 10:15' AS DATETIME))","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO t1 (col3) VALUES (CAST('2004-10-15 10:15' AS DATETIME))","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO t1 (col1) VALUES(CAST('0000-10-31' AS DATE))","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO t1 (col2) VALUES(CAST('0000-10-31 15:30' AS DATETIME))","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO t1 (col1) VALUES (CONVERT('2004-10-15',DATE))","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO t1 (col2) VALUES (CONVERT('2004-10-15 10:15',DATETIME))","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO t1 (col3) VALUES (CONVERT('2004-10-15 10:15',DATETIME))","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO t1 (col1) VALUES(CONVERT('0000-10-31' , DATE))","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO t1 (col2) VALUES(CONVERT('0000-10-31 15:30',DATETIME))","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CREATE TABLE t1(col1 TINYINT, col2 TINYINT UNSIGNED)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO t1 VALUES(-128,0),(0,0),(127,255),('-128','0'),('0','0'),('127','255'),(-128.0,0.0),(0.0,0.0),(127.0,255.0)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"SELECT MOD(col1,0) FROM t1 WHERE col1 > 0 LIMIT 2","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"SELECT MOD(col1,0) FROM t1 WHERE col1 > 0 LIMIT 1","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"set @@sql_mode='ERROR_FOR_DIVISION_BY_ZERO'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "INSERT INTO t1 values (1/0,1/0)"
-"INSERT IGNORE INTO t1 (col1) VALUES ('2a')"
-"INSERT IGNORE INTO t1 values (1/0,1/0)"
-"set @@sql_mode='ansi'"
-"INSERT IGNORE INTO t1 VALUES('-129','-1'),('128','256')"
-"INSERT IGNORE INTO t1 VALUES(-129.0,-1.0),(128.0,256.0)"
-"UPDATE IGNORE t1 SET col2=1/NULL where col1=0"
-"CREATE TABLE t1(col1 SMALLINT, col2 SMALLINT UNSIGNED)"
-"INSERT INTO t1 VALUES(-32768,0),(0,0),(32767,65535),('-32768','0'),('32767','65535'),(-32768.0,0.0),(32767.0,65535.0)"
-"INSERT IGNORE INTO t1 VALUES(-32769,-1),(32768,65536)"
-"INSERT IGNORE INTO t1 VALUES('-32769','-1'),('32768','65536')"
-"INSERT IGNORE INTO t1 VALUES(-32769,-1.0),(32768.0,65536.0)"
-"CREATE TABLE t1 (col1 MEDIUMINT, col2 MEDIUMINT UNSIGNED)"
-"INSERT INTO t1 VALUES(-8388608,0),(0,0),(8388607,16777215),('-8388608','0'),('8388607','16777215'),(-8388608.0,0.0),(8388607.0,16777215.0)"
-"INSERT IGNORE INTO t1 VALUES(-8388609,-1),(8388608,16777216)"
-"INSERT IGNORE INTO t1 VALUES('-8388609','-1'),('8388608','16777216')"
-"INSERT IGNORE INTO t1 VALUES(-8388609.0,-1.0),(8388608.0,16777216.0)"
-"CREATE TABLE t1 (col1 INT, col2 INT UNSIGNED)"
-"INSERT INTO t1 VALUES(-2147483648,0),(0,0),(2147483647,4294967295),('-2147483648','0'),('2147483647','4294967295'),(-2147483648.0,0.0),(2147483647.0,4294967295.0)"
-"INSERT IGNORE INTO t1 values (-2147483649, -1),(2147643648,4294967296)"
-"INSERT IGNORE INTO t1 values ('-2147483649', '-1'),('2147643648','4294967296')"
-"INSERT IGNORE INTO t1 values (-2147483649.0, -1.0),(2147643648.0,4294967296.0)"
-"CREATE TABLE t1 (col1 BIGINT, col2 BIGINT UNSIGNED)"
-"INSERT INTO t1 VALUES(-9223372036854775808,0),(0,0),(9223372036854775807,18446744073709551615)"
-"INSERT INTO t1 VALUES('-9223372036854775808','0'),('9223372036854775807','18446744073709551615')"
-"INSERT INTO t1 VALUES(-9223372036854774000.0,0.0),(9223372036854775700.0,1844674407370954000.0)"
-"INSERT IGNORE INTO t1 VALUES(-9223372036854775809,-1),(9223372036854775808,18446744073709551616)"
-"INSERT IGNORE INTO t1 VALUES('-9223372036854775809','-1'),('9223372036854775808','18446744073709551616')"
-"INSERT IGNORE INTO t1 VALUES(-9223372036854785809.0,-1.0),(9223372036854785808.0,18446744073709551616.0)"
-"CREATE TABLE t1 (col1 NUMERIC(4,2))"
-"INSERT INTO t1 VALUES (10.55),(10.5555),(0),(-10.55),(-10.5555),(11),(1e+01)"
-"INSERT INTO t1 VALUES ('10.55'),('10.5555'),('-10.55'),('-10.5555'),('11'),('1e+01')"
-"INSERT IGNORE INTO t1 values (1/0)"
-"INSERT IGNORE INTO t1 VALUES(1000),(-1000)"
-"INSERT IGNORE INTO t1 VALUES('1000'),('-1000')"
-"INSERT IGNORE INTO t1 VALUES(1000.0),(-1000.0)"
-"UPDATE IGNORE t1 SET col1=1/NULL where col1=0"
-"CREATE TABLE t1 (col1 FLOAT, col2 FLOAT UNSIGNED)"
-"INSERT INTO t1 VALUES (-1.1E-37,0),(+3.4E+38,+3.4E+38)"
-"INSERT INTO t1 VALUES ('-1.1E-37',0),('+3.4E+38','+3.4E+38')"
-"INSERT INTO t1 (col1) VALUES (3E-46)"
-"INSERT IGNORE INTO t1 (col1) VALUES (1/0)"
-"INSERT IGNORE INTO t1 VALUES (+3.4E+39,-3.4E+39)"
-"INSERT IGNORE INTO t1 VALUES ('+3.4E+39','-3.4E+39')"
-"CREATE TABLE t1 (col1 DOUBLE PRECISION, col2 DOUBLE PRECISION UNSIGNED)"
-"INSERT INTO t1 VALUES (-2.2E-307,0),(2E-307,0),(+1.7E+308,+1.7E+308)"
-"INSERT INTO t1 VALUES ('-2.2E-307',0),('-2E-307',0),('+1.7E+308','+1.7E+308')"
-"INSERT INTO t1 (col1) VALUES (-2.2E-330)"
-"INSERT IGNORE INTO t1 (col1) values (1/0)"
-"INSERT IGNORE INTO t1 VALUES ('+2.0E+309','-2.0E+309')"
-"CREATE TABLE t1 (col1 CHAR(5), col2 VARCHAR(6))"
-"INSERT INTO t1 VALUES ('hello', 'hello'),('he', 'he'),('hello   ', 'hello ')"
-"INSERT INTO t1 (col2) VALUES ('hello  ')"
-"INSERT IGNORE INTO t1 VALUES ('hellobob', 'hellobob')"
-"UPDATE IGNORE t1 SET col2 ='hellotrudy' WHERE col2 ='he'"
-"CREATE TABLE t1 (col1 enum('red','blue','green'))"
-"INSERT INTO t1 VALUES ('red'),('blue'),('green')"
-"INSERT IGNORE INTO t1 VALUES ('yellow')"
-"UPDATE IGNORE t1 SET col1 ='yellow' WHERE col1 ='blue'"
-"CREATE TABLE t1 (col1 INT NOT NULL, col2 CHAR(5) NOT NULL, col3 DATE NOT NULL)"
-"INSERT INTO t1 VALUES (100, 'hello', '2004-08-20')"
-"INSERT INTO t1 (col1,col2,col3) VALUES (101, 'hell2', '2004-08-21')"
-"INSERT IGNORE INTO t1 values (NULL,NULL,NULL)"
-"CREATE TABLE t1 (col1 INT NOT NULL default 99, col2 CHAR(6) NOT NULL)"
-"INSERT INTO t1 VALUES (1, 'hello')"
-"INSERT INTO t1 (col2) VALUES ('hello2')"
-"INSERT IGNORE INTO t1 values (NULL,NULL)"
-"INSERT IGNORE INTO t1 (col1) values (3)"
-"INSERT IGNORE INTO t1 () values ()"
+"INSERT INTO t1 values (1/0,1/0)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT IGNORE INTO t1 (col1) VALUES ('2a')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT IGNORE INTO t1 values (1/0,1/0)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"set @@sql_mode='ansi'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT IGNORE INTO t1 VALUES('-129','-1'),('128','256')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT IGNORE INTO t1 VALUES(-129.0,-1.0),(128.0,256.0)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"UPDATE IGNORE t1 SET col2=1/NULL where col1=0","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CREATE TABLE t1(col1 SMALLINT, col2 SMALLINT UNSIGNED)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO t1 VALUES(-32768,0),(0,0),(32767,65535),('-32768','0'),('32767','65535'),(-32768.0,0.0),(32767.0,65535.0)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT IGNORE INTO t1 VALUES(-32769,-1),(32768,65536)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT IGNORE INTO t1 VALUES('-32769','-1'),('32768','65536')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT IGNORE INTO t1 VALUES(-32769,-1.0),(32768.0,65536.0)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CREATE TABLE t1 (col1 MEDIUMINT, col2 MEDIUMINT UNSIGNED)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO t1 VALUES(-8388608,0),(0,0),(8388607,16777215),('-8388608','0'),('8388607','16777215'),(-8388608.0,0.0),(8388607.0,16777215.0)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT IGNORE INTO t1 VALUES(-8388609,-1),(8388608,16777216)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT IGNORE INTO t1 VALUES('-8388609','-1'),('8388608','16777216')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT IGNORE INTO t1 VALUES(-8388609.0,-1.0),(8388608.0,16777216.0)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CREATE TABLE t1 (col1 INT, col2 INT UNSIGNED)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO t1 VALUES(-2147483648,0),(0,0),(2147483647,4294967295),('-2147483648','0'),('2147483647','4294967295'),(-2147483648.0,0.0),(2147483647.0,4294967295.0)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT IGNORE INTO t1 values (-2147483649, -1),(2147643648,4294967296)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT IGNORE INTO t1 values ('-2147483649', '-1'),('2147643648','4294967296')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT IGNORE INTO t1 values (-2147483649.0, -1.0),(2147643648.0,4294967296.0)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CREATE TABLE t1 (col1 BIGINT, col2 BIGINT UNSIGNED)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO t1 VALUES(-9223372036854775808,0),(0,0),(9223372036854775807,18446744073709551615)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO t1 VALUES('-9223372036854775808','0'),('9223372036854775807','18446744073709551615')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO t1 VALUES(-9223372036854774000.0,0.0),(9223372036854775700.0,1844674407370954000.0)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT IGNORE INTO t1 VALUES(-9223372036854775809,-1),(9223372036854775808,18446744073709551616)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT IGNORE INTO t1 VALUES('-9223372036854775809','-1'),('9223372036854775808','18446744073709551616')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT IGNORE INTO t1 VALUES(-9223372036854785809.0,-1.0),(9223372036854785808.0,18446744073709551616.0)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CREATE TABLE t1 (col1 NUMERIC(4,2))","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO t1 VALUES (10.55),(10.5555),(0),(-10.55),(-10.5555),(11),(1e+01)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO t1 VALUES ('10.55'),('10.5555'),('-10.55'),('-10.5555'),('11'),('1e+01')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT IGNORE INTO t1 values (1/0)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT IGNORE INTO t1 VALUES(1000),(-1000)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT IGNORE INTO t1 VALUES('1000'),('-1000')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT IGNORE INTO t1 VALUES(1000.0),(-1000.0)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"UPDATE IGNORE t1 SET col1=1/NULL where col1=0","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CREATE TABLE t1 (col1 FLOAT, col2 FLOAT UNSIGNED)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO t1 VALUES (-1.1E-37,0),(+3.4E+38,+3.4E+38)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO t1 VALUES ('-1.1E-37',0),('+3.4E+38','+3.4E+38')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO t1 (col1) VALUES (3E-46)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT IGNORE INTO t1 (col1) VALUES (1/0)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT IGNORE INTO t1 VALUES (+3.4E+39,-3.4E+39)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT IGNORE INTO t1 VALUES ('+3.4E+39','-3.4E+39')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CREATE TABLE t1 (col1 DOUBLE PRECISION, col2 DOUBLE PRECISION UNSIGNED)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO t1 VALUES (-2.2E-307,0),(2E-307,0),(+1.7E+308,+1.7E+308)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO t1 VALUES ('-2.2E-307',0),('-2E-307',0),('+1.7E+308','+1.7E+308')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO t1 (col1) VALUES (-2.2E-330)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT IGNORE INTO t1 (col1) values (1/0)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT IGNORE INTO t1 VALUES ('+2.0E+309','-2.0E+309')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CREATE TABLE t1 (col1 CHAR(5), col2 VARCHAR(6))","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO t1 VALUES ('hello', 'hello'),('he', 'he'),('hello   ', 'hello ')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO t1 (col2) VALUES ('hello  ')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT IGNORE INTO t1 VALUES ('hellobob', 'hellobob')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"UPDATE IGNORE t1 SET col2 ='hellotrudy' WHERE col2 ='he'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CREATE TABLE t1 (col1 enum('red','blue','green'))","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO t1 VALUES ('red'),('blue'),('green')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT IGNORE INTO t1 VALUES ('yellow')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"UPDATE IGNORE t1 SET col1 ='yellow' WHERE col1 ='blue'","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CREATE TABLE t1 (col1 INT NOT NULL, col2 CHAR(5) NOT NULL, col3 DATE NOT NULL)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO t1 VALUES (100, 'hello', '2004-08-20')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO t1 (col1,col2,col3) VALUES (101, 'hell2', '2004-08-21')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT IGNORE INTO t1 values (NULL,NULL,NULL)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CREATE TABLE t1 (col1 INT NOT NULL default 99, col2 CHAR(6) NOT NULL)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO t1 VALUES (1, 'hello')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO t1 (col2) VALUES ('hello2')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT IGNORE INTO t1 values (NULL,NULL)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT IGNORE INTO t1 (col1) values (3)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT IGNORE INTO t1 () values ()","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "create table t1 (charcol char(255), varcharcol varchar(255),
 binarycol binary(255), varbinarycol varbinary(255), tinytextcol tinytext,
 tinyblobcol tinyblob)"
@@ -90922,6 +91210,7 @@ select'a'; insert into t1 values (200); end;"
 "create table t1 (date date not null)"
 "create table t2 select date from t1"
 "set @@sql_mode= @org_mode"
+"set @@sql_mode= @org_mode","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "create table t1
 (i int comment
 '123456789*123456789*123456789*123456789*
@@ -95791,8 +96080,8 @@ end"
 "create trigger t1_bu before update on t1 for each row set new.col1= bug5893()"
 "drop function bug5893"
 "drop trigger t1_bu"
-"create table t1 (""t1 column"" int)"
-"create trigger t1_bi before insert on t1 for each row set new.""t1 column"" = 5"
+"create table t1 (""t1 column"" int)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"create trigger t1_bi before insert on t1 for each row set new.""t1 column"" = 5","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "create trigger t1_af after insert on t1 for each row set @a=10"
 "create table t1 (a date)"
 "create trigger t1_bi before insert on t1 for each row set new.a = '2004-01-00'"
@@ -97905,7 +98194,8 @@ b VARCHAR(10) CHARSET latin1)"
 "SELECT CAST(CAST('10:11:12.098700' AS TIME) AS DECIMAL(20,6))"
 "create table t1 (da date default '1962-03-03 23:33:34', dt datetime default '1962-03-03')"
 "insert into t1 values ('2007-03-23 13:49:38','2007-03-23 13:49:38')"
-"insert into t1 set dt='2007-03-23 13:49:38',da=dt"
+"insert into t1 values ('2007-03-23 13:49:38','2007-03-23 13:49:38')","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"insert into t1 set dt='2007-03-23 13:49:38',da=dt","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "create table t1 (f1 date, f2 datetime, f3 timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)"
 "insert into t1(f1) values(curdate())"
 "select curdate() < now(), f1 < now(), cast(f1 as date) < now() from t1"
@@ -99037,15 +99327,15 @@ END"
 "select 1 / 1E-500"
 "select 1 / 0"
 "set sql_mode='ansi,traditional'"
-"CREATE TABLE Sow6_2f (col1 NUMERIC(4,2))"
-"INSERT INTO Sow6_2f VALUES (10.55)"
-"INSERT INTO Sow6_2f VALUES (10.5555)"
-"INSERT INTO Sow6_2f VALUES (-10.55)"
-"INSERT INTO Sow6_2f VALUES (-10.5555)"
-"INSERT INTO Sow6_2f VALUES (11)"
-"SELECT MOD(col1,0) FROM Sow6_2f"
-"drop table Sow6_2f"
-"select 10.3330000000000/12.34500000"
+"CREATE TABLE Sow6_2f (col1 NUMERIC(4,2))","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO Sow6_2f VALUES (10.55)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO Sow6_2f VALUES (10.5555)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO Sow6_2f VALUES (-10.55)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO Sow6_2f VALUES (-10.5555)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"INSERT INTO Sow6_2f VALUES (11)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"SELECT MOD(col1,0) FROM Sow6_2f","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"drop table Sow6_2f","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"select 10.3330000000000/12.34500000","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "select 0/0"
 "select 9999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999 as x"
 "select 9999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999 + 1 as x"
@@ -105084,7 +105374,7 @@ b int unsigned
 "SET GLOBAL partial_revokes=OFF"
 "DROP USER foo@localhost, u1, foo3, foo2@localhost, foo4, redqueen@localhost"
 "CREATE USER u1 COMMENT 'Hello ""Smith""'"
-"SET @@sql_mode = @org_sql_mode"
+"SET @@sql_mode = @org_sql_mode",NO_BACKSLASH_ESCAPES
 "CREATE USER u1@localhost IDENTIFIED BY 'foo' COMMENT 'Not permitted to change this'"
 "GRANT SELECT ON *.* to u1@localhost"
 "CREATE USER u1@localhost IDENTIFIED BY 'foo',u2@localhost IDENTIFIED BY 'foo' COMMENT ""Works with partial restrictions"""
@@ -106780,8 +107070,8 @@ a in (select a+2 from t1), a = all (select a from t1) from t1"
 "create view v1 (x) as select b from t1"
 "insert into v1 values (1)"
 "insert into t1 (b) values (2)"
-"create table t1 (""a*b"" int)"
-"create view v1 as select ""a*b"" from t1"
+"create table t1 (""a*b"" int)","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"create view v1 as select ""a*b"" from t1","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "create table t1 (t_column int)"
 "create view v1 as select 'a'"
 "select * from v1, t1"
@@ -114226,7 +114516,7 @@ order by find_in_set(ln.n,eq.pivot_lines), ln.n;
 
 end
 
-"
+",PIPES_AS_CONCAT
 "call solver(""[[2,3,1],  [5,-3,10],  [6,0,12]]"", ""[7,21,28]"")"
 "call solver(""[[1,2,1,3],  [1,0,1,1],  [0,1,0,1],  [1,3,1,4]]"", ""[1,3,-1,4]"")"
 "call solver(""[[1,2,1,3],  [1,0,1,1],  [0,1,0,1],  [1,3,1,3]]"", ""[1,3,-1,4]"")"

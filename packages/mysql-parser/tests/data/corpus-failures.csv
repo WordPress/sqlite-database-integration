@@ -1,59 +1,5 @@
 "COMMIT; INSERT INTO t2 VALUES (1); BEGIN; "
 "COMMIT; INSERT INTO t2 VALUES (1); BEGIN; INSERT INTO t1 VALUES (99); "
-"CREATE TABLE "" quoted name тест"" (i INT)"
-"CREATE TABLE """"""a"" (i INT)"
-"CREATE TABLE ""custo`mers"" (
-""customer'_id"" INT AUTO_INCREMENT PRIMARY KEY,
-""fir`st_`na`me"" VARCHAR(50) NOT NULL,
-""last_'name"" VARCHAR(50) NOT NULL,
-""em`ail"" VARCHAR(100) UNIQUE NOT NULL,
-`pho""\ne` VARCHAR(15),
-""created'_'at"" TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-""updated'_'at"" TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-)"
-"CREATE TABLE ""orders"" (
-""order_id"" INT AUTO_INCREMENT PRIMARY KEY,
-""customer_id"" INT NOT NULL,
-""order_date"" TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-""status"" ENUM('Pending', 'Completed', 'Cancelled') NOT NULL,
-""total\n"" DECIMAL(10, 2) NOT NULL CHECK (""total\n"" >= 0),
-FOREIGN KEY (customer_id) REFERENCES ""custo`mers""(""customer'_id"") ON DELETE CASCADE,
-INDEX (order_date)
-)"
-"CREATE TABLE ""prod'ucts"" (
-""product`_`id"" INT AUTO_INCREMENT PRIMARY KEY,
-""product'_`name"" VARCHAR(100) NOT NULL,
-""descri`p`t`i`o`n"" TEXT,
-""pr'i'ce"" DECIMAL(10, 2) NOT NULL CHECK (""pr'i'ce"" >= 0),
-`stock""_""qua\ntity` INT DEFAULT 0,
-`created'_'at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-`updated""_'at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-INDEX (""product'_`name"")
-)"
-"CREATE TABLE `'order'_'items'` (
-`order'_'item_id` INT AUTO_INCREMENT PRIMARY KEY,
-`'order'_'id'` INT NOT NULL,
-`product'_'id` INT NOT NULL,
-`qua\ntity` INT NOT NULL CHECK (`qua\ntity` > 0),
-`p'rice` DECIMAL(10,2) NOT NULL CHECK (`p'rice` >= 0),
-FOREIGN KEY (`'order'_'id'`) REFERENCES ""orders""(order_id) ON DELETE CASCADE,
-FOREIGN KEY (`product'_'id`) REFERENCES ""prod'ucts""(""product`_`id"") ON DELETE CASCADE,
-UNIQUE KEY (`'order'_'id'`, `product'_'id`)
-)"
-"CREATE TABLE t1(col1 INT, col2 DATE)
-ENGINE=INNODB
-PARTITION BY RANGE(YEAR(""col2""))
-SUBPARTITION BY HASH(TO_DAYS(""col2""))(
-PARTITION p0 VALUES LESS THAN (1990)(
-SUBPARTITION s0,
-SUBPARTITION s1 tablespace=`innodb_file_per_table`
-),
-PARTITION p1 VALUES LESS THAN MAXVALUE(
-SUBPARTITION s2,
-SUBPARTITION s3 tablespace=""innodb_file_per_table""
-)
-)"
-"CREATE TABLE table_25930_a ( ""blah"" INT )"
 "DROP PROCEDURE IF EXISTS p26030; CREATE PROCEDURE p26030() BEGIN SELECT 1; END; CALL p26030()
 "
 "DROP PROCEDURE IF EXISTS p26030; CREATE PROCEDURE p26030() SELECT 1; CALL p26030()
@@ -61,14 +7,8 @@ SUBPARTITION s3 tablespace=""innodb_file_per_table""
 "DROP PROCEDURE bug6866;
 
 DROP VIEW tv"
-"DROP TABLE """"""a"""
 "FLUSH TABLES;
 UNLOCK TABLES"
-"SELECT 'a%' LIKE 'a!%' ESCAPE '!', 'a%' LIKE 'a!' || '%' ESCAPE '!'"
-"SELECT 'a%' LIKE 'a!%' ESCAPE '$', 'a%' LIKE 'a!' || '%' ESCAPE '$'"
-"SELECT 'a%' NOT LIKE 'a!%' ESCAPE '!', 'a%' NOT LIKE 'a!' || '%' ESCAPE '!'"
-"SELECT 'a%' NOT LIKE 'a!%' ESCAPE '$', 'a%' NOT LIKE 'a!' || '%' ESCAPE '$'"
-"SELECT * from ""full"""
 "SET sql_mode = 'NO_ENGINE_SUBSTITUTION';
 create procedure test_resignal()
 begin
@@ -254,7 +194,6 @@ RETURNS VARCHAR(64) BINARY UNICODE
 BEGIN
 RETURN '';
 END"
-"SHOW CREATE TABLE """"""a"""
 "alter table t1 add b integer;
 call p1"
 "create function bug12812() returns char(2)
@@ -262,18 +201,13 @@ begin
 return 'ok';
 end;
 create user user_bug12812@localhost IDENTIFIED BY 'ABC'"
-"create procedure bug2564_2()
-insert into ""t1"" values ('foo', 1)"
 "create procedure bug5307()
 begin
 end; set @x = 3"
-"create table t1 (""a*b"" int)"
-"create table t1 (""t1 column"" int)"
 "create table t1 (i int);
 insert into t1 values (1),(2),(3);
 select * from t1 where i = 2;
 drop table t1;"
-"create trigger t1_bi before insert on t1 for each row set new.""t1 column"" = 5"
 "create view v1 as select a from t3;
 create procedure bug10100pt(level int, lim int)
 begin
@@ -337,7 +271,6 @@ else
 execute stmt2;
 end if;
 end"
-"select ""$id2"", ""$$$"" from t where t.""$id"" = 0"
 "select ""stmt 1"";             select ""space, stmt 2"""
 "select ""stmt 1"";/* comment */select ""comment, stmt 2"""
 "select ""stmt 1"";select ""stmt 2 non terminated"""
