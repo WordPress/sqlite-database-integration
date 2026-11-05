@@ -986,7 +986,8 @@ class WP_MySQL_Lexer {
 			$type                      = self::AT_SIGN;
 		} elseif ( '\\' === $byte ) {
 			$this->bytes_already_read += 1;
-			if ( 'N' === $next_byte ) {
+			// MySQL 8.0.1 removed "\N" as a synonym for NULL.
+			if ( 'N' === $next_byte && $this->mysql_version < 80001 ) {
 				$this->bytes_already_read += 1;
 				$type                      = self::NULL_SYM;
 			} else {

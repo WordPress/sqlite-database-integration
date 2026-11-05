@@ -666,7 +666,6 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 			'after a float'               => array( '1e5.1', array( 'FLOAT_NUM', 'DECIMAL_NUM' ) ),
 			'after a hex number'          => array( '0x1F.1', array( 'HEX_NUM', 'DECIMAL_NUM' ) ),
 			'after a binary number'       => array( '0b1.1', array( 'BIN_NUM', 'DECIMAL_NUM' ) ),
-			'after "\N"'                  => array( '\N.1', array( 'NULL', 'DECIMAL_NUM' ) ),
 			'after a version comment'     => array( '/*!50000.5*/', array( 'DECIMAL_NUM' ) ),
 
 			// A user variable name includes the dot.
@@ -1073,6 +1072,36 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 			'a dollar sign in a tag' => array( '$a$b' ),
 			'a skipped close'        => array( '$a$ $$a$' ),
 			'a broken match at end'  => array( '$ab$ $a$ab$' ),
+		);
+	}
+
+	/**
+	 * @dataProvider data_backslash_n
+	 */
+	public function test_backslash_n_is_null_before_mysql_8_0_1( string $sql, int $mysql_version, array $expected ): void {
+		$tokens = ( new WP_MySQL_Lexer( $sql, $mysql_version ) )->remaining_tokens();
+		$names  = array_map(
+			static function ( WP_MySQL_Token $token ): string {
+				return $token->get_name();
+			},
+			$tokens
+		);
+		$this->assertSame( $expected, $names, "$sql on $mysql_version" );
+	}
+
+	public function data_backslash_n(): array {
+		$null    = array( 'SELECT', 'NULL', 'END_OF_INPUT', 'YYEOF' );
+		$invalid = array( 'SELECT' );
+		return array(
+			'MySQL 5.7'             => array( 'SELECT \N', 50744, $null ),
+			'MySQL 8.0.0'           => array( 'SELECT \N', 80000, $null ),
+			'before a number'       => array( '\N.1', 80000, array( 'NULL', 'DECIMAL_NUM', 'END_OF_INPUT', 'YYEOF' ) ),
+			'MySQL 8.0.1'           => array( 'SELECT \N', 80001, $invalid ),
+			'MySQL 8.4'             => array( 'SELECT \N', 80410, $invalid ),
+			'lowercase on 5.7'      => array( 'SELECT \n', 50744, $invalid ),
+			'lowercase on 8.4'      => array( 'SELECT \n', 80410, $invalid ),
+			'another letter on 5.7' => array( 'SELECT \A', 50744, $invalid ),
+			'another letter on 8.4' => array( 'SELECT \A', 80410, $invalid ),
 		);
 	}
 

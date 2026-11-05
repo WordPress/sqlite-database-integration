@@ -156,6 +156,7 @@ class WP_MySQL_Parser_Tests extends TestCase {
 			'SELECT 0.select',                     // "SELECT" after "0." is a keyword.
 			'SELECT @@ version',                   // An empty name after "@@".
 			"SELECT @@'version'",                  // A single-quoted name after "@@".
+			'SELECT \N',                           // "\N" was removed in MySQL 8.0.1.
 			'SELECT 1 /* a',                       // An unterminated comment.
 			'SELECT 1 /*!80000 + 2',               // An unterminated version comment.
 			'SELECT 1 /*!99999 a',                 // An unterminated skipped comment.
