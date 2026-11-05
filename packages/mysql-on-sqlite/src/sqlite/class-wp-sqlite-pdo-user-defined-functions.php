@@ -1311,7 +1311,9 @@ class WP_SQLite_PDO_User_Defined_Functions {
 			'/'  => '\\/',
 			"\0" => '\\x00',
 		);
-		$classes = array();
+
+		// PCRE's [:punct:] also holds ASCII symbols like "+", where ICU's doesn't.
+		$classes = array( 'punct' => '{P}' );
 
 		/*
 		 * With the "u" modifier, PCRE reads [:upper:] and [:lower:] case-sensitively
