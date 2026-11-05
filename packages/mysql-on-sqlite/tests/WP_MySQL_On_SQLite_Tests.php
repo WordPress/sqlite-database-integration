@@ -427,6 +427,46 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		);
 	}
 
+	public function testRegexpJitStackLimit() {
+		// A repeated group exhausts PHP's JIT stack after a few thousand characters.
+		$subject = str_repeat( 'a', 20000 );
+		if ( PHP_VERSION_ID < 70300 ) {
+			// PHP 7.2 can't retry without JIT.
+			$this->assertQueryError(
+				"SELECT REGEXP_LIKE('$subject', '^(a|b)*\$')",
+				'Regular expression evaluation exceeded internal limits.'
+			);
+			return;
+		}
+		$this->assertQuery(
+			"SELECT
+				'$subject' REGEXP '^(a|b)*\$' AS operator_result,
+				REGEXP_LIKE('$subject', '^(a|b)*\$') AS like_result,
+				LENGTH(REGEXP_SUBSTR('$subject', '(a|b)+')) AS substr_length,
+				REGEXP_INSTR('$subject', '(a|b)+\$', 1, 1, 1) AS instr_result"
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'operator_result' => '1',
+					'like_result'     => '1',
+					'substr_length'   => '20000',
+					'instr_result'    => '20001',
+				),
+			),
+			$this->last_result
+		);
+	}
+
+	public function testRegexpLimitWithoutJit() {
+		// Matching without JIT has a limit, too.
+		$subject = str_repeat( 'a', 200000 );
+		$this->assertQueryError(
+			"SELECT REGEXP_LIKE('$subject', '^(a|b)*\$')",
+			'Regular expression evaluation exceeded internal limits.'
+		);
+	}
+
 	public function testRegexpLegacyOperatorRegression() {
 		// The legacy REGEXP operator must keep working alongside REGEXP_LIKE.
 		$this->assertQuery( "SELECT 'abc' REGEXP 'ABC' AS r" );
