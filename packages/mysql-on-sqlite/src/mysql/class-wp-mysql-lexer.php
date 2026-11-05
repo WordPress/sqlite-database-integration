@@ -1137,7 +1137,12 @@ class WP_MySQL_Lexer {
 		'ENCLOSED'                               => self::ENCLOSED_SYMBOL,
 		'ENCRYPTION'                             => self::ENCRYPTION_SYMBOL,
 		'END'                                    => self::END_SYMBOL,
-		'END_OF_INPUT'                           => self::EOF,
+		/*
+		 * "END_OF_INPUT" is the name of the internal end-of-input terminal in
+		 * the MySQL grammar, but it is not a keyword in MySQL. Typed input is
+		 * tokenized as an identifier, so that it can be used as an alias,
+		 * while the EOF token is only emitted at the end of the input.
+		 */
 		'ENDS'                                   => self::ENDS_SYMBOL,
 		'ENGINE'                                 => self::ENGINE_SYMBOL,
 		'ENGINES'                                => self::ENGINES_SYMBOL,

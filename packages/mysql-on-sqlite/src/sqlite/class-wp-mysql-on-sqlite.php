@@ -1118,7 +1118,7 @@ class WP_MySQL_On_SQLite extends PDO {
 			$parser->next_query();
 			$ast = $parser->get_query_ast();
 			if ( null === $ast ) {
-				throw $this->new_driver_exception( 'Failed to parse the MySQL query.' );
+				throw $this->new_syntax_error_exception( 'Failed to parse the MySQL query.' );
 			}
 
 			if ( $parser->next_query() ) {
@@ -1639,7 +1639,7 @@ class WP_MySQL_On_SQLite extends PDO {
 			|| WP_MySQL_Lexer::EOF !== $last_token->id
 			|| strlen( $query ) !== $last_token->get_start() + $last_token->get_length()
 		) {
-			throw $this->new_invalid_input_exception();
+			throw $this->new_syntax_error_exception();
 		}
 
 		// Reset the reusable parser with new tokens or create it on first use.
@@ -8192,12 +8192,31 @@ class WP_MySQL_On_SQLite extends PDO {
 	}
 
 	/**
+	 * Create a new syntax error exception.
+	 *
+	 * This exception is used for input that MySQL rejects as a syntax error:
+	 * malformed queries that the lexer cannot tokenize, or queries that do not
+	 * match the MySQL grammar. Like MySQL, it reports SQLSTATE "42000" with
+	 * error code 1064.
+	 *
+	 * @param  string $message The exception message.
+	 * @return WP_MySQL_On_SQLite_Exception
+	 */
+	private function new_syntax_error_exception( string $message = 'MySQL query syntax error.' ): WP_MySQL_On_SQLite_Exception {
+		return new WP_MySQL_On_SQLite_Exception(
+			$this,
+			$message,
+			'42000',
+			null,
+			array( '42000', 1064, $message )
+		);
+	}
+
+	/**
 	 * Create a new invalid input exception.
 	 *
-	 * This exception is used to mark input that is invalid according to the
-	 * MySQL grammar, such as malformed queries that the lexer cannot tokenize.
-	 * It also marks cases that should never occur according to the grammar,
-	 * where it serves as an assertion that should never fail.
+	 * This exception is used to mark cases that should never occur according
+	 * to the MySQL grammar. It may serve as an assertion that should never fail.
 	 *
 	 * @return WP_MySQL_On_SQLite_Exception
 	 */
