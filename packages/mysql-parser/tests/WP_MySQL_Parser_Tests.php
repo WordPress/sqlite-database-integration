@@ -116,6 +116,12 @@ class WP_MySQL_Parser_Tests extends TestCase {
 			'SHOW TABLES',
 			'EXPLAIN SELECT 1',
 			'SELECT 1 /*!99999 /* */ */',
+			'SELECT ?',
+			'SELECT ?, ? FROM t',
+			'SELECT ?+1',
+			'SELECT * FROM t WHERE?=1',
+			'SELECT ?`a`',
+			"SELECT ?'a'",
 		);
 		foreach ( $statements as $sql ) {
 			$this->assertNotNull( self::parse( $sql ), "Failed to parse: $sql" );
@@ -157,6 +163,10 @@ class WP_MySQL_Parser_Tests extends TestCase {
 			'SELECT @@ version',                   // An empty name after "@@".
 			"SELECT @@'version'",                  // A single-quoted name after "@@".
 			'SELECT \N',                           // "\N" was removed in MySQL 8.0.1.
+			'SELECT ?a',                           // A marker before an identifier byte.
+			'SELECT ?FROM t',                      // A marker before an identifier byte.
+			'UPDATE t SET a = a + ?WHERE 1',       // A marker before an identifier byte.
+			"SELECT ?\u{00E9}",                    // A marker before an identifier byte.
 			'SELECT 1 /* a',                       // An unterminated comment.
 			'SELECT 1 /*!80000 + 2',               // An unterminated version comment.
 			'SELECT 1 /*!99999 a',                 // An unterminated skipped comment.

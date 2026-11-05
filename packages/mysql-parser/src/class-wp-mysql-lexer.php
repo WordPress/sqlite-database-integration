@@ -803,7 +803,6 @@ class WP_MySQL_Lexer {
 			'~' => self::TILDE,
 			'%' => self::PERCENT,
 			'^' => self::CARET,
-			'?' => self::PARAM_MARKER,
 			'{' => self::LEFT_BRACE,
 			'}' => self::RIGHT_BRACE,
 			'=' => self::EQ,
@@ -984,6 +983,13 @@ class WP_MySQL_Lexer {
 			// follows is emitted as its own token (see produce_at_variable()).
 			$this->bytes_already_read += 1;
 			$type                      = self::AT_SIGN;
+		} elseif ( '?' === $byte ) {
+			// A parameter marker can't precede a byte that can be part of an identifier.
+			if ( null !== $next_byte && ( strspn( $next_byte, self::IDENTIFIER_MASK ) > 0 || $next_byte > "\x7F" ) ) {
+				return null; // Invalid input.
+			}
+			$this->bytes_already_read += 1;
+			$type                      = self::PARAM_MARKER;
 		} elseif ( '\\' === $byte ) {
 			$this->bytes_already_read += 1;
 			// MySQL 8.0.1 removed "\N" as a synonym for NULL.

@@ -1105,6 +1105,44 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 		);
 	}
 
+	/**
+	 * MySQL treats "?" as a parameter marker only if the next byte can't be part of
+	 * an identifier.
+	 *
+	 * @dataProvider data_parameter_marker_tokens
+	 */
+	public function test_parameter_marker_tokens( string $sql, array $expected ): void {
+		$this->assertSame( $expected, self::token_names( $sql ), $sql );
+	}
+
+	/**
+	 * @return array<string,array{0:string,1:string[]}>
+	 */
+	public function data_parameter_marker_tokens(): array {
+		$marker  = array( 'SELECT', 'PARAM_MARKER', 'END_OF_INPUT', 'YYEOF' );
+		$invalid = array( 'SELECT' );
+		return array(
+			'at the end of the input' => array( 'SELECT ?', $marker ),
+			'before a space'          => array( 'SELECT ? ', $marker ),
+			'before an operator'      => array( 'SELECT ?+1', array( 'SELECT', 'PARAM_MARKER', 'PLUS', 'NUM', 'END_OF_INPUT', 'YYEOF' ) ),
+			'before a comma'          => array( 'SELECT ?,?', array( 'SELECT', 'PARAM_MARKER', 'COMMA', 'PARAM_MARKER', 'END_OF_INPUT', 'YYEOF' ) ),
+			'before a marker'         => array( 'SELECT ??', array( 'SELECT', 'PARAM_MARKER', 'PARAM_MARKER', 'END_OF_INPUT', 'YYEOF' ) ),
+			'before a string'         => array( "SELECT ?'a'", array( 'SELECT', 'PARAM_MARKER', 'TEXT_STRING', 'END_OF_INPUT', 'YYEOF' ) ),
+			'before a quoted name'    => array( 'SELECT ?`a`', array( 'SELECT', 'PARAM_MARKER', 'IDENT_QUOTED', 'END_OF_INPUT', 'YYEOF' ) ),
+			'before a comment'        => array( 'SELECT ?/* c */', $marker ),
+			'before a dot'            => array( 'SELECT ?.a', array( 'SELECT', 'PARAM_MARKER', 'DOT', 'IDENT', 'END_OF_INPUT', 'YYEOF' ) ),
+			'after a keyword'         => array( 'SELECT * FROM t WHERE?=1', array( 'SELECT', 'ASTERISK', 'FROM', 'IDENT', 'WHERE', 'PARAM_MARKER', '=', 'NUM', 'END_OF_INPUT', 'YYEOF' ) ),
+			'before a letter'         => array( 'SELECT ?a', $invalid ),
+			'before a keyword'        => array( 'SELECT ?FROM t', $invalid ),
+			'before a digit'          => array( 'SELECT ?1', $invalid ),
+			'before an underscore'    => array( 'SELECT ?_', $invalid ),
+			'before a dollar sign'    => array( 'SELECT ?$', $invalid ),
+			'before a UTF-8 name'     => array( "SELECT ?\u{00E9}", $invalid ),
+			'before an emoji'         => array( "SELECT ?\u{1F42C}", $invalid ),
+			'before invalid UTF-8'    => array( "SELECT ?\xC0", $invalid ),
+		);
+	}
+
 	public function test_dollar_quoted_text_requires_mysql_8_1(): void {
 		$tokens = ( new WP_MySQL_Lexer( '$$ a $$', 80099 ) )->remaining_tokens();
 		$this->assertSame(
