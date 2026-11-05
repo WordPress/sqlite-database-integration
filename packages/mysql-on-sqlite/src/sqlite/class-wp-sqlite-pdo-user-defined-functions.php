@@ -671,9 +671,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		}
 		$compiled = $this->regexp_compile( $pattern, $match_type );
 
-		$expr        = (string) $expr;
-		$replacement = (string) $replacement;
-		$byte_start  = $this->regexp_char_to_byte_offset( $expr, (int) $pos, true );
+		$byte_start = $this->regexp_char_to_byte_offset( $expr, (int) $pos, true );
 
 		// 0 means replace all; negative occurrences are clamped to 1 (MySQL behavior).
 		$n = (int) $occurrence;
@@ -739,8 +737,6 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		}
 		$compiled = $this->regexp_compile( $pattern, $match_type );
 
-		$expr = (string) $expr;
-
 		// MySQL clamps occurrence <= 0 to 1.
 		$n = max( 1, (int) $occurrence );
 
@@ -785,7 +781,6 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		}
 		$compiled = $this->regexp_compile( $pattern, $match_type );
 
-		$expr     = (string) $expr;
 		$position = (int) $pos;
 
 		// MySQL clamps occurrence <= 0 to 1.

@@ -5177,8 +5177,10 @@ class WP_MySQL_On_SQLite extends PDO {
 		 *
 		 * The parentheses keep the MySQL precedence. In SQLite, REGEXP binds
 		 * as loosely as "=", so "1 = 'a' REGEXP 'a'" would be "(1 = 'a') REGEXP 'a'".
+		 *
+		 * PDO narrows integer UDF arguments to 32 bits, so pass the operands as text.
 		 */
-		return sprintf( '(%sREGEXP(%s, %s%s))', $not, $pattern, $subject, $is_binary ? ', 1' : '' );
+		return sprintf( '(%sREGEXP(CAST(%s AS TEXT), CAST(%s AS TEXT)%s))', $not, $pattern, $subject, $is_binary ? ', 1' : '' );
 	}
 
 	/**
@@ -5393,6 +5395,17 @@ class WP_MySQL_On_SQLite extends PDO {
 				}
 			case 'VERSION':
 				return $this->quote_sqlite_value( $this->get_mysql_server_version_string() );
+			case 'REGEXP_LIKE':
+			case 'REGEXP_SUBSTR':
+			case 'REGEXP_INSTR':
+			case 'REGEXP_REPLACE':
+				// PDO narrows integer UDF arguments to 32 bits, so pass the subject, the
+				// pattern, and REGEXP_REPLACE's replacement as text.
+				$text_args = min( count( $args ), 'REGEXP_REPLACE' === $name ? 3 : 2 );
+				for ( $i = 0; $i < $text_args; $i++ ) {
+					$args[ $i ] = sprintf( 'CAST(%s AS TEXT)', $args[ $i ] );
+				}
+				return sprintf( '%s(%s)', $name, implode( ', ', $args ) );
 			default:
 				return $this->translate_sequence( $node->get_children() );
 		}

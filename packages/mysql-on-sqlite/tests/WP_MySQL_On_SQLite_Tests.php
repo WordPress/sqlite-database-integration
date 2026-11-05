@@ -1247,6 +1247,77 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		);
 	}
 
+	/**
+	 * @dataProvider regexpBigIntegerCases
+	 */
+	public function testRegexpBigIntegerOperands( $sql, $expected ) {
+		$this->assertQuery( "SELECT $sql AS r" );
+		$this->assertSame( $expected, $this->last_result[0]->r );
+	}
+
+	public static function regexpBigIntegerCases() {
+		return array(
+			// The smallest values that don't fit in 32 bits.
+			'2^31, subject'        => array( "REGEXP_SUBSTR(2147483648, '.*')", '2147483648' ),
+			'-2^31 - 1, subject'   => array( "REGEXP_SUBSTR(-2147483649, '.*')", '-2147483649' ),
+			'largest BIGINT'       => array( "REGEXP_SUBSTR(9223372036854775807, '.*')", '9223372036854775807' ),
+
+			'REGEXP_LIKE subject'  => array( "REGEXP_LIKE(9999999999, '^9')", '1' ),
+			'REGEXP_LIKE pattern'  => array( "REGEXP_LIKE('9999999999', 9999999999)", '1' ),
+			'REGEXP_SUBSTR'        => array( "REGEXP_SUBSTR(9999999999, '9+')", '9999999999' ),
+			'REGEXP_SUBSTR regex'  => array( "REGEXP_SUBSTR('9999999999', 9999999999)", '9999999999' ),
+			'REGEXP_INSTR'         => array( "REGEXP_INSTR(9999999999, '99', 1, 2)", '3' ),
+			'REGEXP_INSTR pattern' => array( "REGEXP_INSTR('x9999999999', 9999999999)", '2' ),
+			'REGEXP_REPLACE'       => array( "REGEXP_REPLACE(9999999999, '9', '1')", '1111111111' ),
+			'REGEXP_REPLACE regex' => array( "REGEXP_REPLACE('9999999999', 9999999999, 'x')", 'x' ),
+			'replacement'          => array( "REGEXP_REPLACE('a', 'a', 9999999999)", '9999999999' ),
+			'operator subject'     => array( "9999999999 REGEXP '^9'", '1' ),
+			'operator pattern'     => array( "'9999999999' REGEXP 9999999999", '1' ),
+			'negated operator'     => array( "9999999999 NOT REGEXP '^9'", '0' ),
+			'REGEXP BINARY'        => array( "9999999999 REGEXP BINARY '^9'", '1' ),
+		);
+	}
+
+	public function testRegexpBigIntegerColumn() {
+		$this->assertQuery( 'CREATE TABLE phones (id INT PRIMARY KEY, phone BIGINT)' );
+		$this->assertQuery( 'INSERT INTO phones VALUES (1, 15551234567), (2, 42), (3, NULL)' );
+		$this->assertQuery(
+			"SELECT
+				phone REGEXP '^1' AS operator_result,
+				REGEXP_LIKE(phone, '^1') AS like_result,
+				REGEXP_REPLACE(phone, '^1', '') AS replace_result,
+				REGEXP_SUBSTR(phone, '^[0-9]{3}') AS substr_result,
+				REGEXP_INSTR(phone, '4') AS instr_result
+			FROM phones ORDER BY id"
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'operator_result' => '1',
+					'like_result'     => '1',
+					'replace_result'  => '5551234567',
+					'substr_result'   => '155',
+					'instr_result'    => '8',
+				),
+				(object) array(
+					'operator_result' => '0',
+					'like_result'     => '0',
+					'replace_result'  => '42',
+					'substr_result'   => null,
+					'instr_result'    => '1',
+				),
+				(object) array(
+					'operator_result' => null,
+					'like_result'     => null,
+					'replace_result'  => null,
+					'substr_result'   => null,
+					'instr_result'    => null,
+				),
+			),
+			$this->last_result
+		);
+	}
+
 	public function testRegexpSetDifferenceAfterShorthand() {
 		// ICU reads "--" as a set difference, which PCRE can't express. Escaping the
 		// first hyphen would turn PCRE's error into a range from "-" to "x", matching ".".
