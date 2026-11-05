@@ -20,7 +20,7 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 	 * legitimately changes.
 	 */
 	const EXPECTED_QUERIES  = 69076;
-	const EXPECTED_FAILURES = 64;
+	const EXPECTED_FAILURES = 63;
 
 	public function test_corpus_acceptance_rate(): void {
 		$parser = WP_MySQL_Parser_Factory::create_parser();

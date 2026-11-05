@@ -149,6 +149,25 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 			'six digits without space'  => array( 'SELECT /*!080100+ */ 1', 80100, array( 'SELECT', '0', '+', '1' ) ),
 			'six digits at comment end' => array( 'SELECT /*!080100*/ + 1', 80100, array( 'SELECT', '0', '+', '1' ) ),
 			'seven digits'              => array( 'SELECT /*!0801007 + */ 1', 80100, array( 'SELECT', '07', '+', '1' ) ),
+
+			// A version comment that doesn't apply can contain other comments.
+			'nested comment'            => array( 'SELECT 1 /*!99999 /* */ */', 80410, array( 'SELECT', '1' ) ),
+			'text around nested'        => array( 'SELECT 1 /*!99999 a /* b */ c */ + 2', 80410, array( 'SELECT', '1', '+', '2' ) ),
+			'two nested comments'       => array( 'SELECT 1 /*!99999 /* a */ /* b */ */ + 2', 80410, array( 'SELECT', '1', '+', '2' ) ),
+			'nested version comment'    => array( 'SELECT 1 /*!99999 /*!99999 a */ */ + 2', 80410, array( 'SELECT', '1', '+', '2' ) ),
+			'nested comment on 5.7'     => array( 'SELECT 1 /*!80000 /* */ */ + 2', 50744, array( 'SELECT', '1', '+', '2' ) ),
+
+			// A nested comment ends at its first closing marker.
+			'only one level of nesting' => array( 'SELECT 1 /*!99999 /* /* */ */ + 2', 80410, array( 'SELECT', '1', '+', '2' ) ),
+			'text after the outer end'  => array( 'SELECT 1 /*!99999 /* /* */ */ */', 80410, array( 'SELECT', '1', '*', '/' ) ),
+
+			// Markers can't overlap.
+			'"/*/" opens a comment'     => array( 'SELECT 1 /*!99999 /*/ */ */ + 2', 80410, array( 'SELECT', '1', '+', '2' ) ),
+			'"*/*" closes a comment'    => array( 'SELECT 1 /*!99999 */* 2', 80410, array( 'SELECT', '1', '*', '2' ) ),
+
+			// Other comments have their own rules.
+			'regular comment'           => array( 'SELECT 1 /* /* */ + 2', 80410, array( 'SELECT', '1', '+', '2' ) ),
+			'applied version comment'   => array( 'SELECT 1 /*!80000 /* */ + 2 */', 80410, array( 'SELECT', '1', '+', '2' ) ),
 		);
 
 		foreach ( array(

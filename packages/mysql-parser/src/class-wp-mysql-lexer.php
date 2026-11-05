@@ -1458,7 +1458,17 @@ class WP_MySQL_Lexer {
 		$version = (int) substr( $this->sql, $this->bytes_already_read, $version_length );
 
 		if ( $this->mysql_version < $version ) {
-			// Version not satisfied. Treat the content as a regular comment.
+			// Version not satisfied. Treat the content as a comment. Unlike a regular
+			// comment, it can contain other comments, which can't be nested any further.
+			while ( true ) {
+				$nested_start = strpos( $this->sql, '/*', $this->bytes_already_read );
+				$comment_end  = strpos( $this->sql, '*/', $this->bytes_already_read );
+				if ( false === $nested_start || ( false !== $comment_end && $comment_end < $nested_start ) ) {
+					break;
+				}
+				$this->bytes_already_read = $nested_start + 2;
+				$this->read_comment_content();
+			}
 			$this->read_comment_content();
 			return self::COMMENT;
 		} else {

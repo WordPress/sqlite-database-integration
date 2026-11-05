@@ -115,6 +115,7 @@ class WP_MySQL_Parser_Tests extends TestCase {
 			'SELECT @@`version`',
 			'SHOW TABLES',
 			'EXPLAIN SELECT 1',
+			'SELECT 1 /*!99999 /* */ */',
 		);
 		foreach ( $statements as $sql ) {
 			$this->assertNotNull( self::parse( $sql ), "Failed to parse: $sql" );
