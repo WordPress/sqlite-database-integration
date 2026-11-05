@@ -667,11 +667,11 @@ class WP_MySQL_Lexer {
 	 *
 	 * MySQL treats "@" as its own terminal. A single "@" is followed by the
 	 * unquoted user-variable name (always an identifier, never a keyword; it may
-	 * contain "." and "$"), by an empty name (MySQL's empty LEX_HOSTNAME, which
-	 * makes "SELECT @" and "user1@" valid), or by a quoted name supplied by the
-	 * following token. A "@@" prefix is two "@" terminals, followed by the system
-	 * variable name. As in MySQL, that name can't be empty, and only backticks
-	 * can quote it.
+	 * contain ".", "$", and non-ASCII characters), by an empty name (MySQL's empty
+	 * LEX_HOSTNAME, which makes "SELECT @" and "user1@" valid), or by a quoted name
+	 * supplied by the following token. A "@@" prefix is two "@" terminals, followed
+	 * by the system variable name. As in MySQL, that name can't be empty, and only
+	 * backticks can quote it.
 	 *
 	 * @param int $at_start Byte offset of the "@" token.
 	 */
@@ -697,14 +697,21 @@ class WP_MySQL_Lexer {
 			return;
 		}
 
-		$name_length = strspn(
-			$this->sql,
-			self::IDENTIFIER_MASK . '.',
-			$position
-		);
+		// Read the identifier characters and any "." between them as one name.
+		while ( true ) {
+			$this->read_identifier();
+			if ( '.' !== ( $this->sql[ $this->bytes_already_read ] ?? null ) ) {
+				break;
+			}
+			$this->bytes_already_read += 1;
+		}
+
+		// The "." read as a part of the name is not a qualified name separator.
+		$this->next_state = self::STATE_START;
+
+		$name_length = $this->bytes_already_read - $position;
 		if ( $name_length > 0 ) {
-			$out[]                    = $this->make_token( self::IDENT, $position, $name_length );
-			$this->bytes_already_read = $position + $name_length;
+			$out[] = $this->make_token( self::IDENT, $position, $name_length );
 		} elseif ( "'" !== $next && '"' !== $next && '`' !== $next ) {
 			$out[] = $this->make_token( self::IDENT, $position, 0 );
 		}
@@ -803,7 +810,7 @@ class WP_MySQL_Lexer {
 
 		// Fast path for keywords and identifiers.
 		// `$byte > "\x7F"` catches any non-ASCII byte (0x80-0xFF); read_identifier()
-		// restricts the accepted identifier codepoints to U+0080-U+FFFF.
+		// restricts the accepted identifier codepoints to U+0080-U+10FFFF.
 		// `"'" !== $next_byte` defers x'..', n'..' and similar special
 		// literals to their dedicated branches below; only single quotes
 		// form those, regardless of SQL mode.
@@ -1026,10 +1033,13 @@ class WP_MySQL_Lexer {
 	 *
 	 * This function reads characters that are allowed in an unquoted identifier.
 	 * It accepts digit-only sequences too; callers scan those as numbers, except
-	 * after "." or "@@".
+	 * after ".", "@", or "@@".
 	 *
 	 * Rules:
-	 *   1. Allowed characters are ASCII a-z, A-Z, 0-9, _, $, and Unicode U+0080-U+FFFF.
+	 *   1. Allowed characters are ASCII a-z, A-Z, 0-9, _, $, and Unicode U+0080-U+10FFFF.
+	 *      The MySQL documentation lists only U+0080-U+FFFF, but the MySQL lexer accepts
+	 *      any utf8mb4 character, including U+10000-U+10FFFF. MySQL then stores
+	 *      these characters as "?", because it keeps names in utf8mb3.
 	 *   2. Unquoted identifiers may begin with a digit but may not consist solely of digits.
 	 *      An exception is a part of a qualified name, such as "1" in "t.1".
 	 *
@@ -1047,13 +1057,13 @@ class WP_MySQL_Lexer {
 			);
 
 			// Check if the following byte can be part of a multibyte character
-			// in the range of U+0080 to U+FFFF before looking at further bytes.
+			// in the range of U+0080 to U+10FFFF before looking at further bytes.
 			// If it can't, bail out early to avoid unnecessary UTF-8 decoding.
 			// Identifiers are usually ASCII-only, so we can optimize for that.
 			$byte_1 = ord(
 				$this->sql[ $this->bytes_already_read ] ?? "\0"
 			);
-			if ( $byte_1 < 0xC2 || $byte_1 > 0xEF ) {
+			if ( $byte_1 < 0xC2 || $byte_1 > 0xF4 ) {
 				break;
 			}
 
@@ -1083,6 +1093,24 @@ class WP_MySQL_Lexer {
 				&& ! ( 0xE0 === $byte_1 && $byte_2 < 0xA0 )
 			) {
 				$this->bytes_already_read += 3;
+				continue;
+			}
+
+			// Look for a valid 4-byte UTF-8 symbol in range U+10000 - U+10FFFF.
+			$byte_4 = ord(
+				$this->sql[ $this->bytes_already_read + 3 ] ?? "\0"
+			);
+			if (
+				$byte_1 >= 0xF0
+				&& $byte_2 >= 0x80 && $byte_2 <= 0xBF
+				&& $byte_3 >= 0x80 && $byte_3 <= 0xBF
+				&& $byte_4 >= 0x80 && $byte_4 <= 0xBF
+				// Exclude overlong encodings:
+				&& ! ( 0xF0 === $byte_1 && $byte_2 < 0x90 )
+				// Exclude codepoints above U+10FFFF:
+				&& ! ( 0xF4 === $byte_1 && $byte_2 > 0x8F )
+			) {
+				$this->bytes_already_read += 4;
 				continue;
 			}
 

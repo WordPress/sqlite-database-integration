@@ -217,6 +217,53 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 		$this->assertSame( 4, $tokens[2]->length );
 	}
 
+	/**
+	 * In MySQL, the name after "@" is one token, also with non-ASCII characters.
+	 *
+	 * @dataProvider data_at_names
+	 */
+	public function test_at_name_is_one_token( string $sql, array $expected ): void {
+		$tokens = ( new WP_MySQL_Lexer( $sql ) )->remaining_tokens();
+		$this->assertSame(
+			$expected,
+			array_map(
+				static function ( WP_MySQL_Token $token ): string {
+					return $token->get_bytes();
+				},
+				$tokens
+			)
+		);
+	}
+
+	/**
+	 * @return array<string,array{0:string,1:string[]}>
+	 */
+	public function data_at_names(): array {
+		return array(
+			'ASCII'                     => array( '@a1_$', array( '@', 'a1_$', '', '' ) ),
+			'with a dot'                => array( '@a.b', array( '@', 'a.b', '', '' ) ),
+			'starting with a dot'       => array( '@.a', array( '@', '.a', '', '' ) ),
+			'ending with a dot'         => array( '@a.', array( '@', 'a.', '', '' ) ),
+			'only dots'                 => array( '@..', array( '@', '..', '', '' ) ),
+			'2-byte character'          => array( '@é', array( '@', 'é', '', '' ) ),
+			'after an ASCII character'  => array( '@xé', array( '@', 'xé', '', '' ) ),
+			'3-byte character'          => array( '@x€y', array( '@', 'x€y', '', '' ) ),
+			'4-byte character'          => array( '@🐬', array( '@', '🐬', '', '' ) ),
+			'4-byte character after x'  => array( '@x🐬', array( '@', 'x🐬', '', '' ) ),
+			'non-ASCII after a dot'     => array( '@a.🐬', array( '@', 'a.🐬', '', '' ) ),
+			'non-ASCII before a dot'    => array( '@🐬.a', array( '@', '🐬.a', '', '' ) ),
+			'followed by an operator'   => array( '@é+1', array( '@', 'é', '+', '1', '', '' ) ),
+			'followed by a name'        => array( '@é a', array( '@', 'é', 'a', '', '' ) ),
+			'followed by a number'      => array( '@a.b .5', array( '@', 'a.b', '.5', '', '' ) ),
+			'host part of a user'       => array( 'u@é.example.com', array( 'u', '@', 'é.example.com', '', '' ) ),
+
+			// Invalid UTF-8 ends the stream, as elsewhere in the lexer.
+			'invalid byte'              => array( "@x\xFF", array( '@', 'x' ) ),
+			'truncated 4-byte sequence' => array( "@x\xF0\x9F\x90", array( '@', 'x' ) ),
+			'invalid byte first'        => array( "@\xFF", array( '@', '' ) ),
+		);
+	}
+
 	public function test_at_at_splits_into_two_at_signs(): void {
 		$this->assertSame(
 			array( 'SELECT', 'AT_SIGN', 'AT_SIGN', 'IDENT', 'END_OF_INPUT', 'YYEOF' ),
@@ -422,6 +469,61 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 					}
 				}
 			}
+		}
+	}
+
+	/**
+	 * Test valid and invalid 4-byte UTF-8 sequences in an identifier.
+	 * The validity is checked against PCRE with the "u" (PCRE_UTF8) modifier set.
+	 *
+	 * Testing all 4-byte sequences would take too long, so the first two bytes
+	 * are tested with valid trailing bytes, and the last two bytes are tested
+	 * with valid leading bytes. The first byte starts from 0xF0 to mark the
+	 * beginning of a 4-byte sequence, and the other bytes go from 128 to 255.
+	 */
+	public function test_identifier_utf8_four_byte_sequences(): void {
+		$values = array();
+		for ( $byte_1 = 0xF0; $byte_1 <= 0xFF; $byte_1 += 1 ) {
+			for ( $byte_2 = 128; $byte_2 <= 255; $byte_2 += 1 ) {
+				$values[] = chr( $byte_1 ) . chr( $byte_2 ) . "\x80\x80";
+			}
+		}
+		for ( $byte_3 = 128; $byte_3 <= 255; $byte_3 += 1 ) {
+			for ( $byte_4 = 128; $byte_4 <= 255; $byte_4 += 1 ) {
+				$values[] = "\xF0\x9F" . chr( $byte_3 ) . chr( $byte_4 );
+			}
+		}
+
+		foreach ( $values as $value ) {
+			$lexer  = new WP_MySQL_Lexer( $value );
+			$result = $lexer->next_token();
+			$token  = $lexer->get_token();
+
+			$is_valid = preg_match( '/^[\x{10000}-\x{10ffff}]$/u', $value );
+			if ( $is_valid ) {
+				$this->assertTrue( $result );
+				$this->assertSame( WP_MySQL_Lexer::IDENT, $token->id );
+				$this->assertSame( $value, $token->get_bytes() );
+			} else {
+				$this->assertFalse( $result );
+				$this->assertNull( $token );
+			}
+		}
+	}
+
+	public function test_identifier_with_4_byte_characters(): void {
+		// The MySQL lexer accepts 4-byte characters in unquoted identifiers on all versions.
+		foreach ( array( 50744, 80410 ) as $mysql_version ) {
+			$tokens = ( new WP_MySQL_Lexer( 'SELECT a🐬b, 𩸽 FROM 🐬', $mysql_version ) )->remaining_tokens();
+			$this->assertSame(
+				array( 'SELECT', 'a🐬b', ',', '𩸽', 'FROM', '🐬', '', '' ),
+				array_map(
+					static function ( WP_MySQL_Token $token ): string {
+						return $token->get_bytes();
+					},
+					$tokens
+				)
+			);
 		}
 	}
 

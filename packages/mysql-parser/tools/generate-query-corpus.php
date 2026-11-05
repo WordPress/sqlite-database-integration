@@ -19,9 +19,14 @@
  * At the moment, it extracts test queries from the main MySQL server tests directory
  * under "mysql-test/t". We can extend it to include other directories as well.
  *
+ * The queries are saved in UTF-8. Each line of a test file is read in the character
+ * set of the client that the test selects, as "query-corpus-decoding.php" explains.
+ *
  * The script is written on a best-effort basis and may not cover all edge cases.
  * In the future, we may consider writing a mysqltest format parser.
  */
+
+require_once __DIR__ . '/query-corpus-decoding.php';
 
 // Paths:
 $data_dir   = __DIR__ . '/../data/mysql-server-query-corpus';
@@ -177,6 +182,14 @@ if ( ! is_dir( $tests_dir ) ) {
 	exit( 1 );
 }
 
+// mysqltest connects in the default character set of the test suite.
+$client_config    = $tests_dir . '/../include/default_client.cnf';
+$default_encoding = QUERY_CORPUS_CHARSET_ENCODINGS[ read_default_client_charset( file_get_contents( $client_config ) ) ?? '' ] ?? null;
+if ( null === $default_encoding ) {
+	fwrite( STDERR, "error: no known default character set in $client_config.\n" );
+	exit( 1 );
+}
+
 $queries = array();
 foreach ( scandir( $tests_dir ) as $i => $file ) {
 	if ( substr( $file, -5 ) !== '.test' ) {
@@ -199,12 +212,11 @@ foreach ( scandir( $tests_dir ) as $i => $file ) {
 	// Track whether we should skip the next query.
 	$skip_next = false;
 
-	// Track character set when specified.
-	$charset = null;
+	// Track the encoding of the client character set that a statement selects.
+	$client_encoding = $default_encoding;
 
-	$lines    = 0;
 	$query    = '';
-	$contents = utf8_encode( file_get_contents( $tests_dir . '/' . $file ) );
+	$contents = file_get_contents( $tests_dir . '/' . $file );
 
 	// Skip mysqltest.test file that is focused on mysqltest constructs rather than SQL.
 	if ( 'mysqltest.test' === $file ) {
@@ -218,11 +230,12 @@ foreach ( scandir( $tests_dir ) as $i => $file ) {
 
 	// Remove "if" and "while" block, including nested ones, using a recursive regex.
 	// Extracting queries from them is not straightforward as they introduce a new scope for delimiters, etc.
-	$contents = preg_replace( '/^\s*(?:if|while)\s*(\((?>(?1)|[^()])*+\))\s*(\{(?>(?2)|[^{}])*+})/ium', '', $contents );
+	// The files are not decoded yet, so the regexes match bytes, not UTF-8.
+	$contents = preg_replace( '/^\s*(?:if|while)\s*(\((?>(?1)|[^()])*+\))\s*(\{(?>(?2)|[^{}])*+})/im', '', $contents );
 
-	foreach ( preg_split( '/\R/u', $contents ) as $line ) {
-		$lines += 1;
-
+	// As in mysqltest, only LF and CRLF end a line. Other line separators are part of
+	// the query, such as the ones that "comments.test" uses to test whitespace.
+	foreach ( preg_split( '/\r?\n/', $contents ) as $line ) {
 		// Skip command bodies for perl, append_file, and write_file commands.
 		if ( $command_body_terminator ) {
 			if ( trim( $line ) === $command_body_terminator ) {
@@ -255,33 +268,14 @@ foreach ( scandir( $tests_dir ) as $i => $file ) {
 			continue;
 		}
 
-		// Track character set.
-		if ( 0 === strpos( strtolower( $line ), '--character_set' ) ) {
-			$charset = trim( substr( $line, strlen( '--character_set' ) ) );
-			continue;
+		// Track the client character set, unless the statement is expected to fail.
+		// "DEFAULT" and character sets that the map doesn't list use the default encoding.
+		$client_charset = read_client_charset( $line );
+		if ( null !== $client_charset && ! $skip_next ) {
+			$client_encoding = QUERY_CORPUS_CHARSET_ENCODINGS[ $client_charset ] ?? $default_encoding;
 		}
 
-		// Convert line to UTF-8 if needed.
-		if ( $charset ) {
-			// PHP's mbstring doesn't seem to support TIS-620, so we need to convert it manually.
-			if ( 'tis620' === $charset ) {
-				$out = '';
-				for ( $i = 0; $i < strlen( $line ); $i++ ) {
-					$ord  = ord( $line[ $i ] );
-					$out .= $ord >= 0xA1 && $ord <= 0xFB ? '&#' . ( 0x0E01 + $ord - 0xA1 ) . ';' : $line[ $i ];
-				}
-				$line = mb_convert_encoding( $out, 'utf-8', 'HTML-ENTITIES' );
-
-			} else {
-				$charset = 'utf8mb4' === $charset ? 'utf-8' : $charset;
-				$charset = 'ujis' === $charset ? 'euc-jp' : $charset;
-				try {
-					$line = mb_convert_encoding( $line, 'utf-8', $charset );
-				} catch ( Throwable $e ) {
-					echo "Failed to convert line $lines in $file from $charset to UTF-8: $line\n";
-				}
-			}
-		}
+		$line = convert_to_utf8( $line, array( $client_encoding, 'UTF-8' ) );
 
 		// Skip comments.
 		$char1 = $line[0] ?? null;
@@ -370,6 +364,6 @@ if ( false === $output ) {
 	exit( 1 );
 }
 foreach ( $queries as $query => $_ ) {
-	fputcsv( $output, array( $query ) );
+	fputcsv( $output, array( $query ), ',', '"', '\\' );
 }
 fclose( $output );

@@ -45,11 +45,9 @@ $1234567890qwertyuiopasdfghjklzxcvbnm_QWERTYUIOPASDFGHJKLZXCVBNM$
 "CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
 DETERMINISTIC LANGUAGE JAVASCRIPT
 AS
-$1234567890qwertyuiopasdfghjklzxcvbnm_QWERTYUIOPASDFGHJKLZXCVBNMÂ¡â¢Â£Â¢âÂ§Â¶â¢ÂªÂºââ ÅâÂ´Â®â Â¥Â¨ËÃ¸ÏââÂ«Ã¥ÃâÆÂ©ËâËÂ¬â¦Ã¦Î©âÃ§ââ«Âµâ¤â¥Ã·ââ¬â¹âºï¬ï¬â¡Â°Â·ââÂ±Ã
-ÃÃÃËÃÃÃÃÃÂ¸ËÃâÄ±ÃÂ¯ËÂ¿$
+$1234567890qwertyuiopasdfghjklzxcvbnm_QWERTYUIOPASDFGHJKLZXCVBNM¡™£¢∞§¶•ªº–≠œ∑´®†¥¨ˆøπ“‘«åß∂ƒ©˙∆˚¬…æΩ≈ç√∫µ≤≥÷⁄€‹›ﬁﬂ‡°·‚—±ÅÍÎÏ˝ÓÔÒÚÆ¸˛Ç◊ıÂ¯˘¿$
 return ""$$"" + a + ""$$"";
-$1234567890qwertyuiopasdfghjklzxcvbnm_QWERTYUIOPASDFGHJKLZXCVBNMÂ¡â¢Â£Â¢âÂ§Â¶â¢ÂªÂºââ ÅâÂ´Â®â Â¥Â¨ËÃ¸ÏââÂ«Ã¥ÃâÆÂ©ËâËÂ¬â¦Ã¦Î©âÃ§ââ«Âµâ¤â¥Ã·ââ¬â¹âºï¬ï¬â¡Â°Â·ââÂ±Ã
-ÃÃÃËÃÃÃÃÃÂ¸ËÃâÄ±ÃÂ¯ËÂ¿$
+$1234567890qwertyuiopasdfghjklzxcvbnm_QWERTYUIOPASDFGHJKLZXCVBNM¡™£¢∞§¶•ªº–≠œ∑´®†¥¨ˆøπ“‘«åß∂ƒ©˙∆˚¬…æΩ≈ç√∫µ≤≥÷⁄€‹›ﬁﬂ‡°·‚—±ÅÍÎÏ˝ÓÔÒÚÆ¸˛Ç◊ıÂ¯˘¿$
 "
 "CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
 DETERMINISTIC LANGUAGE JAVASCRIPT
@@ -127,81 +125,81 @@ $tag$
 "CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
 DETERMINISTIC LANGUAGE JAVASCRIPT
 AS
-$Â¡$
+$¡$
 return ""$$"" + a + ""$$"";
-$Â¡$
+$¡$
 "
 "CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
 DETERMINISTIC LANGUAGE JAVASCRIPT
 AS $$
-return ""â"" + a + ""$â$"";
+return ""∂"" + a + ""$∂$"";
 $$
 "
 "CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
 DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $$â
-return ""â"" + a + ""$â$"";
+AS $$∂
+return ""∂"" + a + ""$∂$"";
 $$
 "
 "CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
 DETERMINISTIC LANGUAGE JAVASCRIPT
 AS $code$
-return ""â"" + a + ""$â$$"";
+return ""∂"" + a + ""$∂$$"";
 $code$
 "
 "CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
 DETERMINISTIC LANGUAGE JAVASCRIPT
 AS $code$
-return ""â"" + a + ""$â$$â"";
+return ""∂"" + a + ""$∂$$∂"";
 $code$
 "
 "CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
 DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $coâe$
-return ""â"" + a + ""$â$$"";
-$coâe$
+AS $co∂e$
+return ""∂"" + a + ""$∂$$"";
+$co∂e$
 "
 "CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
 DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $xð$
-return ""$xðð"" + a + ""$xðð$"";
-$xð$
+AS $x😀$
+return ""$x😀😔"" + a + ""$x😀😔$"";
+$x😀$
 "
 "CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
 DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $xðy$
-return ""$xððy$"" + a + ""$xðyð$"";
-$xðy$
+AS $x😀y$
+return ""$x😀😔y$"" + a + ""$x😀y😔$"";
+$x😀y$
 "
 "CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
 DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $xðyð$
-return ""ðð$"" + a + ""ð$ð$"";
-$xðyð$
+AS $x😀y😔$
+return ""😀😔$"" + a + ""😀$😔$"";
+$x😀y😔$
 "
 "CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
 DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $â$
-return ""â"" + a + ""â$"";
-$â$
+AS $∂$
+return ""∂"" + a + ""∂$"";
+$∂$
 "
 "CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
 DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $ð$
-return ""ð$ð"" + a + ""ð$ð$"";
-$ð$
+AS $😀$
+return ""😀$😔"" + a + ""😀$😔$"";
+$😀$
 "
 "CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
 DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $ðx$
-return ""$ðxð$"" + a + ""$ððx$"";
-$ðx$
+AS $😀x$
+return ""$😀x😔$"" + a + ""$😀😔x$"";
+$😀x$
 "
 "CREATE FUNCTION foo(a INTEGER) RETURNS VARCHAR(20)
 DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $ðð$
-return ""ð$ð"" + a + ""ð$ð$"";
-$ðð$
+AS $😀😔$
+return ""😀$😔"" + a + ""😀$😔$"";
+$😀😔$
 "
 "CREATE FUNCTION foo(x INTEGER) RETURNS INTEGER
 DETERMINISTIC LANGUAGE JAVASCRIPT
@@ -363,11 +361,9 @@ $1234567890qwertyuiopasdfghjklzxcvbnm_QWERTYUIOPASDFGHJKLZXCVBNM$
 "CREATE PROCEDURE bar(a INTEGER)
 DETERMINISTIC LANGUAGE JAVASCRIPT
 AS
-$1234567890qwertyuiopasdfghjklzxcvbnm_QWERTYUIOPASDFGHJKLZXCVBNMÂ¡â¢Â£Â¢âÂ§Â¶â¢ÂªÂºââ ÅâÂ´Â®â Â¥Â¨ËÃ¸ÏââÂ«Ã¥ÃâÆÂ©ËâËÂ¬â¦Ã¦Î©âÃ§ââ«Âµâ¤â¥Ã·ââ¬â¹âºï¬ï¬â¡Â°Â·ââÂ±Ã
-ÃÃÃËÃÃÃÃÃÂ¸ËÃâÄ±ÃÂ¯ËÂ¿$
+$1234567890qwertyuiopasdfghjklzxcvbnm_QWERTYUIOPASDFGHJKLZXCVBNM¡™£¢∞§¶•ªº–≠œ∑´®†¥¨ˆøπ“‘«åß∂ƒ©˙∆˚¬…æΩ≈ç√∫µ≤≥÷⁄€‹›ﬁﬂ‡°·‚—±ÅÍÎÏ˝ÓÔÒÚÆ¸˛Ç◊ıÂ¯˘¿$
 let b = ""$$"" + a + ""$$"";
-$1234567890qwertyuiopasdfghjklzxcvbnm_QWERTYUIOPASDFGHJKLZXCVBNMÂ¡â¢Â£Â¢âÂ§Â¶â¢ÂªÂºââ ÅâÂ´Â®â Â¥Â¨ËÃ¸ÏââÂ«Ã¥ÃâÆÂ©ËâËÂ¬â¦Ã¦Î©âÃ§ââ«Âµâ¤â¥Ã·ââ¬â¹âºï¬ï¬â¡Â°Â·ââÂ±Ã
-ÃÃÃËÃÃÃÃÃÂ¸ËÃâÄ±ÃÂ¯ËÂ¿$
+$1234567890qwertyuiopasdfghjklzxcvbnm_QWERTYUIOPASDFGHJKLZXCVBNM¡™£¢∞§¶•ªº–≠œ∑´®†¥¨ˆøπ“‘«åß∂ƒ©˙∆˚¬…æΩ≈ç√∫µ≤≥÷⁄€‹›ﬁﬂ‡°·‚—±ÅÍÎÏ˝ÓÔÒÚÆ¸˛Ç◊ıÂ¯˘¿$
 "
 "CREATE PROCEDURE bar(a INTEGER)
 DETERMINISTIC LANGUAGE JAVASCRIPT
@@ -445,14 +441,14 @@ $tag$
 "CREATE PROCEDURE bar(a INTEGER)
 DETERMINISTIC LANGUAGE JAVASCRIPT
 AS
-$Â¡$
+$¡$
 let b = ""$$"" + a + ""$$"";
-$Â¡$
+$¡$
 "
 "CREATE PROCEDURE bar(a INTEGER)
 DETERMINISTIC LANGUAGE JAVASCRIPT
 AS $$
-let b = ""â"" + a + ""$â$"";
+let b = ""∂"" + a + ""$∂$"";
 $$
 "
 "CREATE PROCEDURE bar(a INTEGER)
@@ -462,69 +458,69 @@ let b = a;
 $$ "
 "CREATE PROCEDURE bar(a INTEGER)
 DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $$â
-let b = ""â"" + a + ""$â$"";
+AS $$∂
+let b = ""∂"" + a + ""$∂$"";
 $$
 "
 "CREATE PROCEDURE bar(a INTEGER)
 DETERMINISTIC LANGUAGE JAVASCRIPT
 AS $code$
-let b = ""â"" + a + ""$â$$"";
+let b = ""∂"" + a + ""$∂$$"";
 $code$
 "
 "CREATE PROCEDURE bar(a INTEGER)
 DETERMINISTIC LANGUAGE JAVASCRIPT
 AS $code$
-let b = ""â"" + a + ""$â$$â"";
+let b = ""∂"" + a + ""$∂$$∂"";
 $code$
 "
 "CREATE PROCEDURE bar(a INTEGER)
 DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $coâe$
-let b = ""â"" + a + ""$â$$"";
-$coâe$
+AS $co∂e$
+let b = ""∂"" + a + ""$∂$$"";
+$co∂e$
 "
 "CREATE PROCEDURE bar(a INTEGER)
 DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $xð$
-let b = ""$xðð"" + a + ""$xðð$"";
-$xð$
+AS $x😀$
+let b = ""$x😀😔"" + a + ""$x😀😔$"";
+$x😀$
 "
 "CREATE PROCEDURE bar(a INTEGER)
 DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $xðy$
-let b = ""$xððy$"" + a + ""$xðyð$"";
-$xðy$
+AS $x😀y$
+let b = ""$x😀😔y$"" + a + ""$x😀y😔$"";
+$x😀y$
 "
 "CREATE PROCEDURE bar(a INTEGER)
 DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $xðyð$
-let b = ""ðð$"" + a + ""ð$ð$"";
-$xðyð$
+AS $x😀y😔$
+let b = ""😀😔$"" + a + ""😀$😔$"";
+$x😀y😔$
 "
 "CREATE PROCEDURE bar(a INTEGER)
 DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $â$
-let b = ""â"" + a + ""â$"";
-$â$
+AS $∂$
+let b = ""∂"" + a + ""∂$"";
+$∂$
 "
 "CREATE PROCEDURE bar(a INTEGER)
 DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $ð$
-let b = ""ð$ð"" + a + ""ð$ð$"";
-$ð$
+AS $😀$
+let b = ""😀$😔"" + a + ""😀$😔$"";
+$😀$
 "
 "CREATE PROCEDURE bar(a INTEGER)
 DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $ðx$
-let b = ""$ðxð$"" + a + ""$ððx$"";
-$ðx$
+AS $😀x$
+let b = ""$😀x😔$"" + a + ""$😀😔x$"";
+$😀x$
 "
 "CREATE PROCEDURE bar(a INTEGER)
 DETERMINISTIC LANGUAGE JAVASCRIPT
-AS $ðð$
-let b = ""ð$ð"" + a + ""ð$ð$"";
-$ðð$
+AS $😀😔$
+let b = ""😀$😔"" + a + ""😀$😔$"";
+$😀😔$
 "
 "CREATE PROCEDURE bar(a INTEGER)
 LANGUAGE	  	 JAVASCRIPT  DETERMINISTIC
@@ -584,7 +580,7 @@ $$
 "CREATE PROCEDURE bar(x INTEGER)
 DETERMINISTIC LANGUAGE JAVASCRIPT
 AS $code$ let b := ""$$"" + x + ""$foo$""; $code$ "
-"CREATE TABLE "" quoted name ÑÐµÑÑ"" (i INT)"
+"CREATE TABLE "" quoted name тест"" (i INT)"
 "CREATE TABLE """"""a"" (i INT)"
 "CREATE TABLE ""custo`mers"" (
 ""customer'_id"" INT AUTO_INCREMENT PRIMARY KEY,
@@ -948,11 +944,3 @@ select @@sql_mode"
 call bug3426(1000, @i)"
 "update t1 set data=42 where id = ""b"";
 select row_count()"
-"聠聡聢聣聤聬聭聮聯聰聲聽隆垄拢陇楼卤潞禄录陆戮 聶職聳聴
-0聲5
-1聲5
-2聲5
-3聲5
-4
-
-SET NAMES gb18030"
