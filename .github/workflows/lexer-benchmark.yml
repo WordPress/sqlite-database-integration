@@ -3,10 +3,10 @@ name: Lexer benchmark
 on:
   pull_request:
     paths:
-      - 'packages/mysql-on-sqlite/src/mysql/class-wp-mysql-lexer.php'
-      - 'packages/mysql-on-sqlite/src/mysql/class-wp-mysql-token.php'
-      - 'packages/mysql-on-sqlite/src/parser/class-wp-parser-token.php'
-      - 'packages/mysql-on-sqlite/tests/tools/run-lexer-benchmark.php'
+      - 'packages/mysql-parser/src/class-wp-mysql-lexer.php'
+      - 'packages/mysql-parser/src/class-wp-mysql-token.php'
+      - 'packages/mysql-parser/src/parser/class-wp-parser-token.php'
+      - 'packages/mysql-parser/tests/benchmark.php'
       - '.github/workflows/lexer-benchmark.yml'
 
 # A new push supersedes the previous run; the result comment is updated in place.
@@ -38,16 +38,29 @@ jobs:
           php-version: '8.4'
           coverage: none
 
+      - name: Generate the autoloader
+        working-directory: packages/mysql-parser
+        run: composer dump-autoload --no-interaction
+
       - name: Benchmark base vs PR
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          BENCH=packages/mysql-on-sqlite/tests/tools/run-lexer-benchmark.php
+          BENCH=packages/mysql-parser/tests/benchmark.php
 
-          # Best-pass QPS for a given PHP flag set.
+          # Best-pass QPS for a given PHP flag set. A lexer that throws looks fast, and a
+          # crashed run prints no result, so both fail the job instead of posting a number.
           best() {
-            php -d memory_limit=512M "$@" "$BENCH" --json \
-              | php -r '$j = json_decode( stream_get_contents( STDIN ), true ); echo (int) $j["qps_best"];'
+            php -d memory_limit=512M "$@" "$BENCH" --lexer-only --iterations=10 --warmup=3 --json \
+              | php -r '
+                $output = stream_get_contents( STDIN );
+                $result = json_decode( $output, true );
+                if ( ! $result || $result["exceptions"] > 0 ) {
+                  fwrite( STDERR, "The lexer benchmark failed:\n$output\n" );
+                  exit( 1 );
+                }
+                echo (int) $result["qps_best"];
+              '
           }
           jit_flags="-d opcache.enable_cli=1 -d opcache.jit_buffer_size=64M -d opcache.jit=tracing"
 
@@ -57,11 +70,13 @@ jobs:
 
           # Swap only the source tree to the base commit and re-measure with the
           # same (PR) benchmark tool, so both sides are timed identically. The
-          # benchmark tool itself (tests/tools/) is left at the PR version.
-          git checkout "$BASE_SHA" -- packages/mysql-on-sqlite/src
+          # benchmark tool itself (tests/) is left at the PR version. PR-only files
+          # are removed and the classmap is rebuilt, so the base run can't load PR code.
+          git checkout --no-overlay "$BASE_SHA" -- packages/mysql-parser/src
+          composer dump-autoload --no-interaction --working-dir=packages/mysql-parser
           base_nojit=$( best )
           base_jit=$( best $jit_flags )
-          git checkout HEAD -- packages/mysql-on-sqlite/src
+          git checkout HEAD -- packages/mysql-parser/src
 
           fmt() { php -r 'echo number_format( (int) $argv[1] );' "$1"; }
           ratio() { php -r 'printf( "%.2f", $argv[1] / max( 1, (int) $argv[2] ) );' "$1" "$2"; }
@@ -80,7 +95,7 @@ jobs:
             echo
             echo "To reproduce locally:"
             echo '```'
-            echo "cd packages/mysql-on-sqlite && composer run bench-lexer"
+            echo "cd packages/mysql-parser && composer dump-autoload && composer run benchmark -- --lexer-only"
             echo '```'
           } > "$RUNNER_TEMP/comment.md"
           echo "COMMENT_FILE=$RUNNER_TEMP/comment.md" >> "$GITHUB_ENV"
