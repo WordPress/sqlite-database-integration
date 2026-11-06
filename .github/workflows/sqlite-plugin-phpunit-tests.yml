@@ -36,7 +36,3 @@ jobs:
 
       - name: Run SQLite plugin multisite PHPUnit tests
         run: composer run wp-test-sqlite-plugin-php-multisite
-
-      - name: Stop Docker containers
-        if: always()
-        run: composer run wp-test-clean

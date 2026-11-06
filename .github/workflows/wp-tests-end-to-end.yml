@@ -34,7 +34,3 @@ jobs:
         uses: ./.github/actions/playwright
         with:
           test-script: wp-test-e2e
-
-      - name: Stop Docker containers
-        if: always()
-        run: composer run wp-test-clean
