@@ -182,6 +182,11 @@ final class WP_MySQL_Token extends WP_Parser_Token {
 			 */
 			$value = preg_replace( '/\\\\(.)/s', '$1', $value );
 		}
+		if ( WP_MySQL_Lexer::DOLLAR_QUOTED_STRING_SYM === $this->id ) {
+			// Remove the bounding "$tag$" delimiters. The text has no escape sequences.
+			$delimiter_length = strpos( $value, '$', 1 ) + 1;
+			return substr( $value, $delimiter_length, -$delimiter_length );
+		}
 		return $value;
 	}
 

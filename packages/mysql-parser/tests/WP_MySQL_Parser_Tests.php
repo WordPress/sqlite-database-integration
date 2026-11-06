@@ -115,14 +115,43 @@ class WP_MySQL_Parser_Tests extends TestCase {
 			'SELECT @@`version`',
 			'SHOW TABLES',
 			'EXPLAIN SELECT 1',
+			'SELECT 1 /*!99999 /* */ */',
+			'SELECT ?',
+			'SELECT ?, ? FROM t',
+			'SELECT ?+1',
+			'SELECT * FROM t WHERE?=1',
+			'SELECT ?`a`',
+			"SELECT ?'a'",
 		);
 		foreach ( $statements as $sql ) {
 			$this->assertNotNull( self::parse( $sql ), "Failed to parse: $sql" );
 		}
 	}
 
+	public function test_dollar_quoted_routine_body_is_a_routine_string(): void {
+		$statements = array(
+			'CREATE FUNCTION f() RETURNS INT LANGUAGE JAVASCRIPT AS $$ return 1; $$',
+			'CREATE PROCEDURE p() LANGUAGE JAVASCRIPT AS $tag$ return 1; $tag$',
+		);
+		foreach ( $statements as $sql ) {
+			$ast = self::parse( $sql );
+			$this->assertNotNull( $ast, "Failed to parse: $sql" );
+			$this->assertSame(
+				' return 1; ',
+				$ast->get_first_descendant_node( 'routine_string' )
+					->get_first_descendant_token( WP_MySQL_Lexer::DOLLAR_QUOTED_STRING_SYM )
+					->get_value()
+			);
+		}
+	}
+
 	public function test_rejects_statements_invalid_in_mysql_84(): void {
 		$statements = array(
+			'SELECT $$a$$',                        // Dollar quotes are only for routine bodies.
+			'SET @x = $$a$$',                      // Dollar quotes are only for routine bodies.
+			'SELECT $a$b',                         // Unterminated dollar-quoted text.
+			'CREATE FUNCTION f() RETURNS INT LANGUAGE JAVASCRIPT AS $$ a', // Unterminated.
+			'CREATE FUNCTION f() RETURNS INT LANGUAGE JAVASCRIPT AS $$$$', // Empty body.
 			'RESET MASTER',          // Removed in MySQL 8.4.
 			'SHOW SLAVE STATUS',     // Removed in MySQL 8.4.
 			'SELECT 1; SELECT 2',    // Multi-statement input.
@@ -133,6 +162,15 @@ class WP_MySQL_Parser_Tests extends TestCase {
 			'SELECT 0.select',                     // "SELECT" after "0." is a keyword.
 			'SELECT @@ version',                   // An empty name after "@@".
 			"SELECT @@'version'",                  // A single-quoted name after "@@".
+			'SELECT \N',                           // "\N" was removed in MySQL 8.0.1.
+			'SELECT ?a',                           // A marker before an identifier byte.
+			'SELECT ?FROM t',                      // A marker before an identifier byte.
+			'UPDATE t SET a = a + ?WHERE 1',       // A marker before an identifier byte.
+			"SELECT ?\u{00E9}",                    // A marker before an identifier byte.
+			'SELECT 1 /* a',                       // An unterminated comment.
+			'SELECT 1 /*!80000 + 2',               // An unterminated version comment.
+			'SELECT 1 /*!99999 a',                 // An unterminated skipped comment.
+			"DELETE FROM t WHERE a = 7 OR 1=1/*' AND b = 'c'", // A comment hides the rest.
 		);
 		foreach ( $statements as $sql ) {
 			$this->assertNull( self::parse( $sql ), "Should not parse: $sql" );

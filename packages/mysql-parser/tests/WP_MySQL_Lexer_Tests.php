@@ -149,6 +149,27 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 			'six digits without space'  => array( 'SELECT /*!080100+ */ 1', 80100, array( 'SELECT', '0', '+', '1' ) ),
 			'six digits at comment end' => array( 'SELECT /*!080100*/ + 1', 80100, array( 'SELECT', '0', '+', '1' ) ),
 			'seven digits'              => array( 'SELECT /*!0801007 + */ 1', 80100, array( 'SELECT', '07', '+', '1' ) ),
+
+			// A version comment that doesn't apply can contain other comments.
+			'nested comment'            => array( 'SELECT 1 /*!99999 /* */ */', 80410, array( 'SELECT', '1' ) ),
+			'text around nested'        => array( 'SELECT 1 /*!99999 a /* b */ c */ + 2', 80410, array( 'SELECT', '1', '+', '2' ) ),
+			'two nested comments'       => array( 'SELECT 1 /*!99999 /* a */ /* b */ */ + 2', 80410, array( 'SELECT', '1', '+', '2' ) ),
+			'nested version comment'    => array( 'SELECT 1 /*!99999 /*!99999 a */ */ + 2', 80410, array( 'SELECT', '1', '+', '2' ) ),
+			'nested comment on 5.7'     => array( 'SELECT 1 /*!80000 /* */ */ + 2', 50744, array( 'SELECT', '1', '+', '2' ) ),
+
+			// A nested comment ends at its first closing marker.
+			'only one level of nesting' => array( 'SELECT 1 /*!99999 /* /* */ */ + 2', 80410, array( 'SELECT', '1', '+', '2' ) ),
+			'text after the outer end'  => array( 'SELECT 1 /*!99999 /* /* */ */ */', 80410, array( 'SELECT', '1', '*', '/' ) ),
+
+			// Markers can't overlap.
+			'"/*/" opens a comment'     => array( 'SELECT 1 /*!99999 /*/ */ */ + 2', 80410, array( 'SELECT', '1', '+', '2' ) ),
+			'"*/*" closes a comment'    => array( 'SELECT 1 /*!99999 */* 2', 80410, array( 'SELECT', '1', '*', '2' ) ),
+
+			// Other comments have their own rules.
+			'regular comment'           => array( 'SELECT 1 /* /* */ + 2', 80410, array( 'SELECT', '1', '+', '2' ) ),
+			'closed at the end'         => array( 'SELECT 1 /* a */', 80410, array( 'SELECT', '1' ) ),
+			'applied, closed at end'    => array( 'SELECT 1 /*!80000 + 2 */', 80410, array( 'SELECT', '1', '+', '2' ) ),
+			'applied version comment'   => array( 'SELECT 1 /*!80000 /* */ + 2 */', 80410, array( 'SELECT', '1', '+', '2' ) ),
 		);
 
 		foreach ( array(
@@ -328,6 +349,58 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 	public function test_invalid_input_returns_partial_stream_without_end_markers(): void {
 		$names = self::token_names( "SELECT 1 WITH \x01" );
 		$this->assertSame( array( 'SELECT', 'NUM', 'WITH' ), $names );
+	}
+
+	/**
+	 * @dataProvider data_unterminated_comments
+	 */
+	public function test_unterminated_comment_is_invalid_input( string $sql, array $expected_bytes ): void {
+		$read_bytes = static function ( array $tokens ): array {
+			return array_map(
+				static function ( WP_MySQL_Token $token ): string {
+					return $token->get_bytes();
+				},
+				$tokens
+			);
+		};
+		$this->assertSame( $expected_bytes, $read_bytes( ( new WP_MySQL_Lexer( $sql ) )->remaining_tokens() ) );
+
+		// The pull iterator follows the same path as remaining_tokens().
+		$lexer  = new WP_MySQL_Lexer( $sql );
+		$tokens = array();
+		while ( $lexer->next_token() ) {
+			$tokens[] = $lexer->get_token();
+		}
+		$this->assertSame( $expected_bytes, $read_bytes( $tokens ) );
+	}
+
+	public function data_unterminated_comments(): array {
+		return array(
+			// A regular comment.
+			'text'                             => array( 'SELECT 1 /* a', array( 'SELECT', '1' ) ),
+			'only an opening marker'           => array( 'SELECT 1 /*', array( 'SELECT', '1' ) ),
+			'overlapping markers'              => array( 'SELECT 1 /*/', array( 'SELECT', '1' ) ),
+			'nothing before the comment'       => array( '/* a', array() ),
+			'an earlier closed comment'        => array( 'SELECT /* a */ 1 /* b', array( 'SELECT', '1' ) ),
+			'a closing marker before it'       => array( 'SELECT 1 */ /* a', array( 'SELECT', '1', '*', '/' ) ),
+			'after WITH'                       => array( 'SELECT 1 WITH /* a', array( 'SELECT', '1', 'WITH' ) ),
+
+			// A version comment that applies.
+			'applied'                          => array( 'SELECT 1 /*!80000 + 2', array( 'SELECT', '1', '+', '2' ) ),
+			'applied, without a version'       => array( 'SELECT 1 /*! + 2', array( 'SELECT', '1', '+', '2' ) ),
+			'applied and empty'                => array( 'SELECT 1 /*!80000', array( 'SELECT', '1' ) ),
+			'applied, after a nested comment'  => array( 'SELECT 1 /*!80000 /* a */ + 2', array( 'SELECT', '1', '+', '2' ) ),
+			'applied, in a nested comment'     => array( 'SELECT 1 /*!80000 /* a', array( 'SELECT', '1' ) ),
+			'applied, a closing marker string' => array( "SELECT 1 /*!80000 + '*/'", array( 'SELECT', '1', '+', "'*/'" ) ),
+			'applied, a commented-out marker'  => array( 'SELECT 1 /*!80000 + 2 -- */', array( 'SELECT', '1', '+', '2' ) ),
+
+			// A version comment that doesn't apply.
+			'skipped'                          => array( 'SELECT 1 /*!99999 a', array( 'SELECT', '1' ) ),
+			'skipped and empty'                => array( 'SELECT 1 /*!99999', array( 'SELECT', '1' ) ),
+			'skipped, after a nested comment'  => array( 'SELECT 1 /*!99999 /* a */ b', array( 'SELECT', '1' ) ),
+			'skipped, in a nested comment'     => array( 'SELECT 1 /*!99999 /* a', array( 'SELECT', '1' ) ),
+			'skipped, overlapping markers'     => array( 'SELECT 1 /*!99999 /*/ */', array( 'SELECT', '1' ) ),
+		);
 	}
 
 	public function test_system_variable_name_must_not_be_empty(): void {
@@ -593,7 +666,6 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 			'after a float'               => array( '1e5.1', array( 'FLOAT_NUM', 'DECIMAL_NUM' ) ),
 			'after a hex number'          => array( '0x1F.1', array( 'HEX_NUM', 'DECIMAL_NUM' ) ),
 			'after a binary number'       => array( '0b1.1', array( 'BIN_NUM', 'DECIMAL_NUM' ) ),
-			'after "\N"'                  => array( '\N.1', array( 'NULL', 'DECIMAL_NUM' ) ),
 			'after a version comment'     => array( '/*!50000.5*/', array( 'DECIMAL_NUM' ) ),
 
 			// A user variable name includes the dot.
@@ -896,6 +968,196 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 			'escaped quote'                 => array( "N'a''b'", array( 'NCHAR_STRING' ) ),
 			'double quote is not a literal' => array( 'N"abc"', array( 'IDENT', 'TEXT_STRING' ) ),
 		);
+	}
+
+	/**
+	 * @dataProvider data_dollar_quoted_text
+	 */
+	public function test_dollar_quoted_text( string $sql, array $expected ): void {
+		$tokens = ( new WP_MySQL_Lexer( $sql ) )->remaining_tokens();
+		$this->assertSame( 'YYEOF', array_pop( $tokens )->get_name(), $sql );
+		$this->assertSame( 'END_OF_INPUT', array_pop( $tokens )->get_name(), $sql );
+
+		$actual = array();
+		foreach ( $tokens as $token ) {
+			$actual[] = array( $token->get_name(), $token->get_bytes() );
+		}
+		$this->assertSame( $expected, $actual, $sql );
+
+		// The pull iterator follows the same path as remaining_tokens().
+		$lexer = new WP_MySQL_Lexer( $sql );
+		foreach ( $tokens as $token ) {
+			$this->assertTrue( $lexer->next_token(), $sql );
+			$this->assertSame( $token->id, $lexer->get_token()->id, $sql );
+			$this->assertSame( $token->get_bytes(), $lexer->get_token()->get_bytes(), $sql );
+		}
+	}
+
+	public function data_dollar_quoted_text(): array {
+		$dollar = 'DOLLAR_QUOTED_STRING_SYM';
+		return array(
+			// The tag can be empty, or contain identifier characters other than "$".
+			'empty tag'                         => array( '$$ a $$', array( array( $dollar, '$$ a $$' ) ) ),
+			'tag'                               => array( '$tag$ a $tag$', array( array( $dollar, '$tag$ a $tag$' ) ) ),
+			'digits in a tag'                   => array( '$1$ a $1$', array( array( $dollar, '$1$ a $1$' ) ) ),
+			'underscore in a tag'               => array( '$_$ a $_$', array( array( $dollar, '$_$ a $_$' ) ) ),
+			'a tag with a non-ASCII character'  => array( '$∂$ a $∂$', array( array( $dollar, '$∂$ a $∂$' ) ) ),
+			'a tag with a 4-byte character'     => array( '$😀$ a $😀$', array( array( $dollar, '$😀$ a $😀$' ) ) ),
+
+			// The text can contain anything except for the closing delimiter.
+			'a line break in the text'          => array( "\$\$ a\nb \$\$", array( array( $dollar, "\$\$ a\nb \$\$" ) ) ),
+			'quotes and comments in the text'   => array( "\$\$ ' \" ` /* -- # \$\$", array( array( $dollar, "\$\$ ' \" ` /* -- # \$\$" ) ) ),
+			'other delimiters in the text'      => array( '$a$ $$ $b$ $a$', array( array( $dollar, '$a$ $$ $b$ $a$' ) ) ),
+			'a tag is case-sensitive'           => array( '$a$ $A$ $a$', array( array( $dollar, '$a$ $A$ $a$' ) ) ),
+			'a partial tag in the text'         => array( '$ab$ $a $ab$', array( array( $dollar, '$ab$ $a $ab$' ) ) ),
+			'a dollar sign in the text'         => array( '$$ a$b $$', array( array( $dollar, '$$ a$b $$' ) ) ),
+			'multibyte characters in the text'  => array( '$😀$ $😔 $😀$', array( array( $dollar, '$😀$ $😔 $😀$' ) ) ),
+
+			// As in MySQL, the byte that breaks a closing delimiter match is skipped.
+			'a dollar sign just before a close' => array( '$a$ $$a$ $a$', array( array( $dollar, '$a$ $$a$ $a$' ) ) ),
+			'a broken match that ends with "$"' => array( '$ab$ $a$ab$ $ab$', array( array( $dollar, '$ab$ $a$ab$ $ab$' ) ) ),
+
+			// Dollar-quoted text ends with the closing delimiter.
+			'a name right after the text'       => array( '$$a$$b', array( array( $dollar, '$$a$$' ), array( 'IDENT', 'b' ) ) ),
+			'a name after a tagged text'        => array( '$a$b$a$c', array( array( $dollar, '$a$b$a$' ), array( 'IDENT', 'c' ) ) ),
+			'a number after the text'           => array( '$$a$$.5', array( array( $dollar, '$$a$$' ), array( 'DECIMAL_NUM', '.5' ) ) ),
+			'two texts'                         => array( '$$a$$ $$b$$', array( array( $dollar, '$$a$$' ), array( $dollar, '$$b$$' ) ) ),
+			'after a space and a comment'       => array( ' /* a */ $$b$$', array( array( $dollar, '$$b$$' ) ) ),
+			'after WITH'                        => array( 'WITH $$a$$', array( array( 'WITH', 'WITH' ), array( $dollar, '$$a$$' ) ) ),
+
+			// Without a second "$" in the identifier characters, it's an identifier.
+			'a name with a leading dollar sign' => array( '$a', array( array( 'IDENT', '$a' ) ) ),
+			'a name with digits'                => array( '$1', array( array( 'IDENT', '$1' ) ) ),
+			'a lone dollar sign'                => array( '$', array( array( 'IDENT', '$' ) ) ),
+			'two lone dollar signs'             => array( '$ $', array( array( 'IDENT', '$' ), array( 'IDENT', '$' ) ) ),
+			'a dollar sign before a dot'        => array( '$a.$', array( array( 'IDENT', '$a' ), array( 'DOT', '.' ), array( 'IDENT', '$' ) ) ),
+
+			// Only a token that starts with "$" can open dollar-quoted text.
+			'dollar signs inside a name'        => array( 'a$$b$$', array( array( 'IDENT', 'a$$b$$' ) ) ),
+			'a name after a dot'                => array( 't.$$', array( array( 'IDENT', 't' ), array( 'DOT', '.' ), array( 'IDENT', '$$' ) ) ),
+			'a tagged name after a dot'         => array( 't.$a$', array( array( 'IDENT', 't' ), array( 'DOT', '.' ), array( 'IDENT', '$a$' ) ) ),
+			'a user variable'                   => array( '@$$', array( array( 'AT_SIGN', '@' ), array( 'IDENT', '$$' ) ) ),
+			'a system variable'                 => array( '@@$$', array( array( 'AT_SIGN', '@' ), array( 'AT_SIGN', '@' ), array( 'IDENT', '$$' ) ) ),
+			'a quoted name'                     => array( '`$$`', array( array( 'IDENT_QUOTED', '`$$`' ) ) ),
+			'a string'                          => array( "'\$\$'", array( array( 'TEXT_STRING', "'\$\$'" ) ) ),
+		);
+	}
+
+	/**
+	 * @dataProvider data_invalid_dollar_quoted_text
+	 */
+	public function test_invalid_dollar_quoted_text( string $sql ): void {
+		$tokens = ( new WP_MySQL_Lexer( "SELECT $sql" ) )->remaining_tokens();
+		$this->assertCount( 1, $tokens, $sql );
+		$this->assertSame( 'SELECT', $tokens[0]->get_name(), $sql );
+
+		// The pull iterator follows the same path as remaining_tokens().
+		$lexer = new WP_MySQL_Lexer( "SELECT $sql" );
+		$this->assertTrue( $lexer->next_token(), $sql );
+		$this->assertFalse( $lexer->next_token(), $sql );
+	}
+
+	public function data_invalid_dollar_quoted_text(): array {
+		return array(
+			'empty text'             => array( '$$$$' ),
+			'empty text with a tag'  => array( '$a$$a$' ),
+			'no text'                => array( '$$' ),
+			'no closing delimiter'   => array( '$$ a' ),
+			'half a delimiter'       => array( '$$ a $' ),
+			'no text after a tag'    => array( '$a$' ),
+			'a partial closing tag'  => array( '$ab$ c $a' ),
+			'a tag without its "$"'  => array( '$a$ b $a' ),
+			'another tag'            => array( '$a$ b $b$' ),
+			'a different tag case'   => array( '$a$ b $A$' ),
+			'a dollar sign in a tag' => array( '$a$b' ),
+			'a skipped close'        => array( '$a$ $$a$' ),
+			'a broken match at end'  => array( '$ab$ $a$ab$' ),
+		);
+	}
+
+	/**
+	 * @dataProvider data_backslash_n
+	 */
+	public function test_backslash_n_is_null_before_mysql_8_0_1( string $sql, int $mysql_version, array $expected ): void {
+		$tokens = ( new WP_MySQL_Lexer( $sql, $mysql_version ) )->remaining_tokens();
+		$names  = array_map(
+			static function ( WP_MySQL_Token $token ): string {
+				return $token->get_name();
+			},
+			$tokens
+		);
+		$this->assertSame( $expected, $names, "$sql on $mysql_version" );
+	}
+
+	public function data_backslash_n(): array {
+		$null    = array( 'SELECT', 'NULL', 'END_OF_INPUT', 'YYEOF' );
+		$invalid = array( 'SELECT' );
+		return array(
+			'MySQL 5.7'             => array( 'SELECT \N', 50744, $null ),
+			'MySQL 8.0.0'           => array( 'SELECT \N', 80000, $null ),
+			'before a number'       => array( '\N.1', 80000, array( 'NULL', 'DECIMAL_NUM', 'END_OF_INPUT', 'YYEOF' ) ),
+			'MySQL 8.0.1'           => array( 'SELECT \N', 80001, $invalid ),
+			'MySQL 8.4'             => array( 'SELECT \N', 80410, $invalid ),
+			'lowercase on 5.7'      => array( 'SELECT \n', 50744, $invalid ),
+			'lowercase on 8.4'      => array( 'SELECT \n', 80410, $invalid ),
+			'another letter on 5.7' => array( 'SELECT \A', 50744, $invalid ),
+			'another letter on 8.4' => array( 'SELECT \A', 80410, $invalid ),
+		);
+	}
+
+	/**
+	 * MySQL treats "?" as a parameter marker only if the next byte can't be part of
+	 * an identifier.
+	 *
+	 * @dataProvider data_parameter_marker_tokens
+	 */
+	public function test_parameter_marker_tokens( string $sql, array $expected ): void {
+		$this->assertSame( $expected, self::token_names( $sql ), $sql );
+	}
+
+	/**
+	 * @return array<string,array{0:string,1:string[]}>
+	 */
+	public function data_parameter_marker_tokens(): array {
+		$marker  = array( 'SELECT', 'PARAM_MARKER', 'END_OF_INPUT', 'YYEOF' );
+		$invalid = array( 'SELECT' );
+		return array(
+			'at the end of the input' => array( 'SELECT ?', $marker ),
+			'before a space'          => array( 'SELECT ? ', $marker ),
+			'before an operator'      => array( 'SELECT ?+1', array( 'SELECT', 'PARAM_MARKER', 'PLUS', 'NUM', 'END_OF_INPUT', 'YYEOF' ) ),
+			'before a comma'          => array( 'SELECT ?,?', array( 'SELECT', 'PARAM_MARKER', 'COMMA', 'PARAM_MARKER', 'END_OF_INPUT', 'YYEOF' ) ),
+			'before a marker'         => array( 'SELECT ??', array( 'SELECT', 'PARAM_MARKER', 'PARAM_MARKER', 'END_OF_INPUT', 'YYEOF' ) ),
+			'before a string'         => array( "SELECT ?'a'", array( 'SELECT', 'PARAM_MARKER', 'TEXT_STRING', 'END_OF_INPUT', 'YYEOF' ) ),
+			'before a quoted name'    => array( 'SELECT ?`a`', array( 'SELECT', 'PARAM_MARKER', 'IDENT_QUOTED', 'END_OF_INPUT', 'YYEOF' ) ),
+			'before a comment'        => array( 'SELECT ?/* c */', $marker ),
+			'before a dot'            => array( 'SELECT ?.a', array( 'SELECT', 'PARAM_MARKER', 'DOT', 'IDENT', 'END_OF_INPUT', 'YYEOF' ) ),
+			'after a keyword'         => array( 'SELECT * FROM t WHERE?=1', array( 'SELECT', 'ASTERISK', 'FROM', 'IDENT', 'WHERE', 'PARAM_MARKER', '=', 'NUM', 'END_OF_INPUT', 'YYEOF' ) ),
+			'before a letter'         => array( 'SELECT ?a', $invalid ),
+			'before a keyword'        => array( 'SELECT ?FROM t', $invalid ),
+			'before a digit'          => array( 'SELECT ?1', $invalid ),
+			'before an underscore'    => array( 'SELECT ?_', $invalid ),
+			'before a dollar sign'    => array( 'SELECT ?$', $invalid ),
+			'before a UTF-8 name'     => array( "SELECT ?\u{00E9}", $invalid ),
+			'before an emoji'         => array( "SELECT ?\u{1F42C}", $invalid ),
+			'before invalid UTF-8'    => array( "SELECT ?\xC0", $invalid ),
+		);
+	}
+
+	public function test_dollar_quoted_text_requires_mysql_8_1(): void {
+		$tokens = ( new WP_MySQL_Lexer( '$$ a $$', 80099 ) )->remaining_tokens();
+		$this->assertSame(
+			array( '$$', 'a', '$$', '', '' ),
+			array_map(
+				static function ( WP_MySQL_Token $token ): string {
+					return $token->get_bytes();
+				},
+				$tokens
+			)
+		);
+		$this->assertSame( 'IDENT', $tokens[0]->get_name() );
+
+		$tokens = ( new WP_MySQL_Lexer( '$$ a $$', 80100 ) )->remaining_tokens();
+		$this->assertSame( 'DOLLAR_QUOTED_STRING_SYM', $tokens[0]->get_name() );
 	}
 
 	public function test_composite_ansi_mode_expands_to_lexer_component_modes(): void {

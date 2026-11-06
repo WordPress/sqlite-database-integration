@@ -93,6 +93,8 @@ This requires `bash`, `git`, and `php`. It performs the following steps:
 2. Extract SQL queries from the MySQL test files.
 3. Store the queries under `data/mysql-server-query-corpus/mysql-latest.csv`.
 
+A query that runs in SQL modes that affect the lexer has them in a second column.
+
 ## Tests and benchmarks
 To run lexer and parser tests and benchmarks, use:
 

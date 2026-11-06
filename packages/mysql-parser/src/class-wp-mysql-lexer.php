@@ -76,6 +76,7 @@ class WP_MySQL_Lexer {
 	const IDENT_QUOTED                = 484;
 	const TEXT_STRING                 = 827;
 	const NCHAR_STRING                = 611;
+	const DOLLAR_QUOTED_STRING_SYM    = 1204;
 	const UNDERSCORE_CHARSET          = 852;
 	const BIN_NUM                     = 292;
 	const HEX_NUM                     = 474;
@@ -802,7 +803,6 @@ class WP_MySQL_Lexer {
 			'~' => self::TILDE,
 			'%' => self::PERCENT,
 			'^' => self::CARET,
-			'?' => self::PARAM_MARKER,
 			'{' => self::LEFT_BRACE,
 			'}' => self::RIGHT_BRACE,
 			'=' => self::EQ,
@@ -954,8 +954,7 @@ class WP_MySQL_Lexer {
 					$type = $this->read_mysql_comment();
 				} else {
 					$this->bytes_already_read += 2;
-					$this->read_comment_content();
-					$type = self::COMMENT;
+					$type                      = $this->read_comment_content();
 				}
 			} else {
 				$this->bytes_already_read += 1;
@@ -984,9 +983,17 @@ class WP_MySQL_Lexer {
 			// follows is emitted as its own token (see produce_at_variable()).
 			$this->bytes_already_read += 1;
 			$type                      = self::AT_SIGN;
+		} elseif ( '?' === $byte ) {
+			// A parameter marker can't precede a byte that can be part of an identifier.
+			if ( null !== $next_byte && ( strspn( $next_byte, self::IDENTIFIER_MASK ) > 0 || $next_byte > "\x7F" ) ) {
+				return null; // Invalid input.
+			}
+			$this->bytes_already_read += 1;
+			$type                      = self::PARAM_MARKER;
 		} elseif ( '\\' === $byte ) {
 			$this->bytes_already_read += 1;
-			if ( 'N' === $next_byte ) {
+			// MySQL 8.0.1 removed "\N" as a synonym for NULL.
+			if ( 'N' === $next_byte && $this->mysql_version < 80001 ) {
 				$this->bytes_already_read += 1;
 				$type                      = self::NULL_SYM;
 			} else {
@@ -1006,7 +1013,18 @@ class WP_MySQL_Lexer {
 				$type = self::NCHAR_STRING;
 			}
 		} elseif ( null === $byte ) {
-			$type = self::EOF;
+			// An unterminated version comment is invalid input.
+			$type = $this->in_mysql_comment ? null : self::EOF;
+		} elseif ( '$' === $byte ) {
+			$type = $this->read_identifier();
+
+			// From MySQL 8.1, a second "$" in the name ends the opening delimiter of
+			// dollar-quoted text. Without one, it's an identifier, such as "$a" or "$".
+			$name    = $this->get_current_token_bytes();
+			$tag_end = strpos( $name, '$', 1 );
+			if ( false !== $tag_end && $this->mysql_version >= 80100 ) {
+				$type = $this->read_dollar_quoted_text( substr( $name, 0, $tag_end + 1 ) );
+			}
 		} else {
 			$type = $this->read_identifier();
 			if ( self::IDENT === $type ) {
@@ -1048,74 +1066,87 @@ class WP_MySQL_Lexer {
 	 */
 	private function read_identifier(): ?int {
 		$started_at = $this->bytes_already_read;
-		while ( true ) {
-			// First, let's try to parse an ASCII sequence.
-			$this->bytes_already_read += strspn(
-				$this->sql,
-				self::IDENTIFIER_MASK,
-				$this->bytes_already_read
-			);
 
-			// Check if the following byte can be part of a multibyte character
-			// in the range of U+0080 to U+10FFFF before looking at further bytes.
-			// If it can't, bail out early to avoid unnecessary UTF-8 decoding.
-			// Identifiers are usually ASCII-only, so we can optimize for that.
-			$byte_1 = ord(
-				$this->sql[ $this->bytes_already_read ] ?? "\0"
-			);
-			if ( $byte_1 < 0xC2 || $byte_1 > 0xF4 ) {
+		// Identifiers are usually ASCII-only, so only enter the loop below when the
+		// byte after the ASCII sequence can start a multibyte character. With the
+		// tracing JIT, entering the loop for every identifier slows down the lexer.
+		$this->bytes_already_read += strspn(
+			$this->sql,
+			self::IDENTIFIER_MASK,
+			$this->bytes_already_read
+		);
+		$byte_1                    = ord(
+			$this->sql[ $this->bytes_already_read ] ?? "\0"
+		);
+		if ( $byte_1 >= 0xC2 && $byte_1 <= 0xF4 ) {
+			while ( true ) {
+				// First, let's try to parse an ASCII sequence.
+				$this->bytes_already_read += strspn(
+					$this->sql,
+					self::IDENTIFIER_MASK,
+					$this->bytes_already_read
+				);
+
+				// Check if the following byte can be part of a multibyte character
+				// in the range of U+0080 to U+10FFFF before looking at further bytes.
+				// If it can't, bail out early to avoid unnecessary UTF-8 decoding.
+				$byte_1 = ord(
+					$this->sql[ $this->bytes_already_read ] ?? "\0"
+				);
+				if ( $byte_1 < 0xC2 || $byte_1 > 0xF4 ) {
+					break;
+				}
+
+				// Look for a valid 2-byte UTF-8 symbol. Covers range U+0080 - U+07FF.
+				$byte_2 = ord(
+					$this->sql[ $this->bytes_already_read + 1 ] ?? "\0"
+				);
+				if (
+					$byte_1 <= 0xDF
+					&& $byte_2 >= 0x80 && $byte_2 <= 0xBF
+				) {
+					$this->bytes_already_read += 2;
+					continue;
+				}
+
+				// Look for a valid 3-byte UTF-8 symbol in range U+0800 - U+FFFF.
+				$byte_3 = ord(
+					$this->sql[ $this->bytes_already_read + 2 ] ?? "\0"
+				);
+				if (
+					$byte_1 <= 0xEF
+					&& $byte_2 >= 0x80 && $byte_2 <= 0xBF
+					&& $byte_3 >= 0x80 && $byte_3 <= 0xBF
+					// Exclude surrogate range U+D800 to U+DFFF:
+					&& ! ( 0xED === $byte_1 && $byte_2 >= 0xA0 )
+					// Exclude overlong encodings:
+					&& ! ( 0xE0 === $byte_1 && $byte_2 < 0xA0 )
+				) {
+					$this->bytes_already_read += 3;
+					continue;
+				}
+
+				// Look for a valid 4-byte UTF-8 symbol in range U+10000 - U+10FFFF.
+				$byte_4 = ord(
+					$this->sql[ $this->bytes_already_read + 3 ] ?? "\0"
+				);
+				if (
+					$byte_1 >= 0xF0
+					&& $byte_2 >= 0x80 && $byte_2 <= 0xBF
+					&& $byte_3 >= 0x80 && $byte_3 <= 0xBF
+					&& $byte_4 >= 0x80 && $byte_4 <= 0xBF
+					// Exclude overlong encodings:
+					&& ! ( 0xF0 === $byte_1 && $byte_2 < 0x90 )
+					// Exclude codepoints above U+10FFFF:
+					&& ! ( 0xF4 === $byte_1 && $byte_2 > 0x8F )
+				) {
+					$this->bytes_already_read += 4;
+					continue;
+				}
+
+				// Not a valid identifier character.
 				break;
 			}
-
-			// Look for a valid 2-byte UTF-8 symbol. Covers range U+0080 - U+07FF.
-			$byte_2 = ord(
-				$this->sql[ $this->bytes_already_read + 1 ] ?? "\0"
-			);
-			if (
-				$byte_1 <= 0xDF
-				&& $byte_2 >= 0x80 && $byte_2 <= 0xBF
-			) {
-				$this->bytes_already_read += 2;
-				continue;
-			}
-
-			// Look for a valid 3-byte UTF-8 symbol in range U+0800 - U+FFFF.
-			$byte_3 = ord(
-				$this->sql[ $this->bytes_already_read + 2 ] ?? "\0"
-			);
-			if (
-				$byte_1 <= 0xEF
-				&& $byte_2 >= 0x80 && $byte_2 <= 0xBF
-				&& $byte_3 >= 0x80 && $byte_3 <= 0xBF
-				// Exclude surrogate range U+D800 to U+DFFF:
-				&& ! ( 0xED === $byte_1 && $byte_2 >= 0xA0 )
-				// Exclude overlong encodings:
-				&& ! ( 0xE0 === $byte_1 && $byte_2 < 0xA0 )
-			) {
-				$this->bytes_already_read += 3;
-				continue;
-			}
-
-			// Look for a valid 4-byte UTF-8 symbol in range U+10000 - U+10FFFF.
-			$byte_4 = ord(
-				$this->sql[ $this->bytes_already_read + 3 ] ?? "\0"
-			);
-			if (
-				$byte_1 >= 0xF0
-				&& $byte_2 >= 0x80 && $byte_2 <= 0xBF
-				&& $byte_3 >= 0x80 && $byte_3 <= 0xBF
-				&& $byte_4 >= 0x80 && $byte_4 <= 0xBF
-				// Exclude overlong encodings:
-				&& ! ( 0xF0 === $byte_1 && $byte_2 < 0x90 )
-				// Exclude codepoints above U+10FFFF:
-				&& ! ( 0xF4 === $byte_1 && $byte_2 > 0x8F )
-			) {
-				$this->bytes_already_read += 4;
-				continue;
-			}
-
-			// Not a valid identifier character.
-			break;
 		}
 
 		if ( $this->bytes_already_read === $started_at ) {
@@ -1370,12 +1401,59 @@ class WP_MySQL_Lexer {
 		return $is_identifier_quote ? self::IDENT_QUOTED : self::TEXT_STRING;
 	}
 
+	/**
+	 * Read dollar-quoted text, which has the form $tag$text$tag$.
+	 *
+	 * Rules:
+	 *   1. The tag can be empty. Otherwise, it consists of unquoted identifier
+	 *      characters other than "$", and it is case-sensitive.
+	 *   2. The text can't be empty, and it has no escape sequences. It ends with
+	 *      the first closing delimiter.
+	 *
+	 * @param string $delimiter The opening delimiter, at the start of the current token.
+	 */
+	private function read_dollar_quoted_text( string $delimiter ): ?int {
+		// A "." that read_identifier() found after the name is a part of the text.
+		$this->next_state = self::STATE_START;
+
+		$delimiter_length = strlen( $delimiter );
+		$text_start       = $this->token_starts_at + $delimiter_length;
+		$at               = $text_start;
+		while ( $at < $this->sql_length ) {
+			$at = strpos( $this->sql, '$', $at );
+			if ( false === $at ) {
+				break;
+			}
+
+			$matched = 1;
+			while (
+				$matched < $delimiter_length
+				&& ( $this->sql[ $at + $matched ] ?? null ) === $delimiter[ $matched ]
+			) {
+				++$matched;
+			}
+			if ( $matched === $delimiter_length ) {
+				// MySQL rejects empty text, unlike an empty string as a routine body.
+				if ( $at === $text_start ) {
+					break;
+				}
+				$this->bytes_already_read = $at + $delimiter_length;
+				return self::DOLLAR_QUOTED_STRING_SYM;
+			}
+
+			// As in MySQL, the byte that breaks the match is not checked again,
+			// so "$$a$" doesn't close "$a$".
+			$at += $matched + 1;
+		}
+		return null; // Invalid input.
+	}
+
 	private function read_line_comment(): int {
 		$this->bytes_already_read += strcspn( $this->sql, "\r\n", $this->bytes_already_read );
 		return self::COMMENT;
 	}
 
-	private function read_mysql_comment(): int {
+	private function read_mysql_comment(): ?int {
 		// @TODO: Consider supporting optimizer hints (/*+ ... */) or document
 		//        that they are not supported.
 
@@ -1400,9 +1478,19 @@ class WP_MySQL_Lexer {
 		$version = (int) substr( $this->sql, $this->bytes_already_read, $version_length );
 
 		if ( $this->mysql_version < $version ) {
-			// Version not satisfied. Treat the content as a regular comment.
-			$this->read_comment_content();
-			return self::COMMENT;
+			// Version not satisfied. Treat the content as a comment. Unlike a regular
+			// comment, it can contain other comments, which can't be nested any further.
+			while ( true ) {
+				$nested_start = strpos( $this->sql, '/*', $this->bytes_already_read );
+				$comment_end  = strpos( $this->sql, '*/', $this->bytes_already_read );
+				if ( false === $nested_start || ( false !== $comment_end && $comment_end < $nested_start ) ) {
+					return $this->read_comment_content();
+				}
+				$this->bytes_already_read = $nested_start + 2;
+				if ( null === $this->read_comment_content() ) {
+					return null; // Invalid input.
+				}
+			}
 		} else {
 			// Version satisfied or not specified. Treat the content as SQL code.
 			$this->bytes_already_read += $version_length; // Skip the version number.
@@ -1411,13 +1499,13 @@ class WP_MySQL_Lexer {
 		}
 	}
 
-	private function read_comment_content(): void {
+	private function read_comment_content(): ?int {
 		$comment_end = strpos( $this->sql, '*/', $this->bytes_already_read );
 		if ( false === $comment_end ) {
-			$this->bytes_already_read = $this->sql_length;
-		} else {
-			$this->bytes_already_read = $comment_end + 2;
+			return null; // Invalid input.
 		}
+		$this->bytes_already_read = $comment_end + 2;
+		return self::COMMENT;
 	}
 
 	private function determine_identifier_or_keyword_type( string $value ): int {
