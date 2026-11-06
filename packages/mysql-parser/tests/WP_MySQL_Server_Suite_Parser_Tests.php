@@ -20,8 +20,8 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 	 * input, which needs the CLIENT_MULTI_STATEMENTS client flag. MySQL rejects them
 	 * too without it.
 	 *
-	 * 92 failures are marked rows that the parser accepts:
-	 * - 90 are rejected by checks that run during MySQL's parsing, in grammar actions
+	 * 99 failures are marked rows that the parser accepts:
+	 * - 97 are rejected by checks that run during MySQL's parsing, in grammar actions
 	 *   and parse tree classes. This parser has neither.
 	 * - 2 use "?" outside a prepared statement. MySQL allows it only when preparing,
 	 *   and this lexer always allows it.
@@ -29,8 +29,8 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 	 * The exact failing set is pinned in FAILURES_PATH; update it when the accepted
 	 * language legitimately changes.
 	 */
-	const EXPECTED_QUERIES  = 77319;
-	const EXPECTED_FAILURES = 135;
+	const EXPECTED_QUERIES  = 77800;
+	const EXPECTED_FAILURES = 142;
 
 	public function test_corpus_acceptance_rate(): void {
 		$parser = WP_MySQL_Parser_Factory::create_parser();
@@ -97,6 +97,8 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 			'vertical tab in a version comment'      => array( "DO 1 /*!80034\v+1*/" ),
 			'form feed in a version comment'         => array( "DO 1 /*!80034\f+1*/" ),
 			'carriage return in a version comment'   => array( "DO 1 /*!80034\r+1*/" ),
+			'a delimiter set with --delimiter'       => array( "CREATE PROCEDURE p_flush_status()\nBEGIN\nDECLARE x INT DEFAULT 3000;\nWHILE x DO\nSET x = x-1;\nFLUSH STATUS;\nEND WHILE;\nEND " ),
+			'a query after --delimiter ;'            => array( 'DROP PROCEDURE p_flush_status' ),
 		);
 	}
 
@@ -128,6 +130,7 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 			'--error with a name'                 => array( "select t1.* as 'with_alias' from t1", $syntax_error ),
 			'--error with a number'               => array( 'analyze table t1 extended', $syntax_error ),
 			'-- error with a number'              => array( 'CREATE TABLE t2 (a INT, b INT DEFAULT (select count(*) from t1))', $syntax_error ),
+			'a syntax error after --delimiter'    => array( 'create table t1 (a int) transactional=0', $syntax_error ),
 			'--error with another error listed'   => array( 'explain select cast(1 as decimal(4294967296))', $regular ),
 			'a listed query with another error'   => array( 'explain select cast(1 as decimal(64, 999999999999999999999999999999))', $syntax_error ),
 			'a listed query after a semantic one' => array( 'GET DIAGNOSTICS var', $syntax_error ),

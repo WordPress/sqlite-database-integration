@@ -4785,6 +4785,24 @@ AND a = (SELECT 1 FROM t)"
 "SELECT GET_LOCK('bug31418', 1)"
 "SELECT IS_USED_LOCK('bug31418') = CONNECTION_ID()"
 "FLUSH STATUS"
+"CREATE PROCEDURE p_flush_status()
+BEGIN
+DECLARE x INT DEFAULT 3000;
+WHILE x DO
+SET x = x-1;
+FLUSH STATUS;
+END WHILE;
+END "
+"CREATE PROCEDURE p_processlist()
+BEGIN
+DECLARE x INT DEFAULT 3000;
+WHILE x DO
+SET x = x-1;
+SELECT COUNT(*) INTO @a FROM information_schema.processlist;
+END WHILE;
+END "
+"DROP PROCEDURE p_flush_status"
+"DROP PROCEDURE p_processlist"
 "SELECT _utf8mb3'abc'"
 "SELECT n'abc'"
 "SELECT CONVERT ( 'abc' USING utf8mb3 )"
@@ -7869,6 +7887,320 @@ return 0"
 "drop table имя_таблицы_в_кодировке_утф8_длиной_больше_чем_48"
 "drop function if exists f1"
 "drop function if exists f1","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"create function f1() returns int
+begin
+declare res int;
+create temporary table t3 select 1 i;
+set res:= (select count(*) from t1);
+drop temporary table t3;
+return res;
+end"
+"create table t1 as select 1"
+"create table t2 as select f1() from t1"
+"drop function f1"
+"drop function f1","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"create table t1 like information_schema.processlist"
+"create temporary table t1 like information_schema.processlist"
+"create table t1 as select * from information_schema.character_sets"
+"CREATE TABLE t1(
+c1 INT DEFAULT 12 COMMENT 'column1',
+c2 INT NULL COMMENT 'column2',
+c3 INT NOT NULL COMMENT 'column3',
+c4 VARCHAR(255) CHARACTER SET utf8mb3 NOT NULL DEFAULT 'a',
+c5 VARCHAR(255) COLLATE utf8mb3_unicode_ci NULL DEFAULT 'b',
+c6 VARCHAR(255))
+COLLATE latin1_bin"
+"CREATE TABLE t2 AS SELECT * FROM t1"
+"DROP TABLE IF EXISTS t3"
+"CREATE TABLE t1(c1 TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, c2 TIMESTAMP NOT NULL DEFAULT '0000-00-00 00:00:00')"
+"SET sql_mode = 'NO_ZERO_DATE'"
+"CREATE TABLE t2(c1 TIMESTAMP, c2 TIMESTAMP DEFAULT 0)"
+"CREATE TABLE t2(c1 TIMESTAMP NULL)"
+"ALTER TABLE t1 ADD INDEX(c1)"
+"SET sql_mode = ''"
+"SET sql_mode = ''",NO_BACKSLASH_ESCAPES
+"CREATE TABLE t1(c1 YEAR DEFAULT 2008, c2 YEAR DEFAULT 0)"
+"ALTER TABLE t1 MODIFY c1 YEAR DEFAULT 0"
+"create table `me:i`(id int)"
+"drop table `me:i`"
+"create table t1 (a int) transactional=0",,syntax_error
+"create table t2 (a int) page_checksum=1",,syntax_error
+"create table t3 (a int) row_format=page",,syntax_error
+"CREATE TABLE B (
+pk INTEGER AUTO_INCREMENT,
+int_key INTEGER NOT NULL,
+PRIMARY KEY (pk),
+KEY (int_key)
+)"
+"INSERT IGNORE INTO B VALUES ('9', '9')"
+"CREATE TABLE IF NOT EXISTS t1 (
+`pk` INTEGER NOT NULL AUTO_INCREMENT ,
+`int` INTEGER ,
+PRIMARY KEY ( `pk` )
+) SELECT `pk` , `int_key` FROM B "
+"CREATE TRIGGER f BEFORE INSERT ON t1 FOR EACH ROW
+BEGIN
+INSERT INTO t1 ( `int` ) VALUES (4 ),( 8 ),( 2 ) ;
+END ; "
+"INSERT INTO t1 (pk, int_key) SELECT `pk` , `int_key` FROM B "
+"CREATE TRIGGER f BEFORE INSERT ON t1 FOR EACH ROW
+BEGIN
+UPDATE A SET `pk`=1 WHERE `pk`=0 ;
+END ;"
+"DROP TABLE B"
+"CREATE TABLE t1(f1 integer)"
+"HANDLER t1 OPEN AS A"
+"CREATE TABLE t1 SELECT 1 AS f2"
+"CREATE TABLE t2(f1 integer)"
+"CREATE TABLE t1 LIKE t2"
+"CREATE TEMPORARY TABLE t1 (a INT)"
+"CREATE TEMPORARY TABLE t2 (a INT)"
+"CREATE VIEW t2 AS SELECT 1"
+"CREATE TABLE t3 (a INT)"
+"CREATE TEMPORARY TABLE t3 SELECT 1"
+"CREATE TEMPORARY TABLE t4 (a INT)"
+"CREATE TABLE t4 AS SELECT 1"
+"DROP TEMPORARY TABLE t1, t2, t3, t4"
+"DROP TABLE t1, t3, t4"
+"DROP VIEW t2"
+"CREATE TEMPORARY TABLE t2 (ID INT)"
+"CREATE TEMPORARY TABLE t1 (ID INT)"
+"CREATE TABLE IF NOT EXISTS t1 (ID INT)"
+"CREATE TABLE IF NOT EXISTS t1 SELECT * FROM t2"
+"CREATE TABLE t1 SELECT * FROM t2"
+"DROP TEMPORARY TABLE t2"
+"drop tables if exists t1, t2"
+"create table t1 (dt datetime default '2008-02-31 00:00:00')"
+"set @old_mode= @@sql_mode"
+"set @@sql_mode='ALLOW_INVALID_DATES'"
+"set @@sql_mode= @old_mode"
+"create table t2 like t1"
+"CREATE TABLE t2 (id int)"
+"INSERT INTO t2 VALUES (2), (2)"
+"CREATE VIEW v1 AS SELECT id FROM t2"
+"CREATE TABLE IF NOT EXISTS v1(a int, b int) SELECT id, id FROM t1"
+"SHOW CREATE TABLE v1"
+"CREATE TEMPORARY TABLE tt1 AS SELECT id FROM t2"
+"CREATE TEMPORARY TABLE IF NOT EXISTS tt1(a int, b int) SELECT id, id FROM t1"
+"SELECT * FROM tt1"
+"DROP TEMPORARY TABLE tt1"
+"create table if not exists t1 (a int) select 1 as a"
+"create table t1 (a int) select 2 as a"
+"create table if not exists t1 (a int) select 2 as a"
+"create temporary table if not exists t1 (a int) select 1 as a"
+"create temporary table t1 (a int) select 2 as a"
+"create temporary table if not exists t1 (a int) select 2 as a"
+"create view v1 as select a from t1"
+"create temporary table t1 (a int) select 1 as a"
+"select * from v1"
+"create table if not exists t1 (a int) select 3 as a"
+"create table t1 (a int) select 1 as a"
+"create temporary table if not exists t1 select 2 as a"
+"create temporary table if not exists t1 select 3 as a"
+"create table t2 (a int unique)"
+"create view t1 as select a from t2"
+"insert into t1 (a) values (1)"
+"create temporary table if not exists t1 (a int) select 3 as a"
+"create temporary table if not exists t1 (a int) select 4 as a"
+"drop view t1"
+"create view t1 as select a + 5 as a from t2"
+"update t1 set a=3 where a=2"
+"create view t1 as select 1 as a"
+"create temporary table if not exists t1 (a int) select * from t1"
+"create table if not exists t1 (a int) select * from t1"
+"create table t1 (a int) select 1 as b, 2 as c"
+"create table if not exists t1 (a int, b date, c date) select 1 as b, 2 as c"
+"set @@session.sql_mode=default"
+"create table if not exists t1 (a int, b date, c date)
+replace select 1 as b, 2 as c"
+"create table if not exists t1 (a int, b date, c date)
+ignore select 1 as b, 2 as c"
+"create table if not exists t1 (a int unique, b int)
+replace select 1 as a, 1 as b union select 1 as a, 2 as b"
+"create table if not exists t1 (a int unique, b int)
+ignore select 1 as a, 1 as b union select 1 as a, 2 as b"
+"create function f()
+returns int
+begin
+insert into t2 values(1);
+return 1;
+end"
+"create table t2(c1 int)"
+"create table t1 select f()"
+"create temporary table t1 select f()"
+"create table t3(c1 int)"
+"create view t2 as select c1 from t3"
+"drop view t2"
+"create table t4(c1 int)"
+"create view t2 as select t3.c1 as c1 from t3, t4"
+"drop tables t3, t4"
+"create view t2 as select 1"
+"drop function f"
+"CREATE TABLE t1 (v varchar(65535) CHARACTER SET latin1)"
+"CREATE TABLE t01234567890123456789012345678901234567890123456789012345678901234567890123456789(a int)"
+"CREATE DATABASE t01234567890123456789012345678901234567890123456789012345678901234567890123456789"
+"CREATE DATABASE db_with_no_tables_and_an_unrelated_file_in_data_directory"
+"DROP DATABASE db_with_no_tables_and_an_unrelated_file_in_data_directory"
+"CREATE DATABASE db_with_tables_and_an_unrelated_file_in_data_directory"
+"DROP DATABASE db_with_tables_and_an_unrelated_file_in_data_directory"
+"DROP DATABASE db_created_with_mkdir_and_an_unrelated_file_in_data_directory"
+"CREATE TABLE t1 (id INT) INDEX DIRECTORY = 'a#######################################################b#######################################################################################b#####################################################################################b######################################################################################b######################################################################################b#############################################################################################################'"
+"CREATE TABLE t2 (id INT NOT NULL, name VARCHAR(30))
+ENGINE = InnoDB
+PARTITION BY RANGE (id) (
+PARTITION p0 VALUES LESS THAN (10) INDEX DIRECTORY = 'a#######################################################b#######################################################################################b#####################################################################################b######################################################################################b######################################################################################b#############################################################################################################'
+)"
+"CREATE TABLE t3 (id INT) INDEX DIRECTORY = 'test'"
+"CREATE TABLE t4 (id INT NOT NULL, name VARCHAR(30))
+ENGINE = InnoDB
+PARTITION BY RANGE (id) (
+PARTITION p0 VALUES LESS THAN (10) INDEX DIRECTORY = 'test'
+)"
+"SET @saved_innodb_default_row_format= @@global.innodb_default_row_format"
+"SET @saved_show_create_table_verbosity= @@session.show_create_table_verbosity"
+"SELECT @@global.innodb_default_row_format"
+"SELECT @@session.show_create_table_verbosity"
+"CREATE TABLE t1(fld1 INT) ENGINE= InnoDB"
+"CREATE TABLE t2(fld1 INT) ENGINE= InnoDB, ROW_FORMAT= DEFAULT"
+"SET GLOBAL innodb_default_row_format= 'COMPACT'"
+"CREATE TABLE t3(fld1 INT) ENGINE= InnoDB"
+"CREATE TABLE t4(fl1 INT) ENGINE= InnoDB, ROW_FORMAT= COMPRESSED"
+"SET SESSION show_create_table_verbosity= ON"
+"SET GLOBAL innodb_default_row_format= 'DYNAMIC'"
+"SET SESSION show_create_table_verbosity= OFF"
+"CREATE TEMPORARY TABLE t1(fld1 INT) ENGINE= InnoDB"
+"CREATE TEMPORARY TABLE t2(fld1 INT) ENGINE= InnoDB, ROW_FORMAT= DEFAULT"
+"CREATE TEMPORARY TABLE t3(fld1 INT) ENGINE= InnoDB"
+"CREATE TEMPORARY TABLE t4(fl1 INT) ENGINE= InnoDB, ROW_FORMAT= REDUNDANT"
+"SET GLOBAL innodb_default_row_format= @saved_innodb_default_row_format"
+"SET SESSION show_create_table_verbosity= @saved_show_create_table_verbosity"
+"CREATE TABLE t0(a ENUM('aaa', 'bbb', 'ccc') BYTE)"
+"SHOW CREATE TABLE t0"
+"SHOW COLUMNS FROM t0"
+"CREATE TABLE t1(a ENUM( b'1001001'))"
+"SHOW COLUMNS FROM t1"
+"CREATE TABLE t2(a ENUM( b'1001001') BYTE)"
+"SHOW COLUMNS FROM t2"
+"CREATE TABLE t3(a ENUM( b'10010010') BYTE)"
+"SHOW COLUMNS FROM t3"
+"CREATE TABLE t4(a ENUM( b'1001001101101111') BYTE)"
+"SHOW COLUMNS FROM t4"
+"CREATE TABLE t5(a ENUM( b'10010011011011111111011000011') BYTE)"
+"SHOW COLUMNS FROM t5"
+"CREATE TABLE t6 (a INT)"
+"ALTER TABLE t6
+MODIFY COLUMN a ENUM( b'10010011011011111111011000011') BYTE UNIQUE FIRST"
+"SHOW COLUMNS FROM t6"
+"SET GLOBAL sql_require_primary_key= ON"
+"SELECT @@global.sql_require_primary_key"
+"SELECT @@session.sql_require_primary_key"
+"CREATE TABLE t2(i INT PRIMARY KEY, j INT)"
+"ALTER TABLE t2 DROP COLUMN i"
+"CREATE TABLE t1(i INT PRIMARY KEY, j INT)"
+"ALTER TABLE t1 DROP COLUMN i"
+"SET SESSION sql_require_primary_key= OFF"
+"SET SESSION sql_require_primary_key= ON"
+"CREATE TABLE t3 (I INT PRIMARY KEY)"
+"CREATE TABLE t4 AS SELECT * FROM t1"
+"CREATE TABLE t4 AS SELECT * FROM t3"
+"CREATE TABLE t4(i INT PRIMARY KEY) AS SELECT * FROM t3"
+"CREATE TABLE t5(i INT PRIMARY KEY, j INT)"
+"ALTER TABLE t5 DROP PRIMARY KEY, ADD CONSTRAINT PRIMARY KEY (j)"
+"CREATE TEMPORARY TABLE t6(i INT)"
+"CREATE USER subuser@localhost"
+"REVOKE SUPER ON *.* FROM subuser@localhost"
+"SET GLOBAL sql_require_primary_key= OFF"
+"DROP USER subuser@localhost"
+"SET @saved_mode= @@sql_mode"
+"CREATE TABLE t1(fld1 int)"
+"CREATE TABLE t2 SELECT fld1, CURDATE() fld2 FROM t1"
+"CREATE TABLE t3 AS SELECT now()"
+"DROP TABLE t2, t3"
+"SET SQL_MODE= ""NO_ZERO_DATE"""
+"SET SQL_MODE= DEFAULT"
+"CREATE TABLE t1(fld1 DATETIME NOT NULL DEFAULT '1111:11:11')"
+"CREATE TABLE t1 (fld1 INT, fld2 DATETIME DEFAULT '1211:1:1')"
+"CREATE TRIGGER t1_bi BEFORE INSERT ON t1
+FOR EACH ROW
+BEGIN
+CREATE TEMPORARY TABLE t2 AS SELECT NEW.fld1, NEW.fld2;
+END
+"
+"INSERT INTO t1 VALUES (1, '1111:11:11')"
+"SET SQL_MODE= @saved_mode"
+"SET SESSION sql_require_primary_key=1"
+"CREATE TABLE IF NOT EXISTS t1(i INT)"
+"SET SESSION sql_require_primary_key=DEFAULT"
+"CREATE TABLE types(id INT PRIMARY KEY AUTO_INCREMENT, name VARCHAR(100))"
+"INSERT INTO types(name) VALUES
+('TINYINT'), ('SMALLINT'), ('MEDIUMINT'), ('INT'), ('BIGINT'),
+('TINYINT(10)'), ('SMALLINT(10)'), ('MEDIUMINT(10)'), ('INT(10)'), ('BIGINT(10)'),
+('DOUBLE'), ('FLOAT'), ('DECIMAL(5, 2)'), ('YEAR')"
+"DROP TABLE types"
+"CREATE TABLE t1(
+a TINYINT,
+b SMALLINT,
+c MEDIUMINT,
+d INT,
+e BIGINT,
+f TINYINT(1),
+g SMALLINT(1),
+h MEDIUMINT(1),
+i INT(1),
+j BIGINT(1),
+k TINYINT ZEROFILL,
+l SMALLINT ZEROFILL,
+m MEDIUMINT ZEROFILL,
+n INT ZEROFILL,
+o BIGINT ZEROFILL
+)"
+"SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 't1'"
+"SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'v1'"
+"DESCRIBE v1"
+"CREATE FUNCTION f1(a INT) RETURNS INT RETURN 1"
+"CREATE FUNCTION f2(a INT ZEROFILL) RETURNS INT ZEROFILL RETURN 1"
+"SHOW CREATE FUNCTION f1"
+"SHOW CREATE FUNCTION f2"
+"SELECT DTD_IDENTIFIER FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_NAME = 'f1'"
+"SELECT DTD_IDENTIFIER FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_NAME = 'f2'"
+"SELECT DTD_IDENTIFIER FROM INFORMATION_SCHEMA.PARAMETERS WHERE SPECIFIC_NAME = 'f1'"
+"SELECT DTD_IDENTIFIER FROM INFORMATION_SCHEMA.PARAMETERS WHERE SPECIFIC_NAME = 'f2'"
+"CREATE PROCEDURE p1(a INT, b INT ZEROFILL) BEGIN END"
+"SHOW CREATE PROCEDURE p1"
+"SELECT DTD_IDENTIFIER FROM INFORMATION_SCHEMA.PARAMETERS WHERE SPECIFIC_NAME = 'p1'"
+"CREATE TABLE t1(a BOOLEAN, b TINYINT(1), c TINYINT(1) UNSIGNED, d TINYINT(1) ZEROFILL)"
+"SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 't1'"
+"CREATE FUNCTION f1(a BOOLEAN, b TINYINT(1), c TINYINT(1) UNSIGNED,
+d TINYINT(1) ZEROFILL) RETURNS BOOLEAN RETURN 1"
+"CREATE PROCEDURE p1(a BOOLEAN, b TINYINT(1), c TINYINT(1) UNSIGNED,
+d TINYINT(1) ZEROFILL) BEGIN END"
+"CREATE TABLE t1(i INT PRIMARY KEY) KEY_BLOCK_SIZE = 2147483647",,syntax_error
+"CREATE TABLE t1(i INT PRIMARY KEY) KEY_BLOCK_SIZE = -2147483647",,syntax_error
+"CREATE TABLE t1(i INT PRIMARY KEY) KEY_BLOCK_SIZE = 2147483648",,syntax_error
+"CREATE TABLE t1(i INT PRIMARY KEY) KEY_BLOCK_SIZE = -2147483648",,syntax_error
+"CREATE TABLE t2(i INT PRIMARY KEY) KEY_BLOCK_SIZE = 4294967295",,syntax_error
+"CREATE TABLE t3(i INT PRIMARY KEY) KEY_BLOCK_SIZE = 4294967296",,syntax_error
+"CREATE TABLE t4(
+c0 DECIMAL ZEROFILL  UNIQUE KEY STORAGE MEMORY,
+c1 DECIMAL ZEROFILL  PRIMARY KEY COLUMN_FORMAT DYNAMIC UNIQUE KEY STORAGE MEMORY NOT NULL,
+c2 FLOAT ZEROFILL  COMMENT 'asdf'  COLUMN_FORMAT FIXED NULL STORAGE MEMORY,
+c3 TINYINT(120) ZEROFILL   STORAGE DISK UNIQUE KEY NULL COMMENT 'asdf'
+) CHECKSUM = 1, AUTO_INCREMENT = 1093400439, KEY_BLOCK_SIZE = 3927749503218772669, COMPRESSION = 'NONE'",,syntax_error
+"CREATE TABLE t1(a INT) ENGINE=myisam key_block_size=65535"
+"SHOW TABLE STATUS LIKE 't1'"
+"CREATE TABLE t1(a INT) avg_row_length=18446744073709551615",,syntax_error
+"CREATE TABLE t1(a INT) avg_row_length=4294967296",,syntax_error
+"CREATE TABLE t1(a INT) avg_row_length=4294967295"
+"CREATE TABLE t1(a INT) max_rows=18446744073709551615"
+"CREATE TABLE t1(a INT) min_rows=18446744073709551615"
+"CREATE TABLE t1 AS SELECT @max_error_count UNION SELECT 'a'"
+"CREATE TABLE t2 AS SELECT @max_error_count UNION SELECT 'a'"
+"CREATE TABLE t1 (x INT)"
+"CREATE TABLE t2 (pk INT PRIMARY KEY)"
+"CREATE TABLE t3 AS
+SELECT 1 FROM t1 LEFT JOIN t2
+ON t1.x IN (SELECT it1.pk FROM t2 AS it1, t2 AS it2)"
+"SELECT COUNT(*) FROM t3"
 "CREATE PROCEDURE IF NOT EXISTS sp1() BEGIN END"
 "CREATE PROCEDURE sp1() BEGIN END"
 "CREATE FUNCTION IF NOT EXISTS sf1() RETURNS INT DETERMINISTIC return 0"
@@ -7888,8 +8220,6 @@ return 0"
 "INSERT INTO t3 VALUES (0)"
 "SET sql_mode = TRADITIONAL"
 "ALTER TABLE t3 ADD INDEX(c1)"
-"SET sql_mode = ''"
-"SET sql_mode = ''",NO_BACKSLASH_ESCAPES
 "create table `about:text` (
 _id int not null auto_increment,
 `about:text` varchar(255) not null default '',
@@ -8799,6 +9129,48 @@ e2 enum('ìëÿ)ªî')
 "SET @@character_set_client= @old_character_set_client"
 "SET @@character_set_connection= @old_character_set_connection"
 "SET @@character_set_results= @old_character_set_results"
+"CREATE TABLE t4 (s1 CHAR(50) CHARACTER SET latin1,
+s2 CHAR(50) CHARACTER SET cp932,
+d DECIMAL(10,2))"
+"CREATE PROCEDURE bug18293 (IN ins1 CHAR(50),
+IN ins2 CHAR(50) CHARACTER SET cp932,
+IN ind DECIMAL(10,2))
+BEGIN
+INSERT INTO t4 VALUES (ins1, ins2, ind);
+END"
+"CALL bug18293(""Foo's a Bar"", _cp932 0xED40ED41ED42, 47.93)"
+"SELECT HEX(s1),HEX(s2),d FROM t4"
+"DROP PROCEDURE bug18293"
+"CREATE TABLE t1 (a varchar(16)) character set cp932"
+"INSERT INTO t1 VALUES (0x8372835E),(0x8352835E)"
+"SELECT hex(a), hex(lower(a)), hex(upper(a)) FROM t1 ORDER BY binary(a)"
+"SET collation_connection=cp932_japanese_ci"
+"CREATE TABLE t1 AS
+SELECT concat(head, tail) AS code, ' ' AS a
+FROM head, tail
+WHERE (head BETWEEN '80' AND 'FF') AND (head NOT BETWEEN 'A1' AND 'DF')
+AND (tail BETWEEN '20' AND 'FF')
+ORDER BY head, tail"
+"INSERT t1 (code) SELECT head FROM head
+WHERE (head BETWEEN 'A1' AND 'DF')
+ORDER BY head"
+"SET @@session.max_error_count = default"
+"SELECT COUNT(*) FROM t1 WHERE a<>'' AND OCTET_LENGTH(a)=1"
+"SELECT COUNT(*) FROM t1 WHERE a<>'' AND OCTET_LENGTH(a)=2"
+"SELECT code, hex(upper(a)), hex(lower(a)),a, upper(a), lower(a) FROM t1
+WHERE hex(a)<>hex(upper(a)) OR hex(a)<>hex(lower(a))
+ORDER BY code"
+"SELECT * FROM t1
+WHERE HEX(CAST(LOWER(a) AS CHAR CHARACTER SET utf8mb3)) <>
+HEX(LOWER(CAST(a AS CHAR CHARACTER SET utf8mb3))) ORDER BY code"
+"SELECT * FROM t1
+WHERE HEX(CAST(UPPER(a) AS CHAR CHARACTER SET utf8mb3)) <>
+HEX(UPPER(CAST(a AS CHAR CHARACTER SET utf8mb3))) ORDER BY code"
+"SELECT HEX(a), HEX(CONVERT(a USING utf8mb3)) as b FROM t1
+WHERE a<>'' HAVING b<>'3F' ORDER BY code"
+"SELECT HEX(a), HEX(CONVERT(a using cp932)) as b FROM t1 HAVING b<>'3F' ORDER BY BINARY a"
+"set names cp932"
+"set collation_connection=cp932_bin"
 "CREATE DATABASE mysqltest1 DEFAULT CHARACTER SET cp1251"
 "USE mysqltest1"
 "CREATE DATABASE mysqltest2"
@@ -9176,19 +9548,9 @@ ORDER BY head, tail"
 FROM head, tail
 WHERE (head BETWEEN '80' AND 'FF') AND (tail BETWEEN '20' AND 'FF')
 ORDER BY head, tail"
-"SET @@session.max_error_count = default"
-"SELECT COUNT(*) FROM t1 WHERE a<>'' AND OCTET_LENGTH(a)=2"
 "SELECT * FROM t1 WHERE CHAR_LENGTH(a)=2"
 "SELECT COUNT(*) FROM t1 WHERE a<>'' AND OCTET_LENGTH(a)=3"
 "SELECT code, hex(upper(a)), hex(lower(a)),a, upper(a), lower(a) FROM t1 WHERE hex(a)<>hex(upper(a)) OR hex(a)<>hex(lower(a)) ORDER BY code"
-"SELECT * FROM t1
-WHERE HEX(CAST(LOWER(a) AS CHAR CHARACTER SET utf8mb3)) <>
-HEX(LOWER(CAST(a AS CHAR CHARACTER SET utf8mb3))) ORDER BY code"
-"SELECT * FROM t1
-WHERE HEX(CAST(UPPER(a) AS CHAR CHARACTER SET utf8mb3)) <>
-HEX(UPPER(CAST(a AS CHAR CHARACTER SET utf8mb3))) ORDER BY code"
-"SELECT HEX(a), HEX(CONVERT(a USING utf8mb3)) as b FROM t1
-WHERE a<>'' HAVING b<>'3F' ORDER BY code"
 "SELECT HEX(a), HEX(CONVERT(a using sjis)) as b FROM t1 HAVING b<>'3F' ORDER BY BINARY a"
 "set collation_connection=eucjpms_bin"
 "SET NAMES eucjpms"
@@ -10751,7 +11113,6 @@ utf32 CHAR CHARACTER SET utf32
 "SELECT 'тест' as s"
 "SET character_set_connection=binary"
 "CREATE TABLE t1 (`ä` CHAR(128) DEFAULT 'ä', `ä1` ENUM('ä1','ä2') DEFAULT 'ä2')"
-"SHOW COLUMNS FROM t1"
 "CREATE TABLE `goodÐÌÏÈÏ` (a int)"
 "create table t1 (a char(10) character set koi8r, b text character set koi8r)"
 "insert into t1 values ('test','test')"
@@ -10823,8 +11184,6 @@ c char(16) default NULL
 "SET collation_connection='sjis_bin'"
 "SELECT HEX('佐淘　圭') FROM DUAL"
 "CREATE TABLE t1 (a varchar(16)) character set sjis"
-"INSERT INTO t1 VALUES (0x8372835E),(0x8352835E)"
-"SELECT hex(a), hex(lower(a)), hex(upper(a)) FROM t1 ORDER BY binary(a)"
 "SELECT QUOTE('ソ')"
 "SET collation_connection=sjis_japanese_ci"
 "CREATE TABLE t1 AS
@@ -10834,7 +11193,6 @@ WHERE (head BETWEEN '80' AND 'FF') AND (head NOT BETWEEN 'A1' AND 'DF')
 AND   (tail BETWEEN '20' AND 'FF')
 ORDER BY head, tail"
 "INSERT t1 (code) SELECT head FROM head WHERE (head BETWEEN 'A1' AND 'DF')"
-"SELECT COUNT(*) FROM t1 WHERE a<>'' AND OCTET_LENGTH(a)=1"
 "SELECT code, hex(upper(a)), hex(lower(a)),a, upper(a), lower(a)
 FROM t1
 WHERE hex(a)<>hex(upper(a)) OR hex(a)<>hex(lower(a))
@@ -15908,7 +16266,6 @@ WHERE t1.utf8mb4_encoding > t2.utf8mb3_encoding"
 "SELECT u_decimal,hex(utf8mb4_encoding) FROM t1"
 "ALTER TABLE t1 MODIFY utf8mb4_encoding VARCHAR(10) CHARACTER SET utf8mb4"
 "ALTER TABLE t2 MODIFY utf8mb3_encoding VARCHAR(10) CHARACTER SET utf8mb4"
-"DROP TABLE IF EXISTS t3"
 "CREATE TABLE t3 (
 u_decimal int NOT NULL,
 utf8mb3_encoding VARCHAR(10) NOT NULL
@@ -17606,7 +17963,6 @@ x int)"
 "create view v1 (c) as select id from t1"
 "create table t1 (a int unique)"
 "create table t2 (b int default 10)"
-"insert into t1 (a) values (1)"
 "insert into t2 (b) values (1)"
 "insert into t1 (a) select b from t2 on duplicate key update a=default"
 "insert into t1 (a) select b from t2 on duplicate key update a=default(b)"
@@ -18196,7 +18552,6 @@ a INT
 "CREATE TABLE db2.t1 AS SELECT * FROM db1.t2"
 "CREATE TABLE db2.t2 AS SELECT * FROM db2.t1"
 "CREATE TABLE t1 AS SELECT * FROM db2.t2"
-"CREATE TABLE t2 AS SELECT * FROM t1"
 "CREATE PROCEDURE count_rows()
 BEGIN
 SELECT COUNT(*) AS ""COUNT(db1.t1)"" FROM db1.t1;
@@ -18238,6 +18593,230 @@ FOR EACH ROW INSERT INTO no_such_table VALUES (1)"
 "CREATE TRIGGER tr1 AFTER DELETE ON t2
 FOR EACH ROW INSERT INTO no_such_table VALUES (1)"
 "CREATE table t1 (i INTEGER)"
+"CREATE TRIGGER tr1 AFTER DELETE ON t1 FOR EACH ROW
+BEGIN
+INSERT INTO t1 SELECT * FROM t1 AS A;
+END "
+"DELETE IGNORE FROM t1"
+"CREATE TABLE t1 (id INT)"
+"DELETE FROM t1.*, test.t2.*, a.* USING t1, t2, t3 AS a"
+"DROP VIEW IF EXISTS v1, v2"
+"CREATE TABLE t2(b INT)"
+"CREATE VIEW v1 AS SELECT a, b FROM t1, t2"
+"CREATE VIEW v2 AS SELECT a FROM v1"
+"DELETE FROM v2"
+"DELETE v2 FROM v2"
+"DROP VIEW v2, v1"
+"DROP TABLE IF EXISTS t2, t1"
+"DROP PROCEDURE IF EXISTS p1"
+"DROP PROCEDURE IF EXISTS p1","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CREATE TABLE t1 (i INT PRIMARY KEY) engine=InnoDB"
+"CREATE TABLE t2 (i INT, FOREIGN KEY (i) REFERENCES t1 (i) ON DELETE NO ACTION) engine=InnoDB"
+"DELETE IGNORE FROM t1 WHERE i = 1"
+"CREATE PROCEDURE p1() DELETE IGNORE FROM t1 WHERE i = 1"
+"PREPARE stm FROM 'CALL p1()'"
+"EXECUTE stm"
+"DEALLOCATE PREPARE stm"
+"CREATE TABLE b(a INTEGER)"
+"CREATE VIEW y AS SELECT 1 FROM b, b AS e"
+"CREATE VIEW x AS SELECT 1 FROM y"
+"CREATE VIEW z AS SELECT 1 FROM x LIMIT 1"
+"DELETE z FROM (SELECT 1) AS x, z"
+"DROP VIEW z, x, y"
+"DROP TABLE b"
+"CREATE TABLE t1 (a INT PRIMARY KEY) ENGINE=InnoDB"
+"INSERT INTO t1 (a) VALUES (1)"
+"CREATE TABLE t2 (a INT PRIMARY KEY) ENGINE=InnoDB"
+"INSERT INTO t2 (a) VALUES (1)"
+"CREATE TABLE t3 (a INT, b INT, CONSTRAINT c_a FOREIGN KEY (a)
+REFERENCES t1 (a), CONSTRAINT c_b FOREIGN KEY (b) REFERENCES t2 (a)) ENGINE=InnoDB"
+"INSERT INTO t3 (a, b) VALUES (1, 1)"
+"DELETE IGNORE t1,t2 FROM t1,t2"
+"DROP TABLE t3,t2,t1"
+"CREATE TABLE t2 (b INT) ENGINE=InnoDB"
+"INSERT INTO t1 VALUES (1), (2), (5)"
+"INSERT INTO t2 VALUES (1), (5)"
+"ALTER TABLE t2 ADD CONSTRAINT FOREIGN KEY(b) REFERENCES t1(a)"
+"DROP TABLE t2,t1"
+"CREATE TABLE t1(a INTEGER) engine=innodb"
+"CREATE TABLE t2(a BLOB) engine=innodb"
+"INSERT INTO t1 SET z=1"
+"INSERT INTO t2 VALUES('a')"
+"DELETE FROM t2 WHERE 1 = a"
+"CREATE TABLE t1 (
+col_int_key int,
+pk integer auto_increment,
+col_datetime_key datetime,
+/*Indices*/
+key (col_int_key ),
+primary key (pk),
+key (col_datetime_key )
+) ENGINE=memory"
+"CREATE TABLE t2 (
+col_varchar_key varchar (1),
+col_date_key date,
+pk integer auto_increment,
+/*Indices*/
+key (col_varchar_key ),
+key (col_date_key ),
+primary key (pk)
+) ENGINE=memory"
+"INSERT INTO t2 VALUES
+('v',  '2002-05-01', NULL) ,
+('d',  '2001-01-01', NULL)
+"
+"CREATE TABLE t3 (
+pk integer auto_increment,
+col_int_key int,
+col_varchar_key varchar (1),
+/*Indices*/
+primary key (pk),
+key (col_int_key ),
+key (col_varchar_key ))
+ENGINE=memory"
+"INSERT INTO t3 VALUES
+(NULL, 3, 'n') ,
+(NULL, 1, 'r')
+"
+"CREATE TABLE t4 (
+pk integer auto_increment,
+col_varchar_key varchar (1),
+col_int_key int,
+/*Indices*/
+primary key (pk),
+key (col_varchar_key ),
+key (col_int_key )
+) ENGINE=memory"
+"CREATE TABLE t5 (
+col_datetime_key datetime,
+pk integer auto_increment,
+col_int_key int,
+/*Indices*/
+key (col_datetime_key ),
+primary key (pk),
+key (col_int_key ))
+ENGINE=memory"
+"INSERT INTO t5 VALUES
+('2007-10-01', NULL, 8) ,
+('2002-10-01', NULL, 3)
+"
+"DELETE OUTR1.* FROM t2 AS OUTR1
+JOIN t3 AS OUTR2
+ON ( OUTR1 . col_varchar_key = OUTR2 . col_varchar_key )
+WHERE OUTR1 . col_varchar_key NOT IN
+( SELECT  INNR1 . col_varchar_key AS y FROM t5 AS INNR2
+RIGHT JOIN t4 AS INNR1 ON ( INNR2 . pk < INNR1 . col_int_key )
+WHERE INNR1 . col_int_key <= INNR1 . col_int_key
+AND OUTR2 . col_int_key >= 3  )"
+"DELETE QUICK
+FROM OUTR1.* USING t2 AS OUTR1
+LEFT OUTER JOIN t1 AS OUTR2
+ON ( OUTR1 . col_date_key = OUTR2 . col_datetime_key )
+WHERE OUTR1 . pk NOT IN ( SELECT 2 UNION  SELECT 7 )"
+"DELETE    OUTR1.*
+FROM t2 AS OUTR1
+LEFT JOIN t1 AS OUTR2
+ON ( OUTR1 . pk = OUTR2 . col_int_key )
+WHERE OUTR1 . pk <> (
+SELECT DISTINCT INNR1 . col_int_key AS y
+FROM t5 AS INNR1 WHERE OUTR1 . pk <= 5
+ORDER BY INNR1 . col_datetime_key
+)"
+"DROP TABLE t1, t2, t3, t4, t5"
+"CREATE TABLE t1(a TEXT, FULLTEXT (a))"
+"CREATE VIEW v1 AS SELECT a FROM t1 ORDER BY a"
+"CREATE TABLE t1 (a INT, b CHAR(8), pk INT AUTO_INCREMENT PRIMARY KEY)"
+"INSERT INTO t1 (a,b) VALUES
+(10000,'foobar'),(1,'a'),(2,'b'),(3,'c'),(4,'d'),(5,'e')"
+"INSERT INTO t1 (a,b) SELECT a, b FROM t1"
+"CREATE TABLE t2 (pk INT AUTO_INCREMENT PRIMARY KEY, c CHAR(8), d INT)"
+"INSERT INTO t2 (c,d) SELECT b, a FROM t1"
+"DELETE IGNORE FROM t1 WHERE b IS NOT NULL ORDER BY a LIMIT 1"
+"SELECT a,b FROM t1"
+"DELETE IGNORE t1.*, t2.* FROM t1, t2
+WHERE c < b OR
+a != ( SELECT 1 UNION SELECT 2 )"
+"CREATE TABLE d3 (
+pk int(11) NOT NULL AUTO_INCREMENT,
+col_int int(11) DEFAULT NULL,
+col_varchar varchar(1) DEFAULT NULL,
+PRIMARY KEY (pk)
+) "
+"INSERT INTO d3 VALUES (96,9,'t'),(97,0,'x')"
+"CREATE TABLE e3 (
+col_varchar varchar(1) DEFAULT NULL,
+pk int(11) NOT NULL AUTO_INCREMENT,
+PRIMARY KEY (pk)
+) "
+"INSERT INTO e3 VALUES ('v',986)"
+"DELETE OUTR1.* FROM e3 AS OUTR1 INNER JOIN d3 AS OUTR2 ON
+( OUTR1.col_varchar = OUTR2.col_varchar )
+LEFT JOIN d3 AS OUTR3 ON ( OUTR1. pk = OUTR3.pk )
+WHERE OUTR1.pk =
+( SELECT DISTINCT INNR1.col_int FROM d3 AS INNR1 WHERE INNR1.pk <> 8) "
+"DROP TABLE d3,e3"
+"DELETE FROM t1 AS a1 WHERE a1.c1 = 2"
+"CREATE TABLE t2 (c2 INT)"
+"DELETE FROM t2 a2 WHERE NOT EXISTS (SELECT * FROM t1 WHERE t1.c1 = a2.c2)"
+"CREATE TABLE t1(pk INTEGER PRIMARY KEY, a INTEGER)"
+"INSERT INTO t1 VALUES(1, 10), (2, 20)"
+"PREPARE s FROM 'DELETE t1 FROM t1, (SELECT 1 FROM DUAL) AS dt'"
+"EXECUTE s"
+"DEALLOCATE PREPARE s"
+"CREATE TABLE t1 (a INTEGER)"
+"CREATE TABLE t2 (a INTEGER, b INTEGER)"
+"CREATE TABLE t3 (a INTEGER)"
+"CREATE TABLE t4 (a INTEGER, b INTEGER)"
+"INSERT INTO t1 VALUES (-1), (0), (1), (2), (2), (3), (100), (1000)"
+"INSERT INTO t2 VALUES (-2, 0), (2, 1), (3, 1), (3, 0), (101, 2), (1001, 0)"
+"INSERT INTO t3 VALUES (-1), (0), (1), (2), (2), (3), (100), (1000)"
+"INSERT INTO t4 VALUES (-2, -1), (2, 1), (3, 1), (3, -1), (101, 2), (1001, -1)"
+"DELETE t1, t2, t3, t4
+FROM (t1 INNER JOIN t2 USING (a)) LEFT JOIN (t3 INNER JOIN t4 USING (a)) ON t2.b = t4.b"
+"CREATE TABLE t (
+a INT,
+b INT,
+c TIMESTAMP GENERATED ALWAYS AS (65),
+UNIQUE KEY (a, b),
+UNIQUE KEY (c, a)
+)"
+"INSERT IGNORE INTO t(a, b) VALUES (1, 1), (2, 2)"
+"DELETE d2 FROM t AS d1, t AS d2 WHERE d1.a > d2.a"
+"DELETE IGNORE d2 FROM t AS d1, t AS d2 WHERE d1.a > d2.a"
+"CREATE TABLE t1 (
+c int,
+k int,
+v varchar(1),
+pk int NOT NULL PRIMARY KEY,
+KEY(k)
+)"
+"INSERT INTO t1 VALUES (737324598,-252214477,'k',1)"
+"CREATE TABLE t2 (
+c int,
+k int,
+v varchar(1),
+pk int NOT NULL PRIMARY KEY,
+KEY(k)
+)"
+"INSERT INTO t2 VALUES
+(855986294,-882338447,NULL,1), (232637232,731304773,'y',2),
+(1590168493,1015181107,'h',3), (-1009423426,-232667498,'r',4),
+(236379810,1802601033,'H',5), (551188244,-756499064,NULL,6),
+(-1719538815,-448490308,'N',7), (-2122356533,NULL,'y',8),
+(-687608898,199866688,'0',9), (-1901664078,NULL,'B',10),
+(-2108420295,-497498614,'M',11), (1407257546,191555131,'8',12),
+(88536399,-1988379833,'N',13), (351531198,1071194019,'r',14),
+(194539025,1671647783,'Y',15), (-1133948378,1947844472,'e',16),
+(-533037937,1007507258,'E',17), (1268272947,-1875925199,'w',18),
+(2002333920,-764155734,'0',19), (-2017216121,-1780822065,'w',20)"
+"DELETE FROM outr1, outr2
+USING t1 AS outr1 RIGHT OUTER JOIN t1 AS outr2
+ON outr1.c = outr2.c
+WHERE outr1.c >= (SELECT DISTINCT innr1.k AS y
+FROM t2 AS innr2 LEFT JOIN t2 AS innr1
+ON innr2.k = CAST(innr1.v AS DATETIME)
+WHERE innr1.pk = 3
+)"
 "CALL mtr.add_suppression('You need to use --log-bin to make --binlog-format work.')"
 "SET binlog_format= 'ROW'"
 "SET binlog_format= 'MIXED'"
@@ -18988,7 +19567,6 @@ ON (alias2.col_varchar_key = t1.col_varchar_key ) )
 GROUP BY field1, field2
 ORDER BY t1.col_int_key, t1 .pk DESC )
 "
-"CREATE TABLE t1 (a INTEGER)"
 "INSERT INTO t1 VALUES (NULL),(NULL)"
 "SELECT * FROM t1
 WHERE (a, a) NOT IN
@@ -19312,7 +19890,6 @@ JOIN t2 ON a1.a=t2.a WHERE a1.b='xxx'"
 "SET @@SESSION.optimizer_switch= @save_optimizer_switch"
 "CREATE TABLE t1(a INTEGER, b INTEGER)"
 "CREATE TABLE t2(a INTEGER, b INTEGER)"
-"INSERT INTO t1 VALUES(1, 10), (2, 20)"
 "INSERT INTO t2 VALUES(1, 100), (2, 200)"
 "SET @@optimizer_switch=""derived_merge=on"""
 "INSERT INTO (SELECT * FROM t1) AS dt VALUES(9, 99)",,syntax_error
@@ -20013,7 +20590,6 @@ ON dtaa.c or w"""
 "SET @a:='77777'"
 "EXECUTE s USING @a,@a"
 "SET @a:='-77777'"
-"DEALLOCATE PREPARE s"
 "CREATE TABLE t1 ( a INTEGER ) Engine=InnoDB"
 "INSERT INTO t1 VALUES (123)"
 "SELECT * FROM t1 LEFT JOIN ( SELECT 1 FROM t1 ) d1 ON TRUE ORDER BY a"
@@ -21440,7 +22016,6 @@ PRIMARY KEY (pk)
 SELECT a, 'MySQL' FROM ten"
 "set optimizer_switch=`mrr=on,mrr_cost_based=off`"
 "DROP TABLE ten, hundred, thousand"
-"DROP TABLE t1, t2, t3, t4, t5"
 "create table t1 (nr int(5) not null auto_increment,b blob,str char(10), primary key (nr))"
 "select * from t1 limit 0"
 "CREATE DATABASE db21235226"
@@ -21610,8 +22185,6 @@ return 2;
 end"
 "select f1(), f2()"
 "show status like 'Com_insert'"
-"drop function f1"
-"drop function f1","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "drop function f2"
 "SET sql_quote_show_create= _binary x'5452C39C45'"
 "SET sql_quote_show_create= _utf8mb3 x'5452C39C45'"
@@ -22285,11 +22858,9 @@ last_executed IS NULL,
 definer
 FROM INFORMATION_SCHEMA.EVENTS
 WHERE event_schema = 'events_test'"
-"set @old_mode= @@sql_mode"
 "set @@sql_mode= cast(pow(2,33)-1 as unsigned integer) & ~0x1003ff00"
 "create event e1 on schedule every 1 day do select 1"
 "select @@sql_mode into @full_mode"
-"set @@sql_mode= @old_mode"
 "select event_name from information_schema.events where event_name = 'e1' and sql_mode = @full_mode"
 "SET @old_server_id = @@GLOBAL.server_id"
 "SET GLOBAL server_id = (1 << 32) - 1"
@@ -22961,7 +23532,6 @@ UNION ALL SELECT 1 UNION ALL SELECT 1 UNION ALL SELECT 1 UNION ALL SELECT 1
 'EXPLAIN
 SELECT SUBSTRING(1, (SELECT 1 FROM t1 a1 RIGHT OUTER JOIN t1 ON 0)) AS d
 FROM t1 WHERE 0 > ANY (SELECT @a FROM t1)'"
-"EXECUTE s"
 "INSERT INTO t2 VALUES (3),(4),(5)"
 "EXPLAIN SELECT SQL_CALC_FOUND_ROWS * FROM t1 UNION SELECT * FROM t2 LIMIT 2,2"
 "EXPLAIN REPLACE INTO t1 VALUES (10)"
@@ -24131,7 +24701,6 @@ SELECT * FROM testdb.t1"
 "set global read_only=1"
 "set global general_log= @old_general_log"
 "set global read_only= @old_read_only"
-"drop tables if exists t1, t2"
 "lock table t2 read"
 "flush tables with read lock, hosts",,syntax_error
 "flush privileges, tables",,syntax_error
@@ -24378,7 +24947,6 @@ END"
 "CREATE TABLE export (i INT) engine=InnoDB"
 "FLUSH TABLE export FOR EXPORT"
 "DROP TABLE export"
-"CREATE TEMPORARY TABLE t1 (a INT)"
 "FLUSH TABLES v1 FOR EXPORT"
 "FLUSH TABLES non_existent FOR EXPORT"
 "CREATE TABLE t1 (a INT PRIMARY KEY, b INT) engine= InnoDB"
@@ -24764,7 +25332,6 @@ END IF;
 END"
 "PREPARE stmt FROM 'INSERT INTO t3 VALUES (1)'"
 "CREATE VIEW t2 AS SELECT 1 AS j"
-"DROP VIEW t2"
 "CREATE TABLE t0 (i INT)"
 "CREATE TRIGGER t0_bi BEFORE INSERT ON t0 FOR EACH ROW DELETE FROM t1"
 "CREATE TABLE t2 (fk INT, FOREIGN KEY (fk) REFERENCES t1 (pk) ON UPDATE SET NULL)"
@@ -27295,8 +27862,6 @@ dt2 DATETIME(6))"
 "SELECT UNCOMPRESS(c1), UNCOMPRESSED_LENGTH(c1) FROM t1"
 "EXPLAIN SELECT * FROM (SELECT UNCOMPRESSED_LENGTH(c1) FROM t1) AS s"
 "SELECT UNCOMPRESS( CAST( 0 AS BINARY(5) ) )"
-"DROP PROCEDURE IF EXISTS p1"
-"DROP PROCEDURE IF EXISTS p1","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE TABLE t1 ( number INT NOT NULL, alpha CHAR(6) NOT NULL )"
 "INSERT INTO t1 VALUES (1413006,'idlfmv'),
 (1413065,'smpsfz'),(1413127,'sljrhx'),(1413304,'qerfnd')"
@@ -29686,7 +30251,6 @@ and (outr2.pk <> t3.pk) "
 "CREATE TABLE t2(x int, y varchar(100)) ENGINE=InnoDB"
 "CREATE INDEX idx ON t2(y)"
 "INSERT INTO t2 VALUES (1, 'abcd'), (2, 'ab%cde')"
-"CREATE TABLE t1(a INTEGER) engine=innodb"
 "SELECT 1 FROM t1 HAVING (SELECT 1 FROM t1) LIKE EXP(NOW())"
 "CREATE TABLE t1(wildstr VARCHAR(10), str VARCHAR(10), like_result INTEGER)
 COLLATE utf8mb4_0900_ai_ci"
@@ -32839,7 +33403,6 @@ FROM t0017"
 (FROM_UNIXTIME(1537013301) )
 )"
 "CREATE TABLE t1 (a DOUBLE, b DOUBLE)"
-"CREATE TABLE t2 (a INTEGER, b INTEGER)"
 "INSERT INTO t1 values(1, NULL), (1, 1)"
 "INSERT INTO t2 values(1, NULL), (1, 1)"
 "SELECT SUM(LEAST(a, b)) FROM t1"
@@ -33890,7 +34453,6 @@ col1 INT
 , UNIQUE INDEX regular_index (col1)
 , UNIQUE INDEX functional_index ((ABS(col1))))"
 "SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE table_name = ""t"""
-"CREATE TABLE t1 (x INT)"
 "CREATE TABLE t2 (y INT, KEY (((SELECT * FROM t1))))"
 "CREATE TABLE t2 (y INT, KEY (((SELECT x FROM t1))))"
 "CREATE TABLE t2 (y INT, KEY (((SELECT 1 FROM t1))))"
@@ -36752,7 +37314,6 @@ null SRID 0,spatial index(col15))engine=myisam"
 "CREATE TABLE t1 (a GEOMETRY)"
 "CREATE VIEW v1 AS SELECT ST_GeomFromwkb(ST_ASBINARY(a)) FROM t1"
 "CREATE VIEW v2 AS SELECT a FROM t1"
-"DESCRIBE v1"
 "DESCRIBE v2"
 "create table t1 (name VARCHAR(100), square GEOMETRY)"
 "INSERT INTO t1 VALUES(""center"", ST_GeomFromText('POLYGON (( 0 0, 0 2, 2 2, 2 0, 0 0))'))"
@@ -42986,7 +43547,6 @@ id INT
 FROM t1, t2
 WHERE t1.id = t2.id
 GROUP BY t1.x WITH ROLLUP"
-"CREATE TABLE t2 (pk INT PRIMARY KEY)"
 "INSERT INTO t2 VALUES (1), (2), (3), (4), (5), (6), (7), (8)"
 "SELECT t1.x FROM t1, t2 WHERE t1.x = t2.pk
 GROUP BY t1.x
@@ -44169,7 +44729,6 @@ UNIQUE KEY `job_title_id` (`job_title_id`,`job_title`)
 "set @a=repeat(' ',20)"
 "insert into t1 values (concat('+',@a),concat('+',@a),concat('+',@a))"
 "select concat('*',v,'*',c,'*',t,'*') from t1"
-"create table t2 like t1"
 "create table t3 charset utf8mb4 select * from t1"
 "alter table t1 modify c varchar(10)"
 "alter table t1 modify v char(10)"
@@ -45446,7 +46005,6 @@ FROM information_schema.COLUMN_STATISTICS
 WHERE schema_name = 'test' AND table_name = 't1' AND column_name = 'col1'"
 "ANALYZE TABLE t1 UPDATE HISTOGRAM ON col1, col2, col1 WITH 10 BUCKETS"
 "INSERT INTO t1 (c1) VALUES (10), (20), (30)"
-"CREATE TABLE t2 (c2 INT)"
 "INSERT INTO t2 (c2) VALUES (10), (20), (30)"
 "LOCK TABLES t2 READ"
 "ANALYZE TABLE t1 UPDATE HISTOGRAM ON c1 WITH 10 BUCKETS"
@@ -47007,13 +47565,11 @@ WHERE VARIABLE_NAME='Host_Cache_Size'"
 "SELECT DEFINER FROM INFORMATION_SCHEMA.EVENTS WHERE EVENT_NAME='e1'"
 "CREATE DEFINER=some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890X PROCEDURE p1() SELECT 1"
 "CREATE DEFINER=some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890 PROCEDURE p1() SELECT 1"
-"SHOW CREATE PROCEDURE p1"
 "SELECT ROUTINE_NAME, DEFINER
 FROM INFORMATION_SCHEMA.ROUTINES
 WHERE ROUTINE_NAME LIKE 'p1'"
 "CREATE DEFINER=some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890X FUNCTION f1() RETURNS INT RETURN 1"
 "CREATE DEFINER=some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890 FUNCTION f1() RETURNS INT RETURN 1"
-"SHOW CREATE FUNCTION f1"
 "SELECT ROUTINE_NAME, DEFINER
 FROM INFORMATION_SCHEMA.ROUTINES
 WHERE ROUTINE_NAME LIKE 'f1'"
@@ -47610,14 +48166,11 @@ AND t2.b <> 3"
 "CREATE TABLE t1 (a INT PRIMARY KEY) ENGINE = InnoDB"
 "CREATE TABLE t2 (b INT, FOREIGN KEY(b) REFERENCES t1(a)) ENGINE = InnoDB"
 "CREATE TABLE t3 (c INT PRIMARY KEY, FOREIGN KEY(c) REFERENCES t2(b)) ENGINE = InnoDB"
-"INSERT INTO t1 VALUES (1), (2), (5)"
 "INSERT IGNORE INTO t3 VALUES (1), (2)"
 "UPDATE t3 SET c=2 where c=1"
 "UPDATE IGNORE t3 SET c=2 where c=1"
-"DELETE IGNORE FROM t1"
 "UPDATE t2 SET b=b+5"
 "UPDATE IGNORE t2 SET b=b+5"
-"DROP TABLE t3,t2,t1"
 "CREATE TABLE t1 (a INT) ENGINE = InnoDB"
 "INSERT INTO t1 VALUES (1),(NULL),(2)"
 "UPDATE IGNORE t1 SET a=NULL WHERE a=0"
@@ -47732,7 +48285,6 @@ END"
 "INSERT INTO t3 VALUES(3),(4)"
 "DELETE t1.*,t2.* FROM t1,t2"
 "DELETE IGNORE t1.*,t2.* FROM t1,t2"
-"CREATE TABLE t1 (a INT PRIMARY KEY) ENGINE=InnoDB"
 "CREATE TABLE t2 (b INT PRIMARY KEY, FOREIGN KEY(b) REFERENCES t1(a)) ENGINE=InnoDB"
 "INSERT INTO t2 VALUES(2) ON DUPLICATE KEY UPDATE b=b-1"
 "INSERT IGNORE INTO t2 VALUES(2) ON DUPLICATE KEY UPDATE b=b-1"
@@ -47907,8 +48459,6 @@ de DECIMAL(10,2), j INT GENERATED ALWAYS AS (42+i)) ENGINE=MYISAM"
 ('2017-03-28 18:48:02', 1.2),
 ('2017-03-28 18:48:03', 1.5)"
 "IMPORT TABLE FROM ''"
-"SET SESSION sql_require_primary_key= ON"
-"SET SESSION sql_require_primary_key= OFF"
 "CREATE TABLE t1 (f1 INT CHECK (f1 < 10)) ENGINE=MyISAM"
 "IMPORT TABLE FROM 'test/t1*.sdi'"
 "SET SESSION debug= '+d,sdi_import_commit_fail'"
@@ -48085,7 +48635,6 @@ SELECT table_name FROM information_schema.TABLES
 WHERE table_schema IN ('mysql', 'information_schema', 'test', 'mysqltest') AND
 table_name COLLATE utf8mb3_general_ci not like 'ndb_%' AND
 table_name COLLATE utf8mb3_general_ci not like 'innodb_%'"
-"select * from v1"
 "select c,table_name from v1
 inner join information_schema.TABLES v2 on (v1.c=v2.table_name)
 where v1.c rlike ""t[1-5]{1}$"" order by c"
@@ -48663,7 +49212,6 @@ where a.VARIABLE_NAME = b.VARIABLE_NAME"
 "SELECT CREATE_OPTIONS FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME='t1'"
 "SET TIMESTAMP=@@TIMESTAMP + 10000000"
 "SELECT 'OK' AS TEST_RESULT FROM INFORMATION_SCHEMA.PROCESSLIST WHERE time < 0"
-"CREATE TABLE t1 (id INT)"
 "CREATE USER nonpriv"
 "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME='t1'"
 "USE INFORMATION_SCHEMA"
@@ -49393,7 +49941,6 @@ TABLESPACE_NAME = 'test/t2'"
 "INSERT INTO t3 (f1, f2) SELECT f1, f2 FROM t1"
 "DELETE FROM t1 WHERE f1=1"
 "DELETE FROM t2 WHERE f1=1"
-"SELECT COUNT(*) FROM t3"
 "SELECT table_rows, avg_row_length, data_length, max_data_length, index_length,
 data_free, auto_increment, checksum, update_time, check_time
 FROM information_schema.tables WHERE table_name in ('t1', 't2')"
@@ -50105,7 +50652,6 @@ c char(5)
 "CREATE TABLE t (a INT PRIMARY KEY)"
 "INSERT IGNORE INTO t VALUES (1)"
 "INSERT IGNORE INTO t VALUES (1),(1)"
-"CREATE TABLE t1(pk INTEGER PRIMARY KEY, a INTEGER)"
 "CREATE TABLE t2(pk INTEGER PRIMARY KEY, a INTEGER)"
 "CREATE TABLE t3(a INTEGER)"
 "CREATE TABLE t4(b INTEGER)"
@@ -50124,7 +50670,6 @@ SELECT t1.pk,t1.a FROM t1 JOIN t4 ON pk IN (SELECT a FROM t3)"
 "INSERT INTO v(a2,b2) VALUES (21, 0) ON DUPLICATE KEY UPDATE b2=b2+1"
 "INSERT INTO v(a1,b1) SELECT 11, 0 ON DUPLICATE KEY UPDATE b1=b1+1"
 "INSERT INTO v(a2,b2) SELECT 21, 0 ON DUPLICATE KEY UPDATE b2=b2+1"
-"CREATE VIEW v1 AS SELECT a FROM t1 ORDER BY a"
 "INSERT INTO v1 SELECT 3"
 "REPLACE INTO v1 SELECT 3"
 "INSERT INTO v1 VALUES(3)"
@@ -50579,7 +51124,6 @@ ON DUPLICATE KEY UPDATE j= a"
 "INSERT INTO t1 SELECT 1, COUNT(*) FROM t2 ON DUPLICATE KEY UPDATE j= a"
 "SET SQL_MODE = 'TRADITIONAL'"
 "CREATE TABLE t1 (a INT PRIMARY KEY, b INT NOT NULL)"
-"INSERT INTO t1 (a) VALUES (1)"
 "INSERT INTO t1 (a) VALUES (1) ON DUPLICATE KEY UPDATE a = b"
 "INSERT INTO t1 (a) VALUES (1) ON DUPLICATE KEY UPDATE b = b"
 "CREATE TABLE t1 (f1 INT AUTO_INCREMENT PRIMARY KEY,
@@ -51989,7 +52533,6 @@ NULL
 "SELECT tx FROM t1 ORDER BY tx DESC"
 "SET SESSION DEFAULT_STORAGE_ENGINE= InnoDB"
 "CREATE TABLE t1(f1 INT INVISIBLE, f2 INT)"
-"SHOW COLUMNS FROM t2"
 "CREATE TABLE t1 (f1 INT, f2 INT PRIMARY KEY INVISIBLE)"
 "CREATE TABLE t2 (f1 INT PRIMARY KEY, f2 INT,
 CONSTRAINT FOREIGN KEY (f1) REFERENCES t1(f2))"
@@ -52564,7 +53107,6 @@ select @a:= A.a + 10*(B.a + 10*C.a), @a, 'filler' from t1 A, t1 B, t1 C"
 "CREATE TABLE t3 (a INT, INDEX (a))"
 "CREATE TABLE t4 (a INT)"
 "CREATE TABLE t5 (a INT)"
-"CREATE TABLE t6 (a INT)"
 "INSERT INTO t1 VALUES (1), (1), (1)"
 "INSERT INTO t2 VALUES
 (2), (2), (2), (2), (2), (2), (2), (2), (2), (2)"
@@ -53039,7 +53581,6 @@ FROM t3 AS inner_a1 JOIN t3 AS inner_a2 ON inner_a1.b = inner_a2.b
 WHERE inner_a1.a = t2.a
 )"
 "CREATE TABLE t2 (a INTEGER)"
-"CREATE TABLE t3 (a INTEGER)"
 "CREATE TABLE t4 (a INTEGER)"
 "SELECT * FROM t1 LEFT JOIN (t2 LEFT JOIN (t3 JOIN t4 ON t3.a = t4.a)
 ON t4.a = t2.a) ON t1.a = t2.a"
@@ -57341,7 +57882,6 @@ pk integer primary key
 ) ENGINE=myisam"
 "INSERT INTO a(col_int,col_varchar_255) VALUES (0,""""),(1,"""")"
 "INSERT INTO a(col_int,col_varchar_255) SELECT col_int,col_varchar_255 FROM a"
-"DROP TABLE b"
 "CREATE TABLE t1(id INTEGER)"
 "INSERT INTO t1 (id) VALUES (1), (2), (3)"
 "SET @@sql_select_limit=1"
@@ -58407,7 +58947,6 @@ service_get_write_locks('holder_name_space', 'l2', 0)"
 "CREATE TEMPORARY TABLE t2 ENGINE = InnoDB AS
 SELECT service_get_write_locks('holder_name_space', col1, 0) AS col1 FROM t1
 ORDER BY col1"
-"DROP TEMPORARY TABLE t2"
 "SELECT service_get_write_locks('holder_name_space', 'lock', 0)"
 "SELECT service_release_locks('holder_name_space')"
 "DROP FUNCTION service_get_read_locks"
@@ -60571,7 +61110,6 @@ b INT, INDEX(a,b))"
 "ALTER TABLE t2 MODIFY a INT"
 "DROP TABLE tm1, t1, t2"
 "CREATE TABLE t2 (c1 INT) ENGINE=MERGE UNION=(t1) INSERT_METHOD=FIRST"
-"CREATE TABLE IF NOT EXISTS t1 SELECT * FROM t2"
 "CREATE TABLE t1 (id INT NOT NULL, ref INT NOT NULL, INDEX (id)) ENGINE=MyISAM"
 "INSERT INTO t2 (id, ref) VALUES (1,3), (2,1), (3,2), (4,5), (4,4)"
 "CREATE TABLE t3 (id INT NOT NULL, ref INT NOT NULL, INDEX (id)) ENGINE=MERGE
@@ -61657,7 +62195,6 @@ KEY (`length_`)
 (9,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'sample9','')"
 "SELECT _id FROM t1"
 "DELETE FROM t1 WHERE _id < 8"
-"SHOW TABLE STATUS LIKE 't1'"
 "REPAIR TABLE t1 QUICK"
 "CREATE TABLE t1(a VARCHAR(16))"
 "INSERT INTO t1 VALUES('aaaaaaaa'),(NULL)"
@@ -64313,7 +64850,6 @@ return 42 */"
 select 42 */"
 "show create function f"
 "show create procedure p"
-"drop function f"
 "drop procedure p"
 "create table t1 ( id serial )"
 "insert into t1 values (1232131)"
@@ -64437,7 +64973,6 @@ select 42 */"
 "SELECT view_definition
 FROM INFORMATION_SCHEMA.VIEWS
 WHERE table_schema = 'mysqldump_test_db' AND table_name = 'v1'"
-"create view v1 as select a from t1"
 "drop table if exists `load`"
 "create table `load` (a varchar(255))"
 "select count(*) from `load`"
@@ -65378,7 +65913,6 @@ WHERE t1.pk = 2"
 "SELECT a, last_insert_id() FROM t1 WHERE a IS NULL"
 "SELECT a, last_insert_id() FROM t1"
 "CREATE TABLE t1(a BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY)"
-"CREATE TABLE t2(b INT)"
 "INSERT INTO t2 VALUES (2),(3),(4)"
 "SELECT * FROM t2 LEFT JOIN t1 ON a=b WHERE a IS NULL"
 "SELECT * FROM t1 HAVING a IS NULL"
@@ -72267,7 +72801,6 @@ SUBPARTITION p33))"
 "ALTER TABLE t1 DROP COLUMN i, ADD COLUMN i INT DEFAULT 2, ALGORITHM=INPLACE PARTITION BY RANGE(i) (PARTITION p0 VALUES LESS THAN (0), PARTITION p1 VALUES LESS THAN MAXVALUE)"
 "CREATE TABLE t1 (i INT, j INT, PRIMARY KEY (i, j)) PARTITION BY KEY () PARTITIONS 2 (PARTITION p0, PARTITION p1)"
 "INSERT INTO t1 (i, j) VALUES (1, 2)"
-"ALTER TABLE t1 DROP COLUMN i"
 "SELECT j FROM t1 PARTITION (p0)"
 "SELECT j FROM t1 PARTITION (p1)"
 "ALTER TABLE t1 ADD COLUMN k INT, DROP COLUMN j"
@@ -75723,7 +76256,6 @@ AND TABLE_NAME='t1' OR FALSE"
 "call mtr.add_suppression(""Missing .ibd file for table"")"
 "CREATE TABLE t1(c1 INT,c2 CHAR (1),c3 DATE) ENGINE=InnoDB PARTITION BY HASH
 (TO_DAYS(c3)) PARTITIONS 12"
-"ALTER TABLE t1 ADD INDEX(c1)"
 "ALTER TABLE t1 DISCARD PARTITION p2 TABLESPACE"
 "SELECT COUNT(*)FROM t1,t1 AS b WHERE t1.c1=''AND t1.c2=b.c1"
 "CREATE TABLE t2 (c1 int,c2 CHAR (1),c3 date,key(c1)) ENGINE=InnoDB
@@ -76305,7 +76837,6 @@ ON DUPLICATE KEY UPDATE a = a + 1"
 "EXPLAIN SELECT * FROM t1 WHERE a IN (13, 26, 39, 52)"
 "EXPLAIN SELECT * FROM t1 WHERE a = 3"
 "EXPLAIN SELECT * FROM t1 WHERE b LIKE 'First%' ORDER BY a"
-"CREATE TABLE t3 (a INT)"
 "SELECT * FROM t1 WHERE a = (SELECT a FROM t3)"
 "SELECT t1.a FROM t1 INNER JOIN t3 ON t1.a = t3.a"
 "EXPLAIN SELECT t1.a, t1.b FROM t1 INNER JOIN t3 ON t1.a = t3.a"
@@ -78730,7 +79261,6 @@ partition p1 values in (''))"
 "SET PERSIST default_table_encryption= true"
 "SET PERSIST table_encryption_privilege_check= true"
 "SELECT @@global.long_query_time"
-"SELECT @@global.sql_require_primary_key"
 "SELECT @@global.default_table_encryption"
 "SELECT @@global.table_encryption_privilege_check"
 "SET PERSIST sort_buffer_size=156000,max_connections= 52"
@@ -78976,7 +79506,6 @@ PERSIST sql_mode=ANSI_QUOTES,PERSIST innodb_fast_shutdown=0"
 "SET PERSIST innodb_thread_concurrency=32, PERSIST innodb_write_io_threads=32,
 PERSIST innodb_read_io_threads=invalid_val"
 "SELECT @@global.innodb_fast_shutdown"
-"SELECT @@global.innodb_default_row_format"
 "SELECT @@global.innodb_flush_log_at_trx_commit"
 "SELECT @@global.join_buffer_size"
 "SELECT @@global.innodb_checksum_algorithm"
@@ -81459,7 +81988,6 @@ select f1(new.a+1) into @var"
 "prepare stmt from ""insert into t1(a) values (?)"""
 "select @var"
 "create function f1 (a int) returns int return 0"
-"create table t2 (a int unique)"
 "create table t3 (a int unique)"
 "create view v1 as select a from t2"
 "create trigger t1_ai after insert on t1 for each row
@@ -81484,7 +82012,6 @@ insert into t4 (a) values (new.a)"
 "prepare stmt from 'select count(*) from t1'"
 "create temporary table t1 AS SELECT 1"
 "create view t1 as select * from t2"
-"drop view t1"
 "insert into t1 (a) value (1)"
 "create temporary table t1 as select 1 as a"
 "prepare stmt from ""select count(*) from t1"""
@@ -81652,8 +82179,6 @@ where t_27420_100.a=t_27420_101.a"
 "deallocate prepare stmt_sp"
 "prepare stmt from ""select 1 as res from dual where (1) in (select * from t1)"""
 "prepare stmt from 'create table t2 as select * from t1'"
-"create view t2 as select 1"
-"drop view t2"
 "create table t1 (x varchar(20))"
 "alter table t1 add column y decimal(10,3)"
 "prepare stmt from ""create temporary table if not exists t2 as select * from t1"""
@@ -92415,6 +92940,939 @@ select ""do something"";
 end
 until true end repeat retry;
 end",,syntax_error
+"CREATE PROCEDURE p1()
+BEGIN
+DECLARE c char(100);
+DECLARE cur1 CURSOR FOR SHOW TABLES;
+
+OPEN cur1;
+FETCH cur1 INTO c;
+select c;
+CLOSE cur1;
+END",,syntax_error
+"SELECT inexistent(), 1 + ,",,syntax_error
+"SELECT inexistent()"
+"SELECT .inexistent()",,syntax_error
+"SELECT ..inexistent()",,syntax_error
+"create function f1() returns int
+begin
+set password = 'foo';
+return 1;
+end"
+"create trigger t1
+before insert on t2 for each row set password = 'foo';"
+"create function f1() returns int
+begin
+drop temporary table t1;
+return 1;
+end"
+"create temporary table t1 as select f1()"
+"create function f2() returns int
+begin
+create temporary table t2 as select f1();
+return 1;
+end"
+"create temporary table t1 as select f2()"
+"create function f1() returns int
+begin
+drop temporary table t2,t1;
+return 1;
+end"
+"create temporary table t2(a int)"
+"create function f2() returns int
+begin
+drop temporary table t2;
+return 1;
+end"
+"select f2()"
+"drop procedure if exists proc_33983_a"
+"drop procedure if exists proc_33983_b"
+"drop procedure if exists proc_33983_c"
+"drop procedure if exists proc_33983_d"
+"create procedure proc_33983_a()
+begin
+label1:
+begin
+label2:
+begin
+select 1;
+end label1;
+end;
+end"
+"create procedure proc_33983_b()
+begin
+label1:
+repeat
+label2:
+repeat
+select 1;
+until FALSE end repeat label1;
+until FALSE end repeat;
+end"
+"create procedure proc_33983_c()
+begin
+label1:
+while TRUE do
+label2:
+while TRUE do
+select 1;
+end while label1;
+end while;
+end"
+"create procedure proc_33983_d()
+begin
+label1:
+loop
+label2:
+loop
+select 1;
+end loop label1;
+end loop;
+end"
+"CREATE PROCEDURE p1(a INT) BEGIN END"
+"CALL p1((SELECT * FROM t1))"
+"create procedure p1()
+begin
+create table t1 (a int);
+drop table t1;
+end"
+"create procedure proc_8759()
+begin
+declare should_be_illegal condition for sqlstate '00000';
+declare continue handler for should_be_illegal set @x=0;
+end"
+"create procedure proc_8759()
+begin
+declare continue handler for sqlstate '00000' set @x=0;
+end"
+"create procedure proc_36510()
+begin
+declare should_be_illegal condition for sqlstate '00123';
+declare continue handler for should_be_illegal set @x=0;
+end"
+"create procedure proc_36510()
+begin
+declare continue handler for sqlstate '00123' set @x=0;
+end"
+"create procedure proc_36510()
+begin
+declare should_be_illegal condition for 0;
+declare continue handler for should_be_illegal set @x=0;
+end"
+"create procedure proc_36510()
+begin
+declare continue handler for 0 set @x=0;
+end"
+"set @old_recursion_depth = @@max_sp_recursion_depth"
+"set @@max_sp_recursion_depth = 255"
+"create procedure p1(a int)
+begin
+declare continue handler for 1436 -- ER_STACK_OVERRUN_NEED_MORE
+select 'exception';
+call p1(a+1);
+end"
+"call p1(1)"
+"set @@max_sp_recursion_depth = @old_recursion_depth"
+"SELECT MAX (a) FROM t1 WHERE b = 999999"
+"SELECT AVG (a) FROM t1 WHERE b = 999999"
+"SELECT non_existent (a) FROM t1 WHERE b = 999999"
+"CREATE TABLE t1 ( f2 INTEGER, f3 INTEGER )"
+"INSERT INTO t1 VALUES  ( 1, 1 )"
+"CREATE FUNCTION func_1 () RETURNS INTEGER
+BEGIN
+INSERT INTO t1 SELECT * FROM t1 ;
+RETURN 1 ;
+END"
+"INSERT INTO t1 SELECT * FROM (SELECT 2 AS f1, 2 AS f2) AS A WHERE func_1() = 5"
+"DROP FUNCTION func_1"
+"CREATE TABLE t1 (pk INT, b INT, KEY (b))"
+"CREATE ALGORITHM = TEMPTABLE VIEW v1 AS SELECT * FROM t1"
+"CREATE PROCEDURE p1 (a int) UPDATE IGNORE v1 SET b = a"
+"CALL p1(5)"
+"ALTER TABLE t1 CHANGE COLUMN b b2 INT"
+"CALL p1(7)"
+"SELECT very_long_fn_name_1111111111111111111111111111111111111111111111111111111111111111111111111222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222225555555555555555555555555577777777777777777777777777777777777777777777777777777777777777777777777788888888999999999999999999999()"
+"CALL very_long_pr_name_1111111111111111111111111111111111111111111111111111111111111111111111111222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222225555555555555555555555555577777777777777777777777777777777777777777777777777777777777777777777777788888888999999999999999999999()"
+"SELECT very_long_db_name_1111111111111111111111111111111111111111111111111111111111111111111111111222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222225555555555555555555555555577777777777777777777777777777777777777777777777777777777777777777777777788888888999999999999999999999.simple_func()"
+"CALL very_long_db_name_1111111111111111111111111111111111111111111111111111111111111111111111111222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222225555555555555555555555555577777777777777777777777777777777777777777777777777777777777777777777777788888888999999999999999999999.simple_proc()"
+"SELECT db_name.very_long_fn_name_111111111111111111111111111111111111111111111111111111111111111111111111122222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222999999999999999999999()"
+"CALL db_name.very_long_pr_name_111111111111111111111111111111111111111111111111111111111111111111111111122222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222999999999999999999999()"
+"DROP PROCEDURE IF EXISTS p4"
+"DROP PROCEDURE IF EXISTS p4","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"DROP PROCEDURE IF EXISTS p5"
+"DROP PROCEDURE IF EXISTS p5","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"DROP PROCEDURE IF EXISTS p6"
+"DROP PROCEDURE IF EXISTS p6","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
+"CREATE PROCEDURE p1()
+BEGIN
+SELECT CAST('10x' as unsigned integer);
+SELECT 1;
+CALL p2();
+END"
+"CREATE PROCEDURE p2()
+BEGIN
+SELECT CAST('10x' as unsigned integer);
+END"
+"CREATE PROCEDURE p1()
+BEGIN
+DECLARE c INT DEFAULT 0;
+DECLARE CONTINUE HANDLER FOR SQLWARNING
+BEGIN
+SET c = c + 1;
+SELECT 'Warning caught!' AS Msg;
+END;
+CALL p2(); # 1 warning
+CALL p3(); # 1 warning
+CALL p4(); # No warnings
+CALL p5(); # 1 warning
+SELECT c;
+SELECT @@warning_count;
+SHOW WARNINGS;
+END"
+"CREATE PROCEDURE p2()
+BEGIN
+SELECT CAST('2x' as unsigned integer);
+END"
+"CREATE PROCEDURE p3()
+BEGIN
+SELECT CAST('3x' as unsigned integer);
+GET DIAGNOSTICS @n = NUMBER; # does not clear the warning
+END"
+"CREATE PROCEDURE p4()
+BEGIN
+SELECT CAST('4x' as unsigned integer);
+INSERT INTO t1 VALUES(1); # Clears the warning
+END"
+"CREATE PROCEDURE p5()
+BEGIN
+SELECT CAST('5x' as unsigned integer);
+CALL p2();
+END"
+"CREATE PROCEDURE p6()
+BEGIN
+SELECT CAST('6x' as unsigned integer);
+SHOW WARNINGS;
+END"
+"CREATE PROCEDURE p7()
+BEGIN
+DECLARE c INT DEFAULT 0;
+DECLARE CONTINUE HANDLER FOR SQLWARNING
+BEGIN
+SET c = c + 1;
+SELECT 'Warning caught!' AS Msg;
+END;
+CALL p6();
+SELECT c;
+END"
+"CREATE PROCEDURE p1()
+BEGIN
+DECLARE c CURSOR FOR SELECT a FROM t1;
+
+OPEN c;
+
+BEGIN
+DECLARE v1 INT;
+DECLARE v2 INT;
+
+DECLARE EXIT HANDLER FOR SQLEXCEPTION
+SELECT ""Error caught (expected)"";
+
+DECLARE EXIT HANDLER FOR NOT FOUND
+SELECT ""End of Result Set found!"";
+
+WHILE TRUE DO
+FETCH c INTO v1, v2;
+END WHILE;
+END;
+
+CLOSE c;
+
+SELECT a INTO @foo FROM t1 LIMIT 1; # Clear warning stack
+END"
+"CREATE TABLE t1 (a INT, b INT NOT NULL)"
+"CREATE PROCEDURE p1()
+BEGIN
+DECLARE CONTINUE HANDLER FOR SQLWARNING SELECT 'warning';
+DECLARE CONTINUE HANDLER FOR SQLEXCEPTION SELECT 'exception';
+INSERT INTO t1 VALUES (CAST('10 ' AS SIGNED), NULL);
+END"
+"CREATE TRIGGER t1_bu BEFORE UPDATE ON t1 FOR EACH ROW
+BEGIN
+DECLARE EXIT HANDLER FOR SQLWARNING
+SET NEW.a = 10;
+
+SET NEW.a = 99999999999;
+END"
+"UPDATE t1 SET b = 20"
+"DROP TRIGGER t1_bu"
+"SET @sql_mode_saved = @@sql_mode"
+"SET sql_mode = traditional"
+"CREATE PROCEDURE p1()
+BEGIN
+DECLARE CONTINUE HANDLER FOR SQLWARNING
+SELECT 'warning caught (expected)';
+
+INSERT IGNORE INTO t1 VALUES (1);
+END"
+"CREATE PROCEDURE p2()
+BEGIN
+DECLARE CONTINUE HANDLER FOR SQLEXCEPTION
+SELECT 'error caught (unexpected)';
+
+INSERT IGNORE INTO t1 VALUES (1);
+END"
+"SET sql_mode = @sql_mode_saved"
+"CREATE TABLE t1(x SMALLINT, y SMALLINT, z SMALLINT)"
+"CREATE TABLE t2(a SMALLINT, b SMALLINT, c SMALLINT,
+d SMALLINT, e SMALLINT, f SMALLINT)"
+"CREATE TRIGGER t1_bi BEFORE INSERT ON t1 FOR EACH ROW
+INSERT INTO t2(a, b, c) VALUES(99999, 99999, 99999)"
+"CREATE TRIGGER t1_ai AFTER INSERT ON t1 FOR EACH ROW
+INSERT INTO t2(d, e, f) VALUES(99999, 99999, 99999)"
+"CREATE PROCEDURE p1()
+INSERT INTO t1 VALUES(99999, 99999, 99999)"
+"CREATE TABLE t2(a SMALLINT, b SMALLINT, c SMALLINT NOT NULL)"
+"CREATE TRIGGER t1_bi BEFORE INSERT ON t1 FOR EACH ROW
+BEGIN
+INSERT INTO t2 VALUES(
+CAST('111111X' AS SIGNED),
+CAST('222222X' AS SIGNED),
+NULL);
+END"
+"CREATE PROCEDURE p1()
+BEGIN
+DECLARE CONTINUE HANDLER FOR SQLEXCEPTION
+SELECT 'H1' AS HandlerId;
+
+DECLARE CONTINUE HANDLER FOR SQLWARNING
+SELECT 'H2' AS HandlerId;
+
+SIGNAL SQLSTATE '01000'; # Should be handled by H2.
+END"
+"CREATE PROCEDURE p2()
+BEGIN
+DECLARE CONTINUE HANDLER FOR SQLEXCEPTION
+SELECT 'H1' AS HandlerId;
+
+DECLARE CONTINUE HANDLER FOR SQLWARNING
+SELECT 'H2' AS HandlerId;
+
+BEGIN
+
+SELECT 'B1' AS BlockId;
+BEGIN
+
+SELECT 'B2' AS BlockId;
+BEGIN
+SELECT 'B3' AS BlockId;
+SIGNAL SQLSTATE '01000'; # Should be handled by H2.
+END;
+
+END;
+
+END;
+
+END"
+"CREATE PROCEDURE p3()
+BEGIN
+DECLARE CONTINUE HANDLER FOR SQLEXCEPTION
+SELECT 'H1' AS HandlerId;
+
+DECLARE CONTINUE HANDLER FOR SQLWARNING
+SELECT 'H2' AS HandlerId;
+
+DECLARE CONTINUE HANDLER FOR SQLSTATE '01000'
+SELECT 'H3' AS HandlerId;
+
+SIGNAL SQLSTATE '01000'; # Should be handled by H3.
+END"
+"CREATE PROCEDURE p4()
+BEGIN
+DECLARE CONTINUE HANDLER FOR SQLEXCEPTION
+SELECT 'H1' AS HandlerId;
+
+DECLARE CONTINUE HANDLER FOR SQLSTATE '01000'
+SELECT 'H2' AS HandlerId;
+
+DECLARE CONTINUE HANDLER FOR SQLWARNING
+SELECT 'H3' AS HandlerId;
+
+SIGNAL SQLSTATE '01000'; # Should be handled by H2.
+END"
+"CREATE PROCEDURE p5()
+BEGIN
+DECLARE CONTINUE HANDLER FOR SQLEXCEPTION
+SELECT 'H1' AS HandlerId;
+
+DECLARE CONTINUE HANDLER FOR SQLSTATE '01000'
+SELECT 'H2' AS HandlerId;
+
+BEGIN
+DECLARE CONTINUE HANDLER FOR SQLWARNING
+SELECT 'H3' AS HandlerId;
+
+SIGNAL SQLSTATE '01000'; # Should be handled by H3.
+END;
+END"
+"CREATE PROCEDURE p6()
+BEGIN
+DECLARE CONTINUE HANDLER FOR SQLEXCEPTION
+BEGIN
+SELECT 'H1' AS HandlerId;
+SIGNAL SQLSTATE 'HY000'; # Should *not* be handled by H1.
+END;
+
+SELECT 'S1' AS SignalId;
+SIGNAL SQLSTATE 'HY000'; # Should be handled by H1.
+END"
+"CREATE PROCEDURE p7()
+BEGIN
+DECLARE CONTINUE HANDLER FOR SQLWARNING
+BEGIN
+SELECT 'H1' AS HandlerId;
+SIGNAL SQLSTATE '01000'; # Should *not* be handled by H1.
+END;
+
+SELECT 'S1' AS SignalId;
+SIGNAL SQLSTATE '01000'; # Should be handled by H1.
+END"
+"CREATE PROCEDURE p8()
+BEGIN
+DECLARE CONTINUE HANDLER FOR SQLWARNING
+SELECT 'H1' AS HandlerId;
+
+DECLARE CONTINUE HANDLER FOR SQLEXCEPTION
+BEGIN
+SELECT 'H2' AS HandlerId;
+SIGNAL SQLSTATE '01000'; # Should *not* be handled by H1.
+END;
+
+SELECT 'S1' AS SignalId;
+SIGNAL SQLSTATE 'HY000'; # Should be handled by H2.
+END"
+"CREATE PROCEDURE p9()
+BEGIN
+
+DECLARE CONTINUE HANDLER FOR SQLSTATE '01000'
+SELECT 'Wrong:H1:1' AS HandlerId;
+
+DECLARE CONTINUE HANDLER FOR SQLWARNING
+SELECT 'Wrong:H1:2' AS HandlerId;
+
+DECLARE CONTINUE HANDLER FOR SQLEXCEPTION
+BEGIN
+
+DECLARE CONTINUE HANDLER FOR SQLSTATE '01000'
+SELECT 'Wrong:H2:1' AS HandlerId;
+
+DECLARE CONTINUE HANDLER FOR SQLWARNING
+SELECT 'Wrong:H2:2' AS HandlerId;
+
+DECLARE CONTINUE HANDLER FOR SQLEXCEPTION
+BEGIN
+
+DECLARE CONTINUE HANDLER FOR SQLSTATE '01000'
+SELECT 'Wrong:H3:1' AS HandlerId;
+
+DECLARE CONTINUE HANDLER FOR SQLWARNING
+SELECT 'Wrong:H3:2' AS HandlerId;
+
+DECLARE CONTINUE HANDLER FOR SQLEXCEPTION
+BEGIN
+
+DECLARE CONTINUE HANDLER FOR SQLSTATE '01000'
+SELECT 'Wrong:H4:1' AS HandlerId;
+
+DECLARE CONTINUE HANDLER FOR SQLWARNING
+SELECT 'Wrong:H4:2' AS HandlerId;
+
+DECLARE CONTINUE HANDLER FOR SQLEXCEPTION
+BEGIN
+
+DECLARE CONTINUE HANDLER FOR SQLSTATE '01000'
+SELECT 'Wrong:H5:1' AS HandlerId;
+
+DECLARE CONTINUE HANDLER FOR SQLWARNING
+SELECT 'Wrong:H5:2' AS HandlerId;
+
+DECLARE CONTINUE HANDLER FOR SQLEXCEPTION
+BEGIN
+
+DECLARE CONTINUE HANDLER FOR SQLSTATE '01000'
+SELECT 'Wrong:H6:1' AS HandlerId;
+
+DECLARE CONTINUE HANDLER FOR SQLWARNING
+SELECT 'Wrong:H6:2' AS HandlerId;
+
+DECLARE CONTINUE HANDLER FOR SQLEXCEPTION
+BEGIN
+SELECT 'H2' AS HandlerId;
+SIGNAL SQLSTATE '01000'; # Should *not* be handled by H1.
+END;
+
+SELECT 'S6' AS SignalId;
+SIGNAL SQLSTATE 'HY000';
+END;
+
+SELECT 'S5' AS SignalId;
+SIGNAL SQLSTATE 'HY000';
+
+END;
+
+SELECT 'S4' AS SignalId;
+SIGNAL SQLSTATE 'HY000';
+
+END;
+
+SELECT 'S3' AS SignalId;
+SIGNAL SQLSTATE 'HY000';
+
+END;
+
+SELECT 'S2' AS SignalId;
+SIGNAL SQLSTATE 'HY000';
+
+END;
+
+SELECT 'S1' AS SignalId;
+SIGNAL SQLSTATE 'HY000'; # Should be handled by H2.
+
+END"
+"CREATE PROCEDURE p10()
+BEGIN
+DECLARE CONTINUE HANDLER FOR SQLSTATE '01000'
+SELECT 'H1' AS HandlerId;
+
+DECLARE CONTINUE HANDLER FOR SQLWARNING
+SELECT 'H2' AS HandlerId;
+
+BEGIN
+BEGIN
+BEGIN
+
+DECLARE CONTINUE HANDLER FOR SQLSTATE '01000'
+SELECT 'Wrong:H1:1' AS HandlerId;
+
+DECLARE CONTINUE HANDLER FOR SQLWARNING
+SELECT 'Wrong:H1:2' AS HandlerId;
+
+DECLARE CONTINUE HANDLER FOR SQLEXCEPTION
+BEGIN
+
+DECLARE CONTINUE HANDLER FOR SQLSTATE '01000'
+SELECT 'Wrong:H2:1' AS HandlerId;
+
+DECLARE CONTINUE HANDLER FOR SQLWARNING
+SELECT 'Wrong:H2:2' AS HandlerId;
+
+DECLARE CONTINUE HANDLER FOR SQLEXCEPTION
+BEGIN
+
+DECLARE CONTINUE HANDLER FOR SQLSTATE '01000'
+SELECT 'Wrong:H3:1' AS HandlerId;
+
+DECLARE CONTINUE HANDLER FOR SQLWARNING
+SELECT 'Wrong:H3:2' AS HandlerId;
+
+DECLARE CONTINUE HANDLER FOR SQLEXCEPTION
+BEGIN
+
+DECLARE CONTINUE HANDLER FOR SQLSTATE '01000'
+SELECT 'Wrong:H4:1' AS HandlerId;
+
+DECLARE CONTINUE HANDLER FOR SQLWARNING
+SELECT 'Wrong:H4:2' AS HandlerId;
+
+DECLARE CONTINUE HANDLER FOR SQLEXCEPTION
+BEGIN
+
+DECLARE CONTINUE HANDLER FOR SQLSTATE '01000'
+SELECT 'Wrong:H5:1' AS HandlerId;
+
+DECLARE CONTINUE HANDLER FOR SQLWARNING
+SELECT 'Wrong:H5:2' AS HandlerId;
+
+DECLARE CONTINUE HANDLER FOR SQLEXCEPTION
+BEGIN
+
+DECLARE CONTINUE HANDLER FOR SQLSTATE '01000'
+SELECT 'Wrong:H6:1' AS HandlerId;
+
+DECLARE CONTINUE HANDLER FOR SQLWARNING
+SELECT 'Wrong:H6:2' AS HandlerId;
+
+DECLARE CONTINUE HANDLER FOR SQLEXCEPTION
+BEGIN
+SELECT 'H2' AS HandlerId;
+SIGNAL SQLSTATE '01000'; # Should be handled by H1.
+END;
+
+SELECT 'S6' AS SignalId;
+SIGNAL SQLSTATE 'HY000';
+END;
+
+SELECT 'S5' AS SignalId;
+SIGNAL SQLSTATE 'HY000';
+
+END;
+
+SELECT 'S4' AS SignalId;
+SIGNAL SQLSTATE 'HY000';
+
+END;
+
+SELECT 'S3' AS SignalId;
+SIGNAL SQLSTATE 'HY000';
+
+END;
+
+SELECT 'S2' AS SignalId;
+SIGNAL SQLSTATE 'HY000';
+
+END;
+
+SELECT 'S1' AS SignalId;
+SIGNAL SQLSTATE 'HY000'; # Should be handled by H2.
+
+END;
+END;
+END;
+END"
+"CREATE PROCEDURE p11()
+BEGIN
+DECLARE CONTINUE HANDLER FOR SQLEXCEPTION
+SELECT 'H1' AS HandlerId;
+
+DECLARE CONTINUE HANDLER FOR SQLWARNING
+SELECT 'H2' AS HandlerId;
+
+BEGIN
+DECLARE CONTINUE HANDLER FOR SQLSTATE '01000', 1249
+BEGIN
+DECLARE CONTINUE HANDLER FOR SQLEXCEPTION
+SELECT 'H3' AS HandlerId;
+
+DECLARE CONTINUE HANDLER FOR SQLWARNING
+SELECT 'H4' AS HandlerId;
+
+BEGIN
+SELECT 'H5' AS HandlerId;
+
+SELECT 'S3' AS SignalId;
+SIGNAL SQLSTATE 'HY000'; # H3
+
+SELECT 'S4' AS SignalId;
+SIGNAL SQLSTATE '22003'; # H3
+
+SELECT 'S5' AS SignalId;
+SIGNAL SQLSTATE '01000' SET MYSQL_ERRNO = 1249; # H4
+END;
+END;
+
+SELECT 'S6' AS SignalId;
+SIGNAL SQLSTATE 'HY000'; # H1
+
+SELECT 'S7' AS SignalId;
+SIGNAL SQLSTATE '22003'; # H1
+
+SELECT 'S8' AS SignalId;
+SIGNAL SQLSTATE '01000' SET MYSQL_ERRNO = 1249; # H5
+END;
+
+SELECT 'S1' AS SignalId;
+SIGNAL SQLSTATE 'HY000'; # H1
+
+SELECT 'S2' AS SignalId;
+SIGNAL SQLSTATE '01000' SET MYSQL_ERRNO = 1249; # H2
+END"
+"CREATE PROCEDURE p12()
+BEGIN
+DECLARE CONTINUE HANDLER FOR SQLSTATE '01001'
+BEGIN
+DECLARE CONTINUE HANDLER FOR SQLSTATE '01001'
+BEGIN
+DECLARE CONTINUE HANDLER FOR SQLSTATE '01001'
+BEGIN
+DECLARE CONTINUE HANDLER FOR SQLSTATE '01001'
+BEGIN
+DECLARE CONTINUE HANDLER FOR SQLSTATE '01001'
+BEGIN
+SELECT 'H1:5' AS HandlerId;
+SIGNAL SQLSTATE '01002';
+END;
+SELECT 'H1:4' AS HandlerId;
+SIGNAL SQLSTATE '01001';
+END;
+SELECT 'H1:3' AS HandlerId;
+SIGNAL SQLSTATE '01001';
+END;
+SELECT 'H1:2' AS HandlerId;
+SIGNAL SQLSTATE '01001';
+END;
+SELECT 'H1:1' AS HandlerId;
+SIGNAL SQLSTATE '01001';
+END;
+
+#########################################################
+
+DECLARE CONTINUE HANDLER FOR SQLSTATE '01002'
+SELECT 'OK' AS Msg;
+
+#########################################################
+
+BEGIN
+
+DECLARE CONTINUE HANDLER FOR SQLWARNING
+BEGIN
+DECLARE CONTINUE HANDLER FOR SQLWARNING
+BEGIN
+DECLARE CONTINUE HANDLER FOR SQLWARNING
+BEGIN
+DECLARE CONTINUE HANDLER FOR SQLWARNING
+BEGIN
+DECLARE CONTINUE HANDLER FOR SQLWARNING
+BEGIN
+SELECT 'H2:5' AS HandlerId;
+SIGNAL SQLSTATE '01001';
+END;
+SELECT 'H2:4' AS HandlerId;
+SIGNAL SQLSTATE '01000';
+END;
+SELECT 'H2:3' AS HandlerId;
+SIGNAL SQLSTATE '01000';
+END;
+SELECT 'H2:2' AS HandlerId;
+SIGNAL SQLSTATE '01000';
+END;
+SELECT 'H2:1' AS HandlerId;
+SIGNAL SQLSTATE '01000';
+END;
+
+#######################################################
+
+SELECT 'Throw 01000' AS Msg;
+SIGNAL SQLSTATE '01000';
+END;
+
+END"
+"CREATE PROCEDURE p13()
+BEGIN
+
+DECLARE CONTINUE HANDLER FOR SQLWARNING
+BEGIN
+DECLARE CONTINUE HANDLER FOR SQLWARNING
+BEGIN
+DECLARE EXIT HANDLER FOR SQLWARNING
+BEGIN
+SELECT 'EXIT handler 3' AS Msg;
+END;
+
+SELECT 'CONTINUE handler 2: 1' AS Msg;
+SIGNAL SQLSTATE '01000';
+SELECT 'CONTINUE handler 2: 2' AS Msg;
+END;
+
+SELECT 'CONTINUE handler 1: 1' AS Msg;
+SIGNAL SQLSTATE '01000';
+SELECT 'CONTINUE handler 1: 2' AS Msg;
+END;
+
+SELECT 'Throw 01000' AS Msg;
+SIGNAL SQLSTATE '01000';
+END"
+"CALL p13()"
+"DROP PROCEDURE p13"
+"CREATE TABLE t1(msg VARCHAR(255))"
+"CREATE FUNCTION f1() RETURNS INT
+BEGIN
+
+DECLARE CONTINUE HANDLER FOR SQLEXCEPTION               # handler 1
+BEGIN
+DECLARE CONTINUE HANDLER FOR SQLEXCEPTION             # handler 2
+BEGIN
+INSERT INTO t1 VALUE('WRONG: Inside H2');
+RETURN 2;
+END;
+
+INSERT INTO t1 VALUE('CORRECT: Inside H1');
+RETURN 1;
+END;
+
+BEGIN
+DECLARE CONTINUE HANDLER FOR SQLWARNING               # handler 3
+BEGIN
+INSERT INTO t1 VALUE('WRONG: Inside H3');
+RETURN 3;
+END;
+
+INSERT INTO t1 VALUE('CORRECT: Calling f1()');
+RETURN f1(); # -- exception here
+END;
+
+INSERT INTO t1 VALUE('WRONG: Returning 10');
+RETURN 10;
+
+END"
+"CREATE TABLE t1(a CHAR, b CHAR, c CHAR)"
+"CREATE TABLE t2(a SMALLINT, b SMALLINT, c SMALLINT)"
+"CREATE PROCEDURE p1()
+BEGIN
+DECLARE EXIT HANDLER FOR SQLWARNING
+SELECT 'Warning caught' AS msg;
+
+# The INSERT below raises 3 SQL-conditions (warnings). The EXIT HANDLER
+# above must be invoked once (for one condition), but all three conditions
+# must be cleared from the Diagnostics Area.
+
+INSERT INTO t1 VALUES('qqqq', 'ww', 'eee');
+
+# The following INSERT will not be executed, because of the EXIT HANDLER.
+
+INSERT INTO t1 VALUES('zzz', 'xx', 'yyyy');
+END"
+"CREATE PROCEDURE p2()
+BEGIN
+DECLARE CONTINUE HANDLER FOR 1292
+SELECT 'Warning 1292 caught' AS msg;
+
+# The following INSERT raises 6 SQL-warnings with code 1292,
+# and 3 SQL-warnings with code 1264. The CONTINUE HANDLER above must be
+# invoked once, and all nine SQL-warnings must be cleared from
+# the Diagnostics Area.
+
+INSERT INTO t2
+SELECT
+CAST(CONCAT(CAST('1X' AS UNSIGNED INTEGER), '999999XX') AS SIGNED INTEGER),
+CAST(CONCAT(CAST('2X' AS UNSIGNED INTEGER), '999999XX') AS SIGNED INTEGER),
+CAST(CONCAT(CAST('3X' AS UNSIGNED INTEGER), '999999XX') AS SIGNED INTEGER);
+END"
+"CREATE PROCEDURE p3()
+BEGIN
+DECLARE CONTINUE HANDLER FOR 1292
+SELECT 'Warning 1292 caught' AS msg;
+
+DECLARE CONTINUE HANDLER FOR 1264
+SELECT 'Warning 1264 caught' AS msg;
+
+# The following INSERT raises 6 SQL-warnings with code 1292,
+# and 3 SQL-warnings with code 1264. Only one of the CONTINUE HANDLERs above
+# must be called, and only once. The SQL Standard does not define, which one
+# should be invoked.
+
+INSERT INTO t2
+SELECT
+CAST(CONCAT(CAST('1X' AS UNSIGNED INTEGER), '999999XX') AS SIGNED INTEGER),
+CAST(CONCAT(CAST('2X' AS UNSIGNED INTEGER), '999999XX') AS SIGNED INTEGER),
+CAST(CONCAT(CAST('3X' AS UNSIGNED INTEGER), '999999XX') AS SIGNED INTEGER);
+END"
+"CREATE PROCEDURE p4()
+BEGIN
+DECLARE CONTINUE HANDLER FOR 1292
+SELECT 'Warning 1292 caught' AS msg;
+
+DECLARE CONTINUE HANDLER FOR 1264
+SELECT 'Warning 1264 caught' AS msg;
+
+# The following INSERT raises 4 SQL-warnings with code 1292,
+# and 3 SQL-warnings with code 1264. Only one of the CONTINUE HANDLERs above
+# must be called, and only once. The SQL Standard does not define, which one
+# should be invoked.
+
+INSERT INTO t2
+SELECT
+CAST(999999 AS SIGNED INTEGER),
+CAST(CONCAT(CAST('2X' AS UNSIGNED INTEGER), '999999XX') AS SIGNED INTEGER),
+CAST(CONCAT(CAST('3X' AS UNSIGNED INTEGER), '999999XX') AS SIGNED INTEGER);
+END"
+"CREATE PROCEDURE p5()
+BEGIN
+DECLARE EXIT HANDLER FOR 1292
+BEGIN
+SELECT 'Handler for 1292' AS Msg;
+SIGNAL SQLSTATE '01000' SET MYSQL_ERRNO = 1234;
+SHOW WARNINGS;
+END;
+
+INSERT INTO t2
+SELECT
+CAST(999999 AS SIGNED INTEGER),
+CAST(CONCAT(CAST('2X' AS UNSIGNED INTEGER), '999999XX') AS SIGNED INTEGER),
+CAST(CONCAT(CAST('3X' AS UNSIGNED INTEGER), '999999XX') AS SIGNED INTEGER);
+END"
+"CREATE PROCEDURE p6()
+BEGIN
+DECLARE CONTINUE HANDLER FOR 1292
+BEGIN
+SHOW WARNINGS;
+SELECT 'Handler for 1292' Msg;
+END;
+
+INSERT INTO t2
+SELECT
+CAST(CONCAT(CAST('1X' AS UNSIGNED INTEGER), '999999XX') AS SIGNED INTEGER),
+CAST(CONCAT(CAST('2X' AS UNSIGNED INTEGER), '999999XX') AS SIGNED INTEGER),
+CAST(CONCAT(CAST('3X' AS UNSIGNED INTEGER), '999999XX') AS SIGNED INTEGER);
+END"
+"CREATE PROCEDURE p1()
+BEGIN
+DECLARE var1 INTEGER DEFAULT 'string';
+DECLARE EXIT HANDLER FOR SQLWARNING SELECT 'H1';
+END"
+"CREATE PROCEDURE p2()
+BEGIN
+DECLARE EXIT HANDLER FOR SQLWARNING SELECT 'H2';
+CALL p1();
+END"
+"CREATE PROCEDURE p1()
+BEGIN
+DECLARE CONTINUE HANDLER FOR SQLEXCEPTION SELECT 'triggered p1';
+# This will trigger an error.
+SIGNAL SQLSTATE 'HY000';
+END"
+"CREATE PROCEDURE p2()
+BEGIN
+DECLARE CONTINUE HANDLER FOR SQLWARNING SELECT 'triggered p2';
+# This will trigger a warning.
+SIGNAL SQLSTATE '01000';
+END"
+"SET @old_max_error_count=  @@session.max_error_count"
+"SET SESSION max_error_count= 0"
+"SET SESSION max_error_count= @old_max_error_count"
+"CREATE FUNCTION f1() RETURNS INTEGER
+BEGIN
+DECLARE v VARCHAR(5) DEFAULT -1;
+SELECT b FROM t1 WHERE a = 2 INTO v;
+RETURN v;
+END"
+"CREATE FUNCTION f2() RETURNS INTEGER
+BEGIN
+DECLARE v INTEGER;
+
+DECLARE CONTINUE HANDLER FOR NOT FOUND
+SET @msg = 'Handler activated.';
+
+SELECT f1() INTO v;
+
+RETURN v;
+END"
+"SET @msg = ''"
+"SELECT @msg"
+"drop function f111111111122222222223333333333444444444455555555556666666666777777777788888888889999999999aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeeeffffffffffgggggggggghhhhhhhhhhiiiiiiiiiijjjjjjjjjjkk"
+"drop function test.f111111111122222222223333333333444444444455555555556666666666777777777788888888889999999999aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeeeffffffffffgggggggggghhhhhhhhhhiiiiiiiiiijjjjjjjjjjkk"
+"drop function mysqltest111111111122222222223333333333444444444455555555556666666666777777777788888888889999999999aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeeeffffffffffgggggggggghhhhhhhhhhiiiiiiiiiijjjj.test"
+"SET @orig_character_set_client = @@character_set_client"
+"SET character_set_client = utf8mb3"
+"CREATE PROCEDURE test𝌆() SELECT 1"
+"CREATE FUNCTION test𝌆() RETURNS INT RETURN 1"
+"CREATE PROCEDURE p(IN test𝌆 INT) SELECT 1"
+"CREATE FUNCTION f(test𝌆 INT) RETURNS INT RETURN 1"
+"CREATE PROCEDURE p2() COMMENT 'test𝌆' SELECT 1"
+"CREATE FUNCTION f2() RETURNS INT COMMENT 'test𝌆' RETURN 1"
+"CREATE PROCEDURE p2() SELECT 1"
+"ALTER PROCEDURE p2 COMMENT 'test𝌆'"
+"ALTER FUNCTION f2 COMMENT 'test𝌆'"
+"SET character_set_client = @orig_character_set_client"
+"CREATE FUNCTION mysqltest.f2() RETURNS INT RETURN f1()"
 "CREATE FUNCTION foo(a INTEGER) RETURNS INTEGER DETERMINISTIC LANGUAGE SQL
 BEGIN RETURN a-1; END "
 "SELECT routine_name, routine_type, data_type, routine_body,
@@ -93649,7 +95107,6 @@ insert into t2 (a, b) values (new.a, (select max(a) from v1))"
 "create function f2() returns varchar(20) return ""f2()"""
 "set @@session.autocommit=0"
 "lock table v1 read"
-"select f2()"
 "set @@session.autocommit=default"
 "create function f2() returns int
 begin
@@ -94624,10 +96081,6 @@ END","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "DROP TABLE table_12976_b","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "DROP PROCEDURE proc_12976_a","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "DROP PROCEDURE proc_12976_b","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
-"DROP PROCEDURE IF EXISTS p4","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
-"DROP PROCEDURE IF EXISTS p4"
-"DROP PROCEDURE IF EXISTS p5","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
-"DROP PROCEDURE IF EXISTS p6","ANSI_QUOTES,IGNORE_SPACE,PIPES_AS_CONCAT"
 "CREATE PROCEDURE p1()
 BEGIN
 DECLARE v TINYINT DEFAULT 1e200;
@@ -98572,7 +100025,6 @@ end while;
 end"
 "call proc_bug19733()"
 "drop procedure proc_bug19733"
-"DROP VIEW IF EXISTS v1, v2"
 "DROP TABLE IF EXISTS t3, t4"
 "CREATE TABLE t3 (t3_id INT)"
 "CREATE TABLE t4 (t4_id INT)"
@@ -99342,10 +100794,8 @@ END"
 "CALL p1(4)"
 "CREATE TEMPORARY TABLE t1 (f1 int)"
 "ALTER VIEW v2_unrelated AS SELECT 2 AS r1"
-"CALL p1(5)"
 "DROP VIEW t1, v2_unrelated"
 "CALL p1(6)"
-"CALL p1(7)"
 "insert into t1 (c1) values (1), (2), (3), (4), (5)"
 "create procedure p1()
 begin
@@ -100527,6 +101977,16 @@ END"
 "drop function if exists bug23333"
 "CREATE TABLE t1 (a int  NOT NULL auto_increment primary key) ENGINE=MyISAM"
 "CREATE TABLE t2 (a int  NOT NULL auto_increment, b int, PRIMARY KEY (a)) ENGINE=InnoDB"
+"create function bug23333()
+RETURNS int(11)
+DETERMINISTIC
+begin
+insert into t1 values (null);
+select count(*) from t1 into @a;
+return @a;
+end"
+"insert into t2 values (bug23333(),1)"
+"select count(*),@a from t1 /* must be 1,1 */"
 "SELECT @@GLOBAL.default_storage_engine INTO @old_engine"
 "SET @@GLOBAL.default_storage_engine=InnoDB"
 "SET @@SESSION.default_storage_engine=InnoDB"
@@ -100643,7 +102103,6 @@ END"
 "ALTER TABLE t1 CHANGE COLUMN a a2 INT"
 "UPDATE t1 SET a2 = 5, b = 6"
 "ALTER TABLE t1 CHANGE COLUMN a2 a INT"
-"ALTER TABLE t1 CHANGE COLUMN b b2 INT"
 "UPDATE t1 SET a = 5, b2 = 6"
 "CREATE PROCEDURE p1()
 ALTER TABLE t1 ADD COLUMN c INT DEFAULT 3"
@@ -103828,7 +105287,6 @@ SELECT STRAIGHT_JOIN
 WHERE SQ1_alias1.col_int != alias1.pk) AS field3
 FROM t2 AS alias1 GROUP BY field2,field3
 )"
-"DROP TABLE t2,t1"
 "EXPLAIN
 SELECT * FROM t1
 WHERE EXISTS(SELECT * FROM t2 WHERE t1.a<>t2.b) AND t1.a>0"
@@ -107295,7 +108753,6 @@ CALL p1(NEW.i1);
 CALL p2(NEW.i1);
 END"
 "UPDATE t1 SET i1 = 11 WHERE i1 = 3"
-"DROP TRIGGER t1_bu"
 "CREATE PROCEDURE p1(OUT i1 INT) DETERMINISTIC NO SQL SET @a = 17"
 "CREATE TRIGGER t1_bu BEFORE UPDATE ON t1 FOR EACH ROW
 CALL p1(OLD.i1)"
@@ -108221,7 +109678,6 @@ TERMINATED BY ',' ENCLOSED BY '""'"
 (41, 42, NULL, 44),
 (51, 52, 53, NULL),
 (NULL, NULL, NULL, NULL)"
-"SET @sql_mode_saved = @@sql_mode"
 "INSERT INTO v1 VALUES (1, NULL)"
 "REPLACE INTO t1 VALUES (1, NULL)"
 "REPLACE INTO v1 VALUES (1, NULL)"
@@ -108286,7 +109742,6 @@ TERMINATED BY ',' ENCLOSED BY '""'"
 "CREATE TABLE t2(a INT, b INT NOT NULL, c INT NOT NULL, d INT NOT NULL) "
 "CREATE TABLE t1_data(a INT, b INT) "
 "CREATE TABLE t2_data(a INT, b INT, c INT, d INT) "
-"SET sql_mode = @sql_mode_saved"
 "CREATE TABLE t1(a1 INT NOT NULL)"
 "CREATE TRIGGER t1_bi BEFORE INSERT ON t1
 FOR EACH ROW
@@ -110387,7 +111842,6 @@ f3 float zerofill)"
 "ALTER TABLE t2 MODIFY COLUMN a FLOAT PRIMARY KEY AUTO_INCREMENT"
 "CREATE TABLE t3(a INT PRIMARY KEY)"
 "ALTER TABLE t3 DROP PRIMARY KEY, ADD COLUMN b FLOAT PRIMARY KEY AUTO_INCREMENT"
-"DROP TABLE t2, t3"
 "CREATE TABLE t1(a DOUBLE PRIMARY KEY AUTO_INCREMENT)"
 "CREATE TABLE t2(a DOUBLE)"
 "ALTER TABLE t2 MODIFY COLUMN a DOUBLE PRIMARY KEY AUTO_INCREMENT"
@@ -115148,7 +116602,6 @@ t4_not_null TIMESTAMP NOT NULL)"
 "ALTER TABLE t2 MODIFY b TIMESTAMP DEFAULT '0000-00-00 00:00:00'"
 "CREATE TABLE t3(a TIMESTAMP, b TIMESTAMP)"
 "INSERT INTO t3 SELECT * from t1"
-"CREATE TABLE t4 AS SELECT * FROM t1"
 "INSERT INTO t1 VALUES(default, default)"
 "INSERT INTO t1 VALUES(default(a), default(b))"
 "UPDATE t1 SET b=default"
@@ -115315,17 +116768,9 @@ WHERE QC_DATE_KEY = 2"
 "SELECT y1-y2 FROM y"
 "DROP TABLE y"
 "CREATE TABLE t1(a YEAR(4), b YEAR)"
-"SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 't1'"
-"SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'v1'"
 "CREATE FUNCTION f1(a YEAR(4)) RETURNS YEAR(4) RETURN 1974"
 "CREATE FUNCTION f2(a YEAR) RETURNS YEAR RETURN 1974"
-"SHOW CREATE FUNCTION f2"
-"SELECT DTD_IDENTIFIER FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_NAME = 'f1'"
-"SELECT DTD_IDENTIFIER FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_NAME = 'f2'"
-"SELECT DTD_IDENTIFIER FROM INFORMATION_SCHEMA.PARAMETERS WHERE SPECIFIC_NAME = 'f1'"
-"SELECT DTD_IDENTIFIER FROM INFORMATION_SCHEMA.PARAMETERS WHERE SPECIFIC_NAME = 'f2'"
 "CREATE PROCEDURE p1(a YEAR(4), b YEAR) BEGIN END"
-"SELECT DTD_IDENTIFIER FROM INFORMATION_SCHEMA.PARAMETERS WHERE SPECIFIC_NAME = 'p1'"
 "CREATE TABLE t1(a YEAR UNSIGNED)"
 "CREATE TABLE t1
 (y YEAR,
@@ -115635,7 +117080,6 @@ INNER JOIN t3 ON (t2.f2 = t3.f1)
 GROUP BY t1.f1
 ORDER BY t1.f1, t3.f1, t2.f3 )
 ORDER BY sdate"
-"SHOW COLUMNS FROM t4"
 "CREATE UNDO TABLESPACE undo_003 ADD DATAFILE 'undo_003.ibu' ENGINE InnoDB"
 "SELECT NAME, SPACE_TYPE, STATE FROM INFORMATION_SCHEMA.INNODB_TABLESPACES
 WHERE SPACE_TYPE = 'Undo' ORDER BY NAME"
@@ -117184,6 +118628,92 @@ SET @aux = GET_LOCK(new.id,7200)"
 "RENAME TABLE t1x TO t1"
 "SELECT RELEASE_ALL_LOCKS()"
 "DROP TRIGGER trig_t1_ins"
+"CREATE TRIGGER trig_t1_ins BEFORE INSERT ON t1 FOR EACH ROW
+BEGIN
+SET @aux = GET_LOCK(2,1);
+IF @aux <> 1 THEN
+SIGNAL SQLSTATE '45000'
+SET MESSAGE_TEXT = 'LOCK 2 not got. Abort.', MYSQL_ERRNO = 9999;
+END IF;
+END;"
+"SELECT GET_LOCK(CAST(1 AS CHAR),0)"
+"SELECT @aux"
+"CREATE TABLE t2 (col1 INT, col2 INT, PRIMARY KEY(col1))"
+"INSERT INTO t1 VALUES(1),(2),(1)"
+"INSERT INTO t2 SELECT id, GET_LOCK(id,0) FROM t1"
+"INSERT INTO t1 VALUES(1),(1),(2)"
+"SELECT GET_LOCK('test', 0) ORDER BY oscar"
+"SELECT GET_LOCK('test', 0), RELEASE_LOCK('test')"
+"SELECT GET_LOCK('test', 0), RELEASE_LOCK('test'), GET_LOCK('test', 0)"
+"SELECT GET_LOCK('test', 0), GET_LOCK('test1', 0), RELEASE_ALL_LOCKS(),
+GET_LOCK('test', 0)"
+"SELECT RELEASE_ALL_LOCKS() = 1 AS expect_1"
+"CREATE TABLE t1 AS SELECT GET_LOCK('test', 0) AS g, RELEASE_LOCK('test') AS r,
+RELEASE_ALL_LOCKS() AS ra, IS_USED_LOCK('test') AS isu,
+IS_FREE_LOCK('test') AS isf"
+"SELECT GET_LOCK(NULL, 0)"
+"SELECT GET_LOCK("""", 0)"
+"SELECT RELEASE_LOCK(NULL)"
+"SELECT RELEASE_LOCK("""")"
+"SELECT IS_USED_LOCK(NULL)"
+"SELECT IS_USED_LOCK("""")"
+"SELECT IS_FREE_LOCK(NULL)"
+"SELECT IS_FREE_LOCK("""")"
+"SELECT GET_LOCK(REPEAT('a', 64), 0) = 1 AS expect_1"
+"SELECT IS_USED_LOCK(REPEAT('a', 64)) = CONNECTION_ID() AS expect_1"
+"SELECT IS_FREE_LOCK(REPEAT('a', 64)) = 0 AS expect_1"
+"SELECT RELEASE_LOCK(REPEAT('a', 64)) = 1 AS expect_1"
+"SELECT GET_LOCK(REPEAT('a', 65), 0)"
+"SELECT IS_USED_LOCK(REPEAT('a', 65))"
+"SELECT IS_FREE_LOCK(REPEAT('a', 65))"
+"SELECT RELEASE_LOCK(REPEAT('a', 65))"
+"SELECT GET_LOCK('A', 0)"
+"SELECT GET_LOCK('a', 0)"
+"SELECT IS_USED_LOCK('a') = CONNECTION_ID()"
+"SELECT IS_FREE_LOCK('a')"
+"SELECT RELEASE_LOCK('a')"
+"SELECT GET_LOCK(_cp1251 0xf2e5f1f2, 0)"
+"SELECT GET_LOCK(_utf8mb3 0xd182d0b5d181d182, 0)"
+"SELECT IS_USED_LOCK(_koi8r 0xd4c5d3d4) = CONNECTION_ID()"
+"SELECT IS_FREE_LOCK(_utf8mb3 0xd182d0b5d181d182)"
+"SELECT RELEASE_LOCK(_utf8mb3 0xd182d0b5d181d182)"
+"SELECT GET_LOCK('test')"
+"SELECT GET_LOCK('test', 0, 1)"
+"SELECT RELEASE_LOCK()"
+"SELECT RELEASE_LOCK('test', 1)"
+"SELECT RELEASE_ALL_LOCKS('test')"
+"SELECT IS_USED_LOCK()"
+"SELECT IS_USED_LOCK('test', 'test2')"
+"SELECT IS_FREE_LOCK()"
+"SELECT IS_FREE_LOCK('test', 'test2')"
+"SELECT GET_LOCK(""test"", 0)"
+"SELECT GET_LOCK(""test"", NULL) = 0 AS expect_1"
+"SELECT RELEASE_LOCK(""test"")"
+"CREATE TABLE t1 (conn CHAR(7), connection_id INT)"
+"INSERT INTO t1 VALUES ('default', CONNECTION_ID())"
+"SELECT GET_LOCK('bug16501',600)"
+"INSERT INTO t1 VALUES ('con1', CONNECTION_ID())"
+"SELECT IS_USED_LOCK('bug16501') = connection_id
+FROM t1
+WHERE conn = 'default'"
+"SELECT IS_USED_LOCK('bug16501') = CONNECTION_ID()"
+"SELECT RELEASE_LOCK('bug16501')"
+"SELECT IS_USED_LOCK('bug16501') = connection_id
+FROM t1
+WHERE conn = 'con1'"
+"SELECT IS_USED_LOCK('bug16501')"
+"SET @@session.div_precision_increment=0"
+"select * from(SELECT MIN(GET_LOCK(0,0) / 1 ^ 0)) as a"
+"select * from(SELECT MAX(RELEASE_LOCK(0) / 1 ^ 0)) as a"
+"select * from(SELECT MAX(RELEASE_ALL_LOCKS() / 1 ^ 0)) as a"
+"SET @@session.div_precision_increment=default"
+"SELECT GET_LOCK('1234567890123456789012345678901234567890123456789012345678901234',1)"
+"SELECT GET_LOCK('12345678901234567890123456789012345678901234567890123456789012345',1)"
+"SELECT GET_LOCK('',1)"
+"SELECT GET_LOCK(NULL,1)"
+"SET @a=0x414243FAFA"
+"SELECT GET_LOCK(@a,1)"
+"SET @a=0x414243"
 "CREATE USER no_pwd_history@localhost
 PASSWORD HISTORY 0 PASSWORD REUSE INTERVAL 0 DAY"
 "SELECT Password_reuse_history, Password_reuse_time
@@ -119705,7 +121235,6 @@ SELECT id, date(d) + INTERVAL TIME_TO_SEC(d) SECOND AS t, COUNT(*)
 FROM t1 GROUP BY id, t"
 "CREATE VIEW v1 AS SELECT MIN(j) AS j FROM t1"
 "CREATE VIEW v2 AS SELECT MIN(i) FROM t1 WHERE j = ( SELECT * FROM v1 )"
-"DROP VIEW v2, v1"
 "CREATE TABLE t1(
 fName varchar(25) NOT NULL,
 lName varchar(25) NOT NULL,
@@ -120071,7 +121600,6 @@ PRIMARY KEY(a), KEY (b))"
 "SELECT MAX(a), COUNT(DISTINCT a) FROM v1 GROUP BY a"
 "ALTER ALGORITHM=TEMPTABLE SQL SECURITY INVOKER VIEW t1 (c2) AS SELECT (1)"
 "CREATE VIEW v1 AS SELECT 1 FROM DUAL WHERE 1"
-"SHOW CREATE TABLE v1"
 "CREATE TABLE t1 (c1 INT PRIMARY KEY, c2 INT, INDEX (c2))"
 "SELECT * FROM t1 USE INDEX (PRIMARY) WHERE c1=2"
 "SELECT * FROM t1 USE INDEX (c2) WHERE c2=2"
@@ -121115,7 +122643,6 @@ SELECT f1 FROM t1"
 "GRANT CREATE VIEW ON mysqltest1.* TO mysqluser1@localhost"
 "GRANT SELECT ON t1 TO mysqluser1@localhost"
 "GRANT INSERT ON t2 TO mysqluser1@localhost"
-"CREATE VIEW v1 AS SELECT a, b FROM t1, t2"
 "SELECT b FROM v1"
 "DROP USER mysqluser1@localhost"
 "GRANT SELECT( a ) ON v1 TO mysqluser1@localhost"

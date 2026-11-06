@@ -80,7 +80,7 @@ This requires `bash`, `curl`, `docker`, and `php` and executes the following ste
 3. Extract and compact the grammar and tokens, and save them in `src`.
 
 ### Building the query corpus
-This package includes a testing corpus of about 77,000 MySQL queries extracted
+This package includes a testing corpus of about 78,000 MySQL queries extracted
 from the MySQL release that corresponds to the generated MySQL grammar version.
 To regenerate it, use:
 

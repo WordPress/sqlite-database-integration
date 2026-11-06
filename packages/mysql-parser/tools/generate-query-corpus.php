@@ -327,21 +327,19 @@ foreach ( scandir( $tests_dir ) as $i => $file ) {
 			continue;
 		}
 
-		// Skip '--' commands; convert "--delimiter <delimiter>" to "DELIMITER <delimiter>".
+		// Skip '--' commands. Unlike "delimiter", they end with the line, not with a delimiter.
 		$char2 = $line[1] ?? null;
 		if ( '-' === $char1 && '-' === $char2 ) {
-			if ( 0 === strpos( strtolower( $line ), '--delimiter' ) ) {
-				$line = substr( $line, 2 ); // remove '--'
-			} else {
-				// Inside a query, this is an SQL comment rather than a command.
-				if ( '' === $query ) {
-					if ( null === $expected_error ) {
-						$sql_modes->run_command( $line );
-					}
-					$expected_error = null;
+			// Inside a query, this is an SQL comment rather than a command.
+			if ( '' === $query ) {
+				if ( preg_match( '/^--\s*delimiter\s+(.+?)\s*$/i', $line, $matches ) ) {
+					$delimiter = $matches[1];
+				} elseif ( null === $expected_error ) {
+					$sql_modes->run_command( $line );
 				}
-				continue;
+				$expected_error = null;
 			}
+			continue;
 		}
 
 		// Process line.
