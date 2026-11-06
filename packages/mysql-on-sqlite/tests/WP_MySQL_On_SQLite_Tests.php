@@ -12022,6 +12022,23 @@ END;
 		);
 	}
 
+	public function testEmptyBitLiteralComparesLikeEmptyHexLiteral(): void {
+		// Hex and bit literals translate to blob literals, and a blob never
+		// equals a text value in SQLite. MySQL compares the empty binary
+		// string equal to the empty text string, a difference tracked for
+		// hex literals in #575. The empty bit literal behaves like the empty
+		// hex literal, in both directions.
+		$this->assertEquals(
+			$this->assertQuery( "SELECT x'' = '' AS v" ),
+			$this->assertQuery( "SELECT b'' = '' AS v" )
+		);
+
+		$this->assertEquals(
+			array( (object) array( 'v' => '1' ) ),
+			$this->assertQuery( "SELECT b'' = x'' AS v" )
+		);
+	}
+
 	public function testColumnInfo(): void {
 		$this->assertQuery(
 			'CREATE TABLE t (
