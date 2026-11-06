@@ -234,6 +234,7 @@ UNLOCK TABLES"
 "SELECT @@global.global.key_buffer_size"
 "SELECT @@global.local.key_buffer_size"
 "SELECT @@global.session.key_buffer_size"
+"SET PASSWORD='pwd1'; SET PASSWORD='pwd2';"
 "SET sql_mode = 'NO_ENGINE_SUBSTITUTION';
 create procedure test_resignal()
 begin

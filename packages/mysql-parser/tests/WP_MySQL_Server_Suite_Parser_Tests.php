@@ -16,7 +16,7 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 	 * The exact corpus tally. The parser should reject a row marked as a syntax error,
 	 * and accept any other row. A failure is a row where it does the opposite.
 	 *
-	 * 45 failures are regular rows that the parser rejects. They are multi-statement
+	 * 46 failures are regular rows that the parser rejects. They are multi-statement
 	 * input, which needs the CLIENT_MULTI_STATEMENTS client flag. MySQL rejects them
 	 * too without it.
 	 *
@@ -29,8 +29,8 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 	 * The exact failing set is pinned in FAILURES_PATH; update it when the accepted
 	 * language legitimately changes.
 	 */
-	const EXPECTED_QUERIES  = 78153;
-	const EXPECTED_FAILURES = 144;
+	const EXPECTED_QUERIES  = 78156;
+	const EXPECTED_FAILURES = 145;
 
 	public function test_corpus_acceptance_rate(): void {
 		$parser = WP_MySQL_Parser_Factory::create_parser();
@@ -135,6 +135,9 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 			'--error with a number'               => array( 'analyze table t1 extended', $syntax_error ),
 			'-- error with a number'              => array( 'CREATE TABLE t2 (a INT, b INT DEFAULT (select count(*) from t1))', $syntax_error ),
 			'a syntax error after --delimiter'    => array( 'create table t1 (a int) transactional=0', $syntax_error ),
+			'--query with an open name'           => array( "ALTER TABLE t RENAME TO `t1';", $syntax_error ),
+			'--query with an open string'         => array( "SELECT '01234567890123456789012345678901234\\'", $syntax_error ),
+			'--query without --error'             => array( "SET PASSWORD='pwd1'; SET PASSWORD='pwd2';", $regular ),
 			'--error with another error listed'   => array( 'explain select cast(1 as decimal(4294967296))', $regular ),
 			'a listed query with another error'   => array( 'explain select cast(1 as decimal(64, 999999999999999999999999999999))', $syntax_error ),
 			'a listed query after a semantic one' => array( 'GET DIAGNOSTICS var', $syntax_error ),

@@ -325,6 +325,13 @@ foreach ( scandir( $tests_dir ) as $i => $file ) {
 
 		$line = convert_to_utf8( $line, array( $client_encoding, 'UTF-8' ) );
 
+		// The "--query" command sends the rest of its line, even if its quotes don't match.
+		// Follow the query with a delimiter, so that it ends like any other query.
+		if ( '' === $query && preg_match( '/^--\s*query\s+(.+?)\s*$/i', $line, $matches ) ) {
+			$query = $matches[1];
+			$line  = $delimiter;
+		}
+
 		// Skip comments.
 		$char1 = $line[0] ?? null;
 		if ( '#' === $char1 ) {

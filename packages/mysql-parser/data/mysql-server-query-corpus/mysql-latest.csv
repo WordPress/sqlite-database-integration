@@ -9211,6 +9211,7 @@ DEFAULT CHARACTER SET latin1 COLLATE latin1_german1_ci"
 "drop table `ק`"
 "SET lc_messages=cs_CZ"
 "USE nonexistant"
+"SELECT '01234567890123456789012345678901234\'",,syntax_error
 "drop table if exists t3"
 "drop table if exists t4"
 "set names eucjpms"
@@ -69857,6 +69858,7 @@ REPEAT('a', @max_allowed_packet-1))"
 "UPDATE t3 SET a4={d '1789-07-14'} WHERE a1=0"
 "SELECT a1, a4 FROM t2 WHERE a4 LIKE {fn UCASE('1789-07-14')}"
 "CREATE TABLE t (id INT PRIMARY KEY)"
+"ALTER TABLE t RENAME TO `t1';",,syntax_error
 "STOP REPLICA ,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,, ",,syntax_error
 "STOP REPLICA ,,,,,,,,,,,,, sql_thread, ,,,,,,,,,,,,,,,,,,, ",,syntax_error
 "STOP REPLICA ,,,,,,,,,,,,, io_thread, ,,,,,,,,,,,,,,,,,,, ",,syntax_error
@@ -119165,6 +119167,7 @@ User='no_pwd_history' AND Host='localhost'"
 "ALTER USER no_pwd_history@localhost IDENTIFIED BY 'changemeagain'"
 "ALTER USER no_pwd_history@localhost IDENTIFIED WITH ""mysql_native_password""
 AS '*C40F578E1A9D8D1146AFD04AFCB0228EED9D45FB'"
+"SET PASSWORD='pwd1'; SET PASSWORD='pwd2';"
 "SET GLOBAL password_history= 1"
 "SET PASSWORD FOR no_pwd_history@localhost = 'tracked'"
 "SET GLOBAL password_history= default"
