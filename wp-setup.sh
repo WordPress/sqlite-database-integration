@@ -62,15 +62,29 @@ sed -i.bak "s#{SQLITE_PLUGIN}#sqlite-database-integration/load.php#g" "$WP_DIR"/
 echo "Rewriting helper class 'WpdbExposedMethodsForTesting' to extend WP_SQLite_DB..."
 sed -i.bak "s#class WpdbExposedMethodsForTesting extends wpdb {#class WpdbExposedMethodsForTesting extends WP_SQLite_DB {#g" "$WP_DIR"/tests/phpunit/includes/utils.php
 
-# 6. Make wp-config.php changes immediately visible to E2E tests.
+# 6. Use the low bcrypt cost of the test suite in class fixtures as well.
+#    WP_UnitTestCase::set_up() sets it for each test, which is too late for wpSetUpBeforeClass().
+echo "Lowering the bcrypt cost for test fixtures..."
+cat << 'EOF' >> "$WP_DIR/tests/phpunit/includes/functions.php"
+
+function _sqlite_tests_lower_bcrypt_cost( $options, $algorithm ) {
+	if ( PASSWORD_BCRYPT === $algorithm ) {
+		$options['cost'] = 5;
+	}
+	return $options;
+}
+tests_add_filter( 'wp_hash_password_options', '_sqlite_tests_lower_bcrypt_cost', 1, 2 );
+EOF
+
+# 7. Make wp-config.php changes immediately visible to E2E tests.
 echo "Disabling the PHP OPcache revalidation delay..."
 printf '\nopcache.revalidate_freq = 0\n' >> "$WP_DIR/tools/local-env/php-config.ini"
 
-# 7. Create the ".env" file early, so that Docker commands before "env:start" use it too.
+# 8. Create the ".env" file early, so that Docker commands before "env:start" use it too.
 echo "Creating the '.env' file..."
 cp "$WP_DIR/.env.example" "$WP_DIR/.env"
 
-# 8. Install dependencies.
+# 9. Install dependencies.
 echo "Installing dependencies..."
 npm --prefix "$WP_DIR" install
 npm --prefix "$WP_DIR" run build:dev
