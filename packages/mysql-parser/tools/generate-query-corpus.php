@@ -26,9 +26,10 @@
  * separated by commas. A query that runs in several sets of modes has a row for each.
  *
  * A query that the test files only ever expect to fail with a syntax error has
- * "syntax_error" in a third column. Other queries that are expected to fail are regular
- * rows, because their errors normally come after parsing, or from somewhere other than
- * the query's own syntax, such as the text of a PREPARE statement.
+ * "syntax_error" in a third column, and so do the few queries that a list below names.
+ * Other queries that are expected to fail are regular rows, because their errors normally
+ * come after parsing, or from somewhere other than the query's own syntax, such as the
+ * text of a PREPARE statement.
  *
  * The script is written on a best-effort basis and may not cover all edge cases.
  * In the future, we may consider writing a mysqltest format parser.
@@ -206,6 +207,26 @@ $tests_with_indirect_syntax_errors = array(
 	'trigger-compat-debug.test', // A broken trigger fails the statements on its table.
 );
 
+// These queries have syntax errors that their tests don't expect alone. MySQL reports
+// a semantic error first, or the test also allows another error.
+$queries_with_hidden_syntax_errors = array(
+	'GET DIAGNOSTICS var',
+	"CREATE PROCEDURE p1()\nBEGIN\nGET DIAGNOSTICS var;\nEND",
+	'GET DIAGNOSTICS CONDITION 1 var',
+	"CREATE PROCEDURE p1()\nBEGIN\nGET DIAGNOSTICS CONDITION 1 var;\nEND",
+	"CREATE PROCEDURE p1()\nBEGIN\nDECLARE var CONDITION FOR SQLSTATE '12345';\nGET DIAGNOSTICS CONDITION 1 var = NUMBER;\nEND",
+	'create view information_schema.v1',
+	"create function p(x int, x char(10))\nbegin\nend",
+	"create procedure bug6600()\nunlock table t1",
+	'CREATE TRIGGER tr1 BEFORE INSERT ON t1 FOR EACH ROW BEGIN create trigger tr2 before insert on t1 for each row do select 1; END ',
+	'CREATE FUNCTION bug_13627_f() returns int BEGIN create trigger tr2 before insert on t1 for each row do select 1; return 1; END ',
+	"create procedure proc_26503_error_1()\nbegin\nretry:\nrepeat\nbegin\ndeclare continue handler for sqlexception\nbegin\niterate retry;\nend\n\nselect \"do something\";\nend\nuntil true end repeat retry;\nend",
+	"create procedure proc_26503_error_2()\nbegin\nretry:\nrepeat\nbegin\ndeclare continue handler for sqlexception\niterate retry;\n\nselect \"do something\";\nend\nuntil true end repeat retry;\nend",
+	"create procedure proc_26503_error_3()\nbegin\nretry:\nrepeat\nbegin\ndeclare continue handler for sqlexception\nbegin\nleave retry;\nend\n\nselect \"do something\";\nend\nuntil true end repeat retry;\nend",
+	"create procedure proc_26503_error_4()\nbegin\nretry:\nrepeat\nbegin\ndeclare continue handler for sqlexception\nleave retry;\n\nselect \"do something\";\nend\nuntil true end repeat retry;\nend",
+	'explain select cast(1 as decimal(64, 999999999999999999999999999999))',
+);
+
 $queries = array();
 foreach ( scandir( $tests_dir ) as $i => $file ) {
 	if ( substr( $file, -5 ) !== '.test' ) {
@@ -361,9 +382,11 @@ foreach ( scandir( $tests_dir ) as $i => $file ) {
 					} else {
 						// A syntax error must be the only allowed result. ER_SYNTAX_ERROR doesn't
 						// count, because it comes from semantic checks on queries that parse.
-						$is_syntax_error = 1 === preg_match( '/^(?:--\s*)?error\s+(?:ER_PARSE_ERROR|1064)\s*(?:#|$)/i', $expected_error )
+						$is_syntax_error = in_array( $query, $queries_with_hidden_syntax_errors, true ) || (
+							1 === preg_match( '/^(?:--\s*)?error\s+(?:ER_PARSE_ERROR|1064)\s*(?:#|$)/i', $expected_error )
 							&& ! in_array( $file, $tests_with_indirect_syntax_errors, true )
-							&& 0 === preg_match( '/^prepare\s+\w+\s+from\s+[\'"@]/i', $query );
+							&& 0 === preg_match( '/^prepare\s+\w+\s+from\s+[\'"@]/i', $query )
+						);
 
 						// A failed query changes no state. Any other result shows that it parses.
 						$queries[ $query ][ $modes ] = ( $queries[ $query ][ $modes ] ?? true ) && $is_syntax_error;

@@ -34326,11 +34326,11 @@ GET,,syntax_error
 "GET CURRENT",,syntax_error
 "GET CURRENT DIAGNOSTICS",,syntax_error
 "GET DIAGNOSTICS @var",,syntax_error
-"GET DIAGNOSTICS var"
+"GET DIAGNOSTICS var",,syntax_error
 "CREATE PROCEDURE p1()
 BEGIN
 GET DIAGNOSTICS var;
-END"
+END",,syntax_error
 "CREATE PROCEDURE p1()
 BEGIN
 DECLARE var INT;
@@ -34378,11 +34378,11 @@ END"
 "GET DIAGNOSTICS CONDITION a",,syntax_error
 "GET DIAGNOSTICS CONDITION 1",,syntax_error
 "GET DIAGNOSTICS CONDITION 1 @var",,syntax_error
-"GET DIAGNOSTICS CONDITION 1 var"
+"GET DIAGNOSTICS CONDITION 1 var",,syntax_error
 "CREATE PROCEDURE p1()
 BEGIN
 GET DIAGNOSTICS CONDITION 1 var;
-END"
+END",,syntax_error
 "CREATE PROCEDURE p1()
 BEGIN
 DECLARE var INT;
@@ -34405,7 +34405,7 @@ END",,syntax_error
 BEGIN
 DECLARE var CONDITION FOR SQLSTATE '12345';
 GET DIAGNOSTICS CONDITION 1 var = NUMBER;
-END"
+END",,syntax_error
 "CREATE PROCEDURE p1()
 BEGIN
 DECLARE var INT;
@@ -48700,7 +48700,7 @@ where table_schema = 'test' and table_name in ('t1', 't2')"
 "drop temporary table if exists information_schema.t1"
 "create temporary table information_schema.t1 (f1 INT)"
 "drop view information_schema.v1"
-"create view information_schema.v1"
+"create view information_schema.v1",,syntax_error
 "create trigger mysql.trg1 after insert on information_schema.t1 for each row set @a=1"
 "create table t1 select * from information_schema.t1"
 "CREATE TABLE t1(f1 char(100))"
@@ -91577,7 +91577,7 @@ begin
 end"
 "create function p(x int, x char(10))
 begin
-end"
+end",,syntax_error
 "create procedure p()
 begin
 declare x float;
@@ -91777,7 +91777,7 @@ check table t1"
 "create procedure bug6600()
 lock table t1 read"
 "create procedure bug6600()
-unlock table t1"
+unlock table t1",,syntax_error
 "create procedure bug7299()
 begin
 declare v int;
@@ -92125,8 +92125,8 @@ end"
 "CREATE FUNCTION bug_13627_f() returns int BEGIN alter view v1 as select 1; return 1; END "
 "CREATE TRIGGER tr1 BEFORE INSERT ON t1 FOR EACH ROW BEGIN drop view v1; END "
 "CREATE FUNCTION bug_13627_f() returns int BEGIN drop view v1; return 1; END "
-"CREATE TRIGGER tr1 BEFORE INSERT ON t1 FOR EACH ROW BEGIN create trigger tr2 before insert on t1 for each row do select 1; END "
-"CREATE FUNCTION bug_13627_f() returns int BEGIN create trigger tr2 before insert on t1 for each row do select 1; return 1; END "
+"CREATE TRIGGER tr1 BEFORE INSERT ON t1 FOR EACH ROW BEGIN create trigger tr2 before insert on t1 for each row do select 1; END ",,syntax_error
+"CREATE FUNCTION bug_13627_f() returns int BEGIN create trigger tr2 before insert on t1 for each row do select 1; return 1; END ",,syntax_error
 "CREATE TRIGGER tr1 BEFORE INSERT ON t1 FOR EACH ROW BEGIN drop function bug_13627_f; END "
 "CREATE FUNCTION bug_13627_f() returns int BEGIN drop function bug_13627_f; return 1; END "
 "CREATE TRIGGER tr1 BEFORE INSERT ON t1 FOR EACH ROW BEGIN create function f2 () returns int return 1; END "
@@ -92376,7 +92376,7 @@ end
 select ""do something"";
 end
 until true end repeat retry;
-end"
+end",,syntax_error
 "create procedure proc_26503_error_2()
 begin
 retry:
@@ -92388,7 +92388,7 @@ iterate retry;
 select ""do something"";
 end
 until true end repeat retry;
-end"
+end",,syntax_error
 "create procedure proc_26503_error_3()
 begin
 retry:
@@ -92402,7 +92402,7 @@ end
 select ""do something"";
 end
 until true end repeat retry;
-end"
+end",,syntax_error
 "create procedure proc_26503_error_4()
 begin
 retry:
@@ -92414,7 +92414,7 @@ leave retry;
 select ""do something"";
 end
 until true end repeat retry;
-end"
+end",,syntax_error
 "CREATE FUNCTION foo(a INTEGER) RETURNS INTEGER DETERMINISTIC LANGUAGE SQL
 BEGIN RETURN a-1; END "
 "SELECT routine_name, routine_type, data_type, routine_body,
@@ -109123,7 +109123,7 @@ KEY index_name (f1,f2,f5(16))
 "explain select cast(1 as binary(4294967296))"
 "explain select cast(1 as decimal(-1))",,syntax_error
 "explain select cast(1 as decimal(64, 30))"
-"explain select cast(1 as decimal(64, 999999999999999999999999999999))"
+"explain select cast(1 as decimal(64, 999999999999999999999999999999))",,syntax_error
 "explain select cast(1 as decimal(4294967296))"
 "explain select cast(1 as decimal(999999999999999999999999999999999999))"
 "explain select convert(1, char(4294967295))"

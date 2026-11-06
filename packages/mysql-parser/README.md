@@ -95,7 +95,10 @@ This requires `bash`, `git`, and `php`. It performs the following steps:
 
 A query that runs in SQL modes that affect the lexer has them in a second column.
 A query that the MySQL tests only ever expect to fail with a syntax error has
-`syntax_error` in a third column.
+`syntax_error` in a third column, unless the error comes from outside its own
+syntax, such as the text of a `PREPARE` statement. A few queries with syntax
+errors that the tests don't expect alone have it too, and the extractor lists
+them by name.
 
 ## Tests and benchmarks
 To run lexer and parser tests and benchmarks, use:

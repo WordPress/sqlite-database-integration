@@ -11,7 +11,6 @@
 "COMMIT AND CHAIN RELEASE"
 "COMMIT; INSERT INTO t2 VALUES (1); BEGIN; "
 "COMMIT; INSERT INTO t2 VALUES (1); BEGIN; INSERT INTO t1 VALUES (99); "
-"CREATE FUNCTION bug_13627_f() returns int BEGIN create trigger tr2 before insert on t1 for each row do select 1; return 1; END "
 "CREATE FUNCTION foo(a INTEGER) RETURNS INTEGER
 DETERMINISTIC LANGUAGE JAVASCRIPT
 BEGIN RETURN a-1; END "
@@ -44,19 +43,6 @@ DECLARE d DATE;
 DO NTILE(d) OVER();
 END
 "
-"CREATE PROCEDURE p1()
-BEGIN
-DECLARE var CONDITION FOR SQLSTATE '12345';
-GET DIAGNOSTICS CONDITION 1 var = NUMBER;
-END"
-"CREATE PROCEDURE p1()
-BEGIN
-GET DIAGNOSTICS CONDITION 1 var;
-END"
-"CREATE PROCEDURE p1()
-BEGIN
-GET DIAGNOSTICS var;
-END"
 "CREATE PROCEDURE p1(n DATE) DO NTILE(n) OVER()"
 "CREATE PROCEDURE p2()
 BEGIN
@@ -217,7 +203,6 @@ COLLATE ascii_bin
 BEGIN
 SET NEW.a = DEFAULT;
 END"
-"CREATE TRIGGER tr1 BEFORE INSERT ON t1 FOR EACH ROW BEGIN create trigger tr2 before insert on t1 for each row do select 1; END "
 "DROP PROCEDURE IF EXISTS p26030; CREATE PROCEDURE p26030() BEGIN SELECT 1; END; CALL p26030()
 "
 "DROP PROCEDURE IF EXISTS p26030; CREATE PROCEDURE p26030() SELECT 1; CALL p26030()
@@ -228,8 +213,6 @@ DROP VIEW tv"
 "FLUSH TABLES FOR EXPORT"
 "FLUSH TABLES;
 UNLOCK TABLES"
-"GET DIAGNOSTICS CONDITION 1 var"
-"GET DIAGNOSTICS var"
 "GRANT SELECT(c1) ON FUNCTION *.* TO r1"
 "INSTALL COMPONENT ""file://component_validate_password"" SET length = (SELECT a FROM t1)"
 "REVOKE 'C' @c06 ON c02.`z1` FROM 'C' @c03"
@@ -483,72 +466,15 @@ declare a int;
 set a = (select count(*) from t1 limit p1, p2);
 return a;
 end"
-"create function p(x int, x char(10))
-begin
-end"
 "create procedure bug5307()
 begin
 end; set @x = 3"
-"create procedure bug6600()
-unlock table t1"
 "create procedure p1(p1 date, p2 date) select * from t1 limit p1, p2"
 "create procedure p1(p1 decimal, p2 decimal) select * from t1 limit p1, p2"
 "create procedure p1(p1 double, p2 double) select * from t1 limit p1, p2"
 "create procedure p1(p1 integer, p2 char(1)) select * from t1 limit p1, p2"
 "create procedure p1(p1 integer, p2 float) select * from t1 limit p1, p2"
 "create procedure p1(p1 varchar(5), p2 char(1)) select * from t1 limit p1, p2"
-"create procedure proc_26503_error_1()
-begin
-retry:
-repeat
-begin
-declare continue handler for sqlexception
-begin
-iterate retry;
-end
-
-select ""do something"";
-end
-until true end repeat retry;
-end"
-"create procedure proc_26503_error_2()
-begin
-retry:
-repeat
-begin
-declare continue handler for sqlexception
-iterate retry;
-
-select ""do something"";
-end
-until true end repeat retry;
-end"
-"create procedure proc_26503_error_3()
-begin
-retry:
-repeat
-begin
-declare continue handler for sqlexception
-begin
-leave retry;
-end
-
-select ""do something"";
-end
-until true end repeat retry;
-end"
-"create procedure proc_26503_error_4()
-begin
-retry:
-repeat
-begin
-declare continue handler for sqlexception
-leave retry;
-
-select ""do something"";
-end
-until true end repeat retry;
-end"
 "create table t1 (a int)
 partition by hash (NOW()+a)"
 "create table t1 (a int)
@@ -597,7 +523,6 @@ insert into t1 values (1),(2),(3);
 select * from t1 where i = 2;
 drop table t1;"
 "create table t4 (c1 int) engine=myisam pack_keys=2"
-"create view information_schema.v1"
 "create view v1 as select a from t3;
 create procedure bug10100pt(level int, lim int)
 begin
@@ -641,7 +566,6 @@ subpartition x22));
 end"
 "drop temporary table temp_t1;
 drop table t3, t4"
-"explain select cast(1 as decimal(64, 999999999999999999999999999999))"
 "prepare stmt2 from ""select * from t3;"";
 create procedure bug10100pd(level int, lim int)
 begin

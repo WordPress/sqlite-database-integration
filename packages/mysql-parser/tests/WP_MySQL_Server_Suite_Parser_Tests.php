@@ -16,12 +16,9 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 	 * The exact corpus tally. The parser should reject a row marked as a syntax error,
 	 * and accept any other row. A failure is a row where it does the opposite.
 	 *
-	 * 58 failures are regular rows that the parser rejects:
-	 * - 43 are multi-statement input, which needs the CLIENT_MULTI_STATEMENTS client
-	 *   flag. MySQL rejects them too without it.
-	 * - 14 have a syntax error that MySQL doesn't reach, because a semantic check
-	 *   during parsing reports another error first.
-	 * - 1 has a syntax error on MySQL too, but its test also allows another error.
+	 * 43 failures are regular rows that the parser rejects. They are multi-statement
+	 * input, which needs the CLIENT_MULTI_STATEMENTS client flag. MySQL rejects them
+	 * too without it.
 	 *
 	 * 90 failures are marked rows that the parser accepts:
 	 * - 88 are rejected by checks that run during MySQL's parsing, in grammar actions
@@ -33,7 +30,7 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 	 * language legitimately changes.
 	 */
 	const EXPECTED_QUERIES  = 77319;
-	const EXPECTED_FAILURES = 148;
+	const EXPECTED_FAILURES = 133;
 
 	public function test_corpus_acceptance_rate(): void {
 		$parser = WP_MySQL_Parser_Factory::create_parser();
@@ -105,7 +102,8 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 
 	/**
 	 * Pin how queries that test files expect to fail are marked in each set of modes.
-	 * A query is a syntax error only if every occurrence of it expects one.
+	 * A query is marked only if every occurrence of it expects a syntax error, or if
+	 * the extractor lists it.
 	 *
 	 * @dataProvider data_query_markers
 	 */
@@ -131,7 +129,8 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 			'--error with a number'               => array( 'analyze table t1 extended', $syntax_error ),
 			'-- error with a number'              => array( 'CREATE TABLE t2 (a INT, b INT DEFAULT (select count(*) from t1))', $syntax_error ),
 			'--error with another error listed'   => array( 'explain select cast(1 as decimal(4294967296))', $regular ),
-			'the same, with a rejected query'     => array( 'explain select cast(1 as decimal(64, 999999999999999999999999999999))', $regular ),
+			'a listed query with another error'   => array( 'explain select cast(1 as decimal(64, 999999999999999999999999999999))', $syntax_error ),
+			'a listed query after a semantic one' => array( 'GET DIAGNOSTICS var', $syntax_error ),
 			'--error that also allows success'    => array( '((SELECT * FROM t1 LIMIT 1) LIMIT 2) LIMIT 3', $regular ),
 			'PREPARE with text'                   => array( 'prepare stmt from "select ??"', $regular ),
 			'PREPARE after an --error comment'    => array( "prepare s from 'select GROUP_CONCAT(DISTINCT ?,? ORDER BY ? SEPARATOR ?)'", $regular ),
