@@ -26,8 +26,9 @@
  * separated by commas. A query that runs in several sets of modes has a row for each.
  *
  * A query that the test files only ever expect to fail with a syntax error has
- * "syntax_error" in a third column. Queries that are expected to fail with any other
- * error are regular rows, because those errors normally come after parsing.
+ * "syntax_error" in a third column. Other queries that are expected to fail are regular
+ * rows, because their errors normally come after parsing, or from somewhere other than
+ * the query's own syntax, such as the text of a PREPARE statement.
  *
  * The script is written on a best-effort basis and may not cover all edge cases.
  * In the future, we may consider writing a mysqltest format parser.
@@ -198,6 +199,13 @@ if ( null === $default_encoding ) {
 	exit( 1 );
 }
 
+// The syntax errors that these tests expect don't come from the syntax of their queries.
+$tests_with_indirect_syntax_errors = array(
+	'ctype_latin1.test',         // A latin1 byte that is valid once the query is in UTF-8.
+	'debug_sync.test',           // Debug builds parse the value of DEBUG_SYNC themselves.
+	'trigger-compat-debug.test', // A broken trigger fails the statements on its table.
+);
+
 $queries = array();
 foreach ( scandir( $tests_dir ) as $i => $file ) {
 	if ( substr( $file, -5 ) !== '.test' ) {
@@ -274,9 +282,10 @@ foreach ( scandir( $tests_dir ) as $i => $file ) {
 		}
 
 		// As in mysqltest, the "--error" command applies to the command that follows,
-		// and any other command ends it.
+		// and any other command ends it. The test files don't show whether a command that
+		// is allowed to succeed does, so it counts as a regular command that changes state.
 		if ( 0 === strpos( strtolower( $line ), '--error' ) || 0 === strpos( strtolower( $line ), '-- error' ) ) {
-			$expected_error = $line;
+			$expected_error = error_command_allows_success( $line ) ? null : $line;
 			continue;
 		}
 
@@ -350,14 +359,18 @@ foreach ( scandir( $tests_dir ) as $i => $file ) {
 						$queries[ $query ][ $modes ] = false;
 						$sql_modes->run_query( $query );
 					} else {
-						// A failed query changes no state. Any other result shows that it parses,
-						// including ER_SYNTAX_ERROR, which comes from semantic checks.
-						$queries[ $query ][ $modes ] = ( $queries[ $query ][ $modes ] ?? true )
-							&& 1 === preg_match( '/\b(?:ER_PARSE_ERROR|1064)\b/i', $expected_error );
+						// A syntax error must be the only allowed result. ER_SYNTAX_ERROR doesn't
+						// count, because it comes from semantic checks on queries that parse.
+						$is_syntax_error = 1 === preg_match( '/^(?:--\s*)?error\s+(?:ER_PARSE_ERROR|1064)\s*(?:#|$)/i', $expected_error )
+							&& ! in_array( $file, $tests_with_indirect_syntax_errors, true )
+							&& 0 === preg_match( '/^prepare\s+\w+\s+from\s+[\'"@]/i', $query );
+
+						// A failed query changes no state. Any other result shows that it parses.
+						$queries[ $query ][ $modes ] = ( $queries[ $query ][ $modes ] ?? true ) && $is_syntax_error;
 					}
 				}
 				// The "error" command works like "--error", but it ends with a delimiter.
-				$expected_error = preg_match( '/^error\b/i', $query ) ? $query : null;
+				$expected_error = preg_match( '/^error\b/i', $query ) && ! error_command_allows_success( $query ) ? $query : null;
 
 				$query = '';
 
@@ -404,3 +417,19 @@ foreach ( $queries as $query => $query_modes ) {
 	}
 }
 fclose( $output );
+
+/**
+ * Check whether an "error" command lets the next command succeed.
+ *
+ * The "error" command of mysqltest lists the errors that the next command may fail with.
+ * Normally, the test breaks if that command succeeds. Error 0 or SQLSTATE 00000 anywhere
+ * in the list means "no error", as in "--error 0,ER_PARSE_ERROR", so the command may either
+ * fail or succeed. The value of a variable in the list isn't known, so a variable doesn't
+ * count.
+ *
+ * @param string $command The command, as "--error <list>" or "error <list>".
+ * @return bool Whether the next command may succeed.
+ */
+function error_command_allows_success( string $command ): bool {
+	return 1 === preg_match( '/^(?:--\s*)?error\s+(?:[^#,]*,\s*)*(?:0|S00000)\s*(?:[,#]|$)/i', $command );
+}

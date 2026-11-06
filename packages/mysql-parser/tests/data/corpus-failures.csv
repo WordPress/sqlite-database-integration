@@ -1,4 +1,3 @@
-"((SELECT * FROM t1 LIMIT 1) LIMIT 2) LIMIT 3"
 "ALTER EVENT ev1"
 "ALTER INSTANCE ROTATE MyISAM MASTER KEY"
 "ALTER TABLE t1 ADD PARTITION
@@ -214,13 +213,11 @@ COLLATE ascii_bin
 "CREATE TABLE t8(a INTEGER AUTO_INCREMENT NOT ENFORCED)"
 "CREATE TABLE t8(a INTEGER ENFORCED)"
 "CREATE TABLE t8(a INTEGER NOT ENFORCED)"
-"CREATE TABLE „a (a int)"
 "CREATE TRIGGER t1_bu BEFORE UPDATE ON t1 FOR EACH ROW
 BEGIN
 SET NEW.a = DEFAULT;
 END"
 "CREATE TRIGGER tr1 BEFORE INSERT ON t1 FOR EACH ROW BEGIN create trigger tr2 before insert on t1 for each row do select 1; END "
-"CREATE TRIGGER tr16 AFTER UPDATE ON t1 FOR EACH ROW INSERT INTO t1 VALUES (1)"
 "DROP PROCEDURE IF EXISTS p26030; CREATE PROCEDURE p26030() BEGIN SELECT 1; END; CALL p26030()
 "
 "DROP PROCEDURE IF EXISTS p26030; CREATE PROCEDURE p26030() SELECT 1; CALL p26030()
@@ -235,10 +232,6 @@ UNLOCK TABLES"
 "GET DIAGNOSTICS var"
 "GRANT SELECT(c1) ON FUNCTION *.* TO r1"
 "INSTALL COMPONENT ""file://component_validate_password"" SET length = (SELECT a FROM t1)"
-"PREPARE ps FROM ""SELECT GET_FORMAT(?, 'ISO')"""
-"PREPARE stmt FROM ""SET PASSWORD FOR @'localhost' = 'SoSecret'"""
-"PREPARE stmt FROM ""SET PASSWORD FOR test_user1@'localhost' = NULL"""
-"PREPARE stmt FROM 'SELECT /*+ 10'"
 "REVOKE 'C' @c06 ON c02.`z1` FROM 'C' @c03"
 "REVOKE SELECT(c1) ON FUNCTION *.* FROM r1"
 "ROLLBACK AND CHAIN RELEASE"
@@ -246,47 +239,6 @@ UNLOCK TABLES"
 "SELECT @@global.global.key_buffer_size"
 "SELECT @@global.local.key_buffer_size"
 "SELECT @@global.session.key_buffer_size"
-"SET DEBUG_SYNC=' '"
-"SET DEBUG_SYNC=''"
-"SET DEBUG_SYNC='CLEAR'"
-"SET DEBUG_SYNC='RESET p0'"
-"SET DEBUG_SYNC='RESETx'"
-"SET DEBUG_SYNC='TEST'"
-"SET DEBUG_SYNC='p0                                          EXECUTE 2'"
-"SET DEBUG_SYNC='p0                                TIMEOUT 6 EXECUTE 2'"
-"SET DEBUG_SYNC='p0                                TIMEOUT 6'"
-"SET DEBUG_SYNC='p0                  SIGNAL s1 TIMEOUT 6 EXECUTE 2'"
-"SET DEBUG_SYNC='p0                  SIGNAL s1 TIMEOUT 6'"
-"SET DEBUG_SYNC='p0 CLEAR HIT_LIMIT 3'"
-"SET DEBUG_SYNC='p0 CLEAR p0'"
-"SET DEBUG_SYNC='p0 CLEARx'"
-"SET DEBUG_SYNC='p0 EXECUTE 2 SIGNAL s1 TIMEOUT 6'"
-"SET DEBUG_SYNC='p0 EXECUTE 2 TIMEOUT 6 SIGNAL s1'"
-"SET DEBUG_SYNC='p0 RESET p0'"
-"SET DEBUG_SYNC='p0 RESET'"
-"SET DEBUG_SYNC='p0 SIGNAL '"
-"SET DEBUG_SYNC='p0 SIGNAL s1 EXECUTE '"
-"SET DEBUG_SYNC='p0 SIGNAL s1 WAIT_FOR s2 TIMEOUT 6 EXECUTE 2 HIT_LIMIx 3'"
-"SET DEBUG_SYNC='p0 SIGNAL s1 WAIT_FOR s2 TIMEOUT 6 EXECUTx 2 HIT_LIMIT 3'"
-"SET DEBUG_SYNC='p0 SIGNAL s1 WAIT_FOR s2 TIMEOUx 0 EXECUTE 2 HIT_LIMIT 3'"
-"SET DEBUG_SYNC='p0 SIGNAL s1 WAIT_FOx s2 TIMEOUT 6 EXECUTE 2 HIT_LIMIT 3'"
-"SET DEBUG_SYNC='p0 SIGNAx s1 WAIT_FOR s2 TIMEOUT 6 EXECUTE 2 HIT_LIMIT 3'"
-"SET DEBUG_SYNC='p0 TEST p0'"
-"SET DEBUG_SYNC='p0 TESTx'"
-"SET DEBUG_SYNC='p0 TIMEOUT 6 SIGNAL s1'"
-"SET DEBUG_SYNC='p0 TIMEOUT 6 WAIT_FOR s2 EXECUTE 2'"
-"SET DEBUG_SYNC='p0 TIMEOUT 6 WAIT_FOR s2'"
-"SET DEBUG_SYNC='p0 WAIT_FOR '"
-"SET DEBUG_SYNC='p0 WAIT_FOR s2 SIGNAL s1           EXECUTE 2'"
-"SET DEBUG_SYNC='p0 WAIT_FOR s2 SIGNAL s1 TIMEOUT 6 EXECUTE 2'"
-"SET DEBUG_SYNC='p0 WAIT_FOR s2 SIGNAL s1 TIMEOUT 6'"
-"SET DEBUG_SYNC='p0 WAIT_FOR s2 SIGNAL s1'"
-"SET DEBUG_SYNC='p0 WAIT_FOR s2 TIMEOUT 0x6 EXECUTE 2 HIT_LIMIT 3'"
-"SET DEBUG_SYNC='p0 WAIT_FOR s2 TIMEOUT 6 EXECUTE 0x2 HIT_LIMIT 3'"
-"SET DEBUG_SYNC='p0 WAIT_FOR s2 TIMEOUT 6 SIGNAL s1 EXECUTE 2'"
-"SET DEBUG_SYNC='p0 WAIT_FOR s2 TIMEOUT 6 SIGNAL s1'"
-"SET DEBUG_SYNC='p0 WAIT_FOR s2 TIMEOUT 7 EXECUTE 2 HIT_LIMIT 0x3'"
-"SET DEBUG_SYNC='p0'"
 "SET sql_mode = 'NO_ENGINE_SUBSTITUTION';
 create procedure test_resignal()
 begin
@@ -474,12 +426,9 @@ RETURN '';
 END"
 "START TRANSACTION READ ONLY, READ WRITE"
 "START TRANSACTION READ ONLY, WITH CONSISTENT SNAPSHOT, READ WRITE"
-"UPDATE t1 SET a = 1 WHERE a = 1"
 "XA START '1', 0x01, 18446744073709551615"
 "alter table t1 add b integer;
 call p1"
-"alter table t1 add partition
-(partition p1 values in (maxvalue, maxvalue))"
 "create function bug12812() returns char(2)
 begin
 return 'ok';
@@ -629,9 +578,6 @@ subpartition by hash(a)
 partition p1 values in (1) (subpartition sp0))"
 "create table t1 (a int, b int)
 partition by list columns(a,b)
-( partition p0 values in ((maxvalue, 0)))"
-"create table t1 (a int, b int)
-partition by list columns(a,b)
 (partition p0 values in ((maxvalue,maxvalue)))"
 "create table t1 (a int, b int)
 partition by range (a)
@@ -663,7 +609,6 @@ else
 select * from t3;
 end if;
 end"
-"drop database AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 "drop function if exists t_slow_sysdate;
 create function t_slow_sysdate() returns timestamp
 begin
@@ -696,44 +641,7 @@ subpartition x22));
 end"
 "drop temporary table temp_t1;
 drop table t3, t4"
-"explain select cast(1 as decimal(4294967296))"
-"explain select cast(1 as decimal(999999999999999999999999999999999999))"
-"prepare bar from ""DELETE FROM table_28779 WHERE a = 7 OR 1=1/*! AND 2=2;"""
-"prepare bar from ""DELETE FROM table_28779 WHERE a = 7 OR 1=1/*! AND 2=2;*"""
-"prepare bar from ""DELETE FROM table_28779 WHERE a = 7 OR 1=1/*!98765' AND b = 'bar';"""
-"prepare bar from ""DELETE FROM table_28779 WHERE a = 7 OR 1=1/*!98765' AND b = 'bar';*"""
-"prepare bar from ""DELETE FROM table_28779 WHERE a = 7 OR 1=1/*' AND b = 'bar';"""
-"prepare bar from ""DELETE FROM table_28779 WHERE a = 7 OR 1=1/*' AND b = 'bar';*"""
-"prepare s from
-'SELECT *
-FROM
-JSON_TABLE(
-?,
-?
-COLUMNS(
-rowid FOR ORDINALITY,
-ac VARCHAR(100) PATH ""$.a"" DEFAULT ''999'' ON ERROR DEFAULT ''111'' ON EMPTY,
-aj JSON PATH ""$.a"" DEFAULT ''{""x"": 333}'' ON EMPTY,
-bx INT EXISTS PATH ""$.b""
-)
-) AS tt'"
-"prepare s from 'select GROUP_CONCAT(DISTINCT ?,? ORDER BY ? SEPARATOR ?)'"
-"prepare stmt from ""select ??"""
-"prepare stmt from ""select ?FROM t1"""
-"prepare stmt from ""select FROM t1 WHERE?=1"""
-"prepare stmt from ""show engine all logs where (1) in (select * from t1)"""
-"prepare stmt from ""show engine all mutex where (1) in (select * from t1)"""
-"prepare stmt from ""show engine all status where (1) in (select * from t1)"""
-"prepare stmt from ""show processlist where (1) in (select * from t1)"""
-"prepare stmt from ""update t1 set a=a+?WHERE 1"""
-"prepare stmt1 from ' insert into t1 values(? ' "
-"prepare stmt1 from ' select a, b from t1
-where a=? and where ' "
-"prepare stmt1 from ' select_garbage 1 ' "
-"prepare stmt1 from @arg01"
-"prepare stmt1 from @fvar"
-"prepare stmt1 from @ivar"
-"prepare stmt1 from @nosuchvar"
+"explain select cast(1 as decimal(64, 999999999999999999999999999999))"
 "prepare stmt2 from ""select * from t3;"";
 create procedure bug10100pd(level int, lim int)
 begin
@@ -754,8 +662,6 @@ else
 execute stmt2;
 end if;
 end"
-"prepare stmt6 from 'insert into t1 values (5,""five""); select2'"
-"prepare stmt6 from 'select 1; select2'"
 "purge binary logs before (select adddate(current_timestamp(), interval -4 day))"
 "select ""stmt 1"";             select ""space, stmt 2"""
 "select ""stmt 1"";/* comment */select ""comment, stmt 2"""

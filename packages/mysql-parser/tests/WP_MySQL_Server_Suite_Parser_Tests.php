@@ -16,23 +16,24 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 	 * The exact corpus tally. The parser should reject a row marked as a syntax error,
 	 * and accept any other row. A failure is a row where it does the opposite.
 	 *
-	 * 57 failures are regular rows that the parser rejects:
+	 * 58 failures are regular rows that the parser rejects:
 	 * - 43 are multi-statement input, which needs the CLIENT_MULTI_STATEMENTS client
 	 *   flag. MySQL rejects them too without it.
 	 * - 14 have a syntax error that MySQL doesn't reach, because a semantic check
 	 *   during parsing reports another error first.
+	 * - 1 has a syntax error on MySQL too, but its test also allows another error.
 	 *
-	 * 169 failures are marked rows that the parser accepts:
-	 * - 90 are rejected by checks that run during MySQL's parsing, in grammar actions
+	 * 90 failures are marked rows that the parser accepts:
+	 * - 88 are rejected by checks that run during MySQL's parsing, in grammar actions
 	 *   and parse tree classes. This parser has neither.
-	 * - 79 also parse on MySQL when prepared. Their error depends on how the test runs
-	 *   them, such as the text of a PREPARE statement or a debug build.
+	 * - 2 use "?" outside a prepared statement. MySQL allows it only when preparing,
+	 *   and this lexer always allows it.
 	 *
 	 * The exact failing set is pinned in FAILURES_PATH; update it when the accepted
 	 * language legitimately changes.
 	 */
 	const EXPECTED_QUERIES  = 77319;
-	const EXPECTED_FAILURES = 226;
+	const EXPECTED_FAILURES = 148;
 
 	public function test_corpus_acceptance_rate(): void {
 		$parser = WP_MySQL_Parser_Factory::create_parser();
@@ -129,9 +130,19 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 			'--error with a name'                 => array( "select t1.* as 'with_alias' from t1", $syntax_error ),
 			'--error with a number'               => array( 'analyze table t1 extended', $syntax_error ),
 			'-- error with a number'              => array( 'CREATE TABLE t2 (a INT, b INT DEFAULT (select count(*) from t1))', $syntax_error ),
-			'--error with a comment'              => array( "prepare s from 'select GROUP_CONCAT(DISTINCT ?,? ORDER BY ? SEPARATOR ?)'", $syntax_error ),
-			'--error with another error'          => array( 'explain select cast(1 as decimal(4294967296))', $syntax_error ),
-			'--error that also allows success'    => array( '((SELECT * FROM t1 LIMIT 1) LIMIT 2) LIMIT 3', $syntax_error ),
+			'--error with another error listed'   => array( 'explain select cast(1 as decimal(4294967296))', $regular ),
+			'the same, with a rejected query'     => array( 'explain select cast(1 as decimal(64, 999999999999999999999999999999))', $regular ),
+			'--error that also allows success'    => array( '((SELECT * FROM t1 LIMIT 1) LIMIT 2) LIMIT 3', $regular ),
+			'PREPARE with text'                   => array( 'prepare stmt from "select ??"', $regular ),
+			'PREPARE after an --error comment'    => array( "prepare s from 'select GROUP_CONCAT(DISTINCT ?,? ORDER BY ? SEPARATOR ?)'", $regular ),
+			'PREPARE with a variable'             => array( 'prepare stmt1 from @nosuchvar', $regular ),
+			'PREPARE without text'                => array( 'prepare stmt1 from ', $syntax_error ),
+			'PREPARE without FROM'                => array( "prepare stmt1 from_garbage ' select 1 ' ", $syntax_error ),
+			'PREPARE without a name'              => array( "prepare from ' select 1 ' ", $syntax_error ),
+			'PREPARE with an invalid name'        => array( "prepare ? from ' select ? as my_col ' ", $syntax_error ),
+			'debug_sync.test'                     => array( "SET DEBUG_SYNC='p0'", $regular ),
+			'trigger-compat-debug.test'           => array( 'UPDATE t1 SET a = 1 WHERE a = 1', $regular ),
+			'ctype_latin1.test'                   => array( "CREATE TABLE \u{201E}a (a int)", $regular ),
 			'a syntax error only in IGNORE_SPACE' => array(
 				'create table SUM (a int)',
 				array(
