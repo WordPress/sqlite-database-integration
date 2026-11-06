@@ -29,7 +29,3 @@ jobs:
 
       - name: Run WordPress PHPUnit tests
         run: node .github/workflows/wp-tests-phpunit-run.js
-
-      - name: Stop Docker containers
-        if: always()
-        run: composer run wp-test-clean
