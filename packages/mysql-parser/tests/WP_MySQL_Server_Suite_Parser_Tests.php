@@ -13,14 +13,24 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 	const FAILURES_PATH = __DIR__ . '/data/corpus-failures.csv';
 
 	/**
-	 * The exact corpus tally. The rejected queries are multi-statement input, which
-	 * needs the CLIENT_MULTI_STATEMENTS client flag. MySQL rejects them too without it.
+	 * The exact corpus tally. The parser should reject a row marked as a syntax error,
+	 * and accept any other row. A failure is a row where it does the opposite.
+	 *
+	 * 46 failures are regular rows that the parser rejects. They are multi-statement
+	 * input, which needs the CLIENT_MULTI_STATEMENTS client flag. MySQL rejects them
+	 * too without it.
+	 *
+	 * 99 failures are marked rows that the parser accepts:
+	 * - 97 are rejected by checks that run during MySQL's parsing, in grammar actions
+	 *   and parse tree classes. This parser has neither.
+	 * - 2 use "?" outside a prepared statement. MySQL allows it only when preparing,
+	 *   and this lexer always allows it.
 	 *
 	 * The exact failing set is pinned in FAILURES_PATH; update it when the accepted
 	 * language legitimately changes.
 	 */
-	const EXPECTED_QUERIES  = 69370;
-	const EXPECTED_FAILURES = 43;
+	const EXPECTED_QUERIES  = 78156;
+	const EXPECTED_FAILURES = 145;
 
 	public function test_corpus_acceptance_rate(): void {
 		$parser = WP_MySQL_Parser_Factory::create_parser();
@@ -36,9 +46,10 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 			++$total;
 
 			// Pin the MySQL version. The failure set in FAILURES_PATH depends on it.
-			$sql_modes = isset( $record[1] ) ? explode( ',', $record[1] ) : array();
+			$sql_modes = array_filter( explode( ',', $record[1] ?? '' ) );
 			$tokens    = ( new WP_MySQL_Lexer( $query, 80410, $sql_modes ) )->remaining_tokens();
-			if ( null === $parser->parse( $tokens ) ) {
+			$is_parsed = null !== $parser->parse( $tokens );
+			if ( isset( $record[2] ) === $is_parsed ) {
 				$failures[] = $query;
 			}
 		}
@@ -86,28 +97,73 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 			'vertical tab in a version comment'      => array( "DO 1 /*!80034\v+1*/" ),
 			'form feed in a version comment'         => array( "DO 1 /*!80034\f+1*/" ),
 			'carriage return in a version comment'   => array( "DO 1 /*!80034\r+1*/" ),
-			'query after --error and --reap'         => array( 'CREATE PROCEDURE mIxEdCaSe() BEGIN END' ),
-			'query after --error and --remove_file'  => array( 'drop procedure if exists bug13012' ),
+			'a delimiter set with --delimiter'       => array( "CREATE PROCEDURE p_flush_status()\nBEGIN\nDECLARE x INT DEFAULT 3000;\nWHILE x DO\nSET x = x-1;\nFLUSH STATUS;\nEND WHILE;\nEND " ),
+			'a query after --delimiter ;'            => array( 'DROP PROCEDURE p_flush_status' ),
+			'a delimiter that starts with a quote'   => array( "select \"abcd'\";" ),
+			'a query after an indented --error'      => array( 'call po_add_order_line (99, 1, 100, 1)' ),
+			'a query after an indented comment'      => array( "UPDATE t0 SET c0 = 1 WHERE (t0.c0 IS NULL)>>('' COLLATE 'utf8mb4_0900_ai_ci')" ),
+			'a query after an indented command'      => array( "DO version_tokens_lock_exclusive('vt3', 'vt5', 'vt1', 4)" ),
 		);
 	}
 
 	/**
-	 * Pin queries that test files expect to fail, using the "error" command instead of
-	 * "--error", because the tally can't see an additional query that parses.
+	 * Pin how queries that test files expect to fail are marked in each set of modes.
+	 * A query is marked only if every occurrence of it expects a syntax error, or if
+	 * the extractor lists it.
 	 *
-	 * @dataProvider data_omitted_query_texts
+	 * @dataProvider data_query_markers
 	 */
-	public function test_corpus_omits_query_text( string $query ): void {
-		$this->assertNotContains( $query, $this->read_queries( self::CORPUS_PATH ) );
+	public function test_corpus_marks_expected_syntax_errors( string $query, array $expected ): void {
+		static $markers = null;
+		if ( null === $markers ) {
+			$markers = array();
+			foreach ( $this->read_records( self::CORPUS_PATH ) as $record ) {
+				$markers[ $record[0] ][ $record[1] ?? '' ] = $record[2] ?? '';
+			}
+		}
+		$this->assertSame( $expected, $markers[ $query ] ?? array() );
 	}
 
 	/**
-	 * @return array<string,array{0:string}>
+	 * @return array<string,array{0:string,1:array<string,string>}>
 	 */
-	public function data_omitted_query_texts(): array {
+	public function data_query_markers(): array {
+		$regular      = array( '' => '' );
+		$syntax_error = array( '' => 'syntax_error' );
 		return array(
-			'error with a name'   => array( "BINLOG '\nRaNlZRMBAAAAMAAAAG0DAAAAAG8AAAAAAAEABHRlc3QAAnQxAAEDAAEBAQAg5VHP\nRaNlZR4BAAAAKAAAAJUDAAAAAG8AAAAAAAEAAgAB/wACAAAAczmjEA==\n'" ),
-			'error with a number' => array( "BINLOG '\njKNlZRMBAAAAMAAAAOkFAAAAAG8AAAAAAAEABHRlc3QAAnQxAAEDAAEBAQCwxzWH\njKNlZR4BAAAAKAAAABEGAAAAAG8AAAAAAAEAAgAB/wAFAAAAVI7NfA==\n'" ),
+			'--error with a name'                 => array( "select t1.* as 'with_alias' from t1", $syntax_error ),
+			'--error with a number'               => array( 'analyze table t1 extended', $syntax_error ),
+			'-- error with a number'              => array( 'CREATE TABLE t2 (a INT, b INT DEFAULT (select count(*) from t1))', $syntax_error ),
+			'a syntax error after --delimiter'    => array( 'create table t1 (a int) transactional=0', $syntax_error ),
+			'--query with an open name'           => array( "ALTER TABLE t RENAME TO `t1';", $syntax_error ),
+			'--query with an open string'         => array( "SELECT '01234567890123456789012345678901234\\'", $syntax_error ),
+			'--query without --error'             => array( "SET PASSWORD='pwd1'; SET PASSWORD='pwd2';", $regular ),
+			'--error with another error listed'   => array( 'explain select cast(1 as decimal(4294967296))', $regular ),
+			'a listed query with another error'   => array( 'explain select cast(1 as decimal(64, 999999999999999999999999999999))', $syntax_error ),
+			'a listed query after a semantic one' => array( 'GET DIAGNOSTICS var', $syntax_error ),
+			'a listed query the parser accepts'   => array( "alter table t1 add partition\n(partition p1 values in (maxvalue, maxvalue))", $syntax_error ),
+			'--error that also allows success'    => array( '((SELECT * FROM t1 LIMIT 1) LIMIT 2) LIMIT 3', $regular ),
+			'PREPARE with text'                   => array( 'prepare stmt from "select ??"', $regular ),
+			'PREPARE after an --error comment'    => array( "prepare s from 'select GROUP_CONCAT(DISTINCT ?,? ORDER BY ? SEPARATOR ?)'", $regular ),
+			'PREPARE with a variable'             => array( 'prepare stmt1 from @nosuchvar', $regular ),
+			'PREPARE without text'                => array( 'prepare stmt1 from ', $syntax_error ),
+			'PREPARE without FROM'                => array( "prepare stmt1 from_garbage ' select 1 ' ", $syntax_error ),
+			'PREPARE without a name'              => array( "prepare from ' select 1 ' ", $syntax_error ),
+			'PREPARE with an invalid name'        => array( "prepare ? from ' select ? as my_col ' ", $syntax_error ),
+			'debug_sync.test'                     => array( "SET DEBUG_SYNC='p0'", $regular ),
+			'trigger-compat-debug.test'           => array( 'UPDATE t1 SET a = 1 WHERE a = 1', $regular ),
+			'ctype_latin1.test'                   => array( "CREATE TABLE \u{201E}a (a int)", $regular ),
+			'a syntax error only in IGNORE_SPACE' => array(
+				'create table SUM (a int)',
+				array(
+					''             => '',
+					'IGNORE_SPACE' => 'syntax_error',
+				),
+			),
+			'a syntax error before a regular run' => array( 'INSERT INTO th1 VALUES(1)', $regular ),
+			'a syntax error and another error'    => array( 'DELETE FROM t1', $regular ),
+			'--error with another error only'     => array( 'create table t1 select * from t1', $regular ),
+			'--error with ER_SYNTAX_ERROR'        => array( 'GRANT abc ON *.* TO testrole', $regular ),
 		);
 	}
 

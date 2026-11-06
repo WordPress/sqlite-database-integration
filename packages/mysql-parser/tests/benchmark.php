@@ -57,7 +57,9 @@ $handle  = fopen( $corpus, 'r' );
 $queries = array();
 while ( ( $record = fgetcsv( $handle, null, ',', '"', '\\' ) ) !== false ) {
 	$query = $record[0] ?? null;
-	if ( null === $query || '' === $query ) {
+
+	// Skip expected syntax errors. The parser stops early on them, inflating the throughput.
+	if ( null === $query || '' === $query || isset( $record[2] ) ) {
 		continue;
 	}
 	$queries[] = array( $query, isset( $record[1] ) ? explode( ',', $record[1] ) : array() );

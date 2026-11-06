@@ -25,6 +25,12 @@
  * A query that runs in SQL modes that affect the lexer has them in a second column,
  * separated by commas. A query that runs in several sets of modes has a row for each.
  *
+ * A query that the test files only ever expect to fail with a syntax error has
+ * "syntax_error" in a third column, and so do the few queries that a list below names.
+ * Other queries that are expected to fail are regular rows, because their errors normally
+ * come after parsing, or from somewhere other than the query's own syntax, such as the
+ * text of a PREPARE statement.
+ *
  * The script is written on a best-effort basis and may not cover all edge cases.
  * In the future, we may consider writing a mysqltest format parser.
  */
@@ -36,10 +42,8 @@ require_once __DIR__ . '/query-corpus-decoding.php';
 $data_dir   = __DIR__ . '/../data/mysql-server-query-corpus';
 $query_file = $data_dir . '/mysql-latest.csv';
 
-// Comments and other prefixes to skip:
+// Prefixes to skip:
 $prefixes = array(
-	'#',
-	'--',
 	'{',
 	'}',
 );
@@ -194,6 +198,36 @@ if ( null === $default_encoding ) {
 	exit( 1 );
 }
 
+// The syntax errors that these tests expect don't come from the syntax of their queries.
+$tests_with_indirect_syntax_errors = array(
+	'ctype_latin1.test',         // A latin1 byte that is valid once the query is in UTF-8.
+	'debug_sync.test',           // Debug builds parse the value of DEBUG_SYNC themselves.
+	'trigger-compat-debug.test', // A broken trigger fails the statements on its table.
+);
+
+// These queries have syntax errors that their tests don't expect alone. MySQL reports
+// a semantic error first, or the test also allows another error.
+$queries_with_hidden_syntax_errors = array(
+	'GET DIAGNOSTICS var',
+	"CREATE PROCEDURE p1()\nBEGIN\nGET DIAGNOSTICS var;\nEND",
+	'GET DIAGNOSTICS CONDITION 1 var',
+	"CREATE PROCEDURE p1()\nBEGIN\nGET DIAGNOSTICS CONDITION 1 var;\nEND",
+	"CREATE PROCEDURE p1()\nBEGIN\nDECLARE var CONDITION FOR SQLSTATE '12345';\nGET DIAGNOSTICS CONDITION 1 var = NUMBER;\nEND",
+	'create view information_schema.v1',
+	"create function p(x int, x char(10))\nbegin\nend",
+	"create procedure bug6600()\nunlock table t1",
+	'CREATE TRIGGER tr1 BEFORE INSERT ON t1 FOR EACH ROW BEGIN create trigger tr2 before insert on t1 for each row do select 1; END ',
+	'CREATE FUNCTION bug_13627_f() returns int BEGIN create trigger tr2 before insert on t1 for each row do select 1; return 1; END ',
+	"create procedure proc_26503_error_1()\nbegin\nretry:\nrepeat\nbegin\ndeclare continue handler for sqlexception\nbegin\niterate retry;\nend\n\nselect \"do something\";\nend\nuntil true end repeat retry;\nend",
+	"create procedure proc_26503_error_2()\nbegin\nretry:\nrepeat\nbegin\ndeclare continue handler for sqlexception\niterate retry;\n\nselect \"do something\";\nend\nuntil true end repeat retry;\nend",
+	"create procedure proc_26503_error_3()\nbegin\nretry:\nrepeat\nbegin\ndeclare continue handler for sqlexception\nbegin\nleave retry;\nend\n\nselect \"do something\";\nend\nuntil true end repeat retry;\nend",
+	"create procedure proc_26503_error_4()\nbegin\nretry:\nrepeat\nbegin\ndeclare continue handler for sqlexception\nleave retry;\n\nselect \"do something\";\nend\nuntil true end repeat retry;\nend",
+	"CREATE FUNCTION f1() RETURNS INT\nBEGIN\nCREATE TEMPORARY TABLE t2 (c1 INT);\nALTER TEMPORARY TABLE tm1 UNION=(t1,t2);\nINSERT INTO t2 (c1) VALUES (2);\nRETURN (SELECT MAX(c1) FROM tm1);\nEND",
+	'explain select cast(1 as decimal(64, 999999999999999999999999999999))',
+	"create table t1 (a int, b int)\npartition by list columns(a,b)\n( partition p0 values in ((maxvalue, 0)))",
+	"alter table t1 add partition\n(partition p1 values in (maxvalue, maxvalue))",
+);
+
 $queries = array();
 foreach ( scandir( $tests_dir ) as $i => $file ) {
 	if ( substr( $file, -5 ) !== '.test' ) {
@@ -213,8 +247,8 @@ foreach ( scandir( $tests_dir ) as $i => $file ) {
 	// Track whether we're inside a disabled block.
 	$is_disabled = false;
 
-	// Track whether we should skip the next query.
-	$skip_next = false;
+	// Track the "error" command that requires the next command to fail.
+	$expected_error = null;
 
 	// Track the encoding of the client character set that a statement selects.
 	$client_encoding = $default_encoding;
@@ -243,6 +277,11 @@ foreach ( scandir( $tests_dir ) as $i => $file ) {
 	// As in mysqltest, only LF and CRLF end a line. Other line separators are part of
 	// the query, such as the ones that "comments.test" uses to test whitespace.
 	foreach ( preg_split( '/\r?\n/', $contents ) as $line ) {
+		// As in mysqltest, a command or a comment can be indented when no query is open.
+		if ( '' === $query ) {
+			$line = ltrim( $line );
+		}
+
 		// Skip command bodies for perl, append_file, and write_file commands.
 		if ( $command_body_terminator ) {
 			if ( trim( $line ) === $command_body_terminator ) {
@@ -269,21 +308,29 @@ foreach ( scandir( $tests_dir ) as $i => $file ) {
 			continue;
 		}
 
-		// Skip queries that are expected to fail. As in mysqltest, the "--error" command
-		// applies to the command that follows, and any other command ends it.
+		// As in mysqltest, the "--error" command applies to the command that follows,
+		// and any other command ends it. The test files don't show whether a command that
+		// is allowed to succeed does, so it counts as a regular command that changes state.
 		if ( 0 === strpos( strtolower( $line ), '--error' ) || 0 === strpos( strtolower( $line ), '-- error' ) ) {
-			$skip_next = true;
+			$expected_error = error_command_allows_success( $line ) ? null : $line;
 			continue;
 		}
 
 		// Track the client character set, unless the statement is expected to fail.
 		// "DEFAULT" and character sets that the map doesn't list use the default encoding.
 		$client_charset = read_client_charset( $line );
-		if ( null !== $client_charset && ! $skip_next ) {
+		if ( null !== $client_charset && null === $expected_error ) {
 			$client_encoding = QUERY_CORPUS_CHARSET_ENCODINGS[ $client_charset ] ?? $default_encoding;
 		}
 
 		$line = convert_to_utf8( $line, array( $client_encoding, 'UTF-8' ) );
+
+		// The "--query" command sends the rest of its line, even if its quotes don't match.
+		// Follow the query with a delimiter, so that it ends like any other query.
+		if ( '' === $query && preg_match( '/^--\s*query\s+(.+?)\s*$/i', $line, $matches ) ) {
+			$query = $matches[1];
+			$line  = $delimiter;
+		}
 
 		// Skip comments.
 		$char1 = $line[0] ?? null;
@@ -291,21 +338,19 @@ foreach ( scandir( $tests_dir ) as $i => $file ) {
 			continue;
 		}
 
-		// Skip '--' commands; convert "--delimiter <delimiter>" to "DELIMITER <delimiter>".
+		// Skip '--' commands. Unlike "delimiter", they end with the line, not with a delimiter.
 		$char2 = $line[1] ?? null;
 		if ( '-' === $char1 && '-' === $char2 ) {
-			if ( 0 === strpos( strtolower( $line ), '--delimiter' ) ) {
-				$line = substr( $line, 2 ); // remove '--'
-			} else {
-				// Inside a query, this is an SQL comment rather than a command.
-				if ( '' === $query ) {
-					if ( ! $skip_next ) {
-						$sql_modes->run_command( $line );
-					}
-					$skip_next = false;
+			// Inside a query, this is an SQL comment rather than a command.
+			if ( '' === $query ) {
+				if ( preg_match( '/^--\s*delimiter\s+(.+?)\s*$/i', $line, $matches ) ) {
+					$delimiter = $matches[1];
+				} elseif ( null === $expected_error ) {
+					$sql_modes->run_command( $line );
 				}
-				continue;
+				$expected_error = null;
 			}
+			continue;
 		}
 
 		// Process line.
@@ -313,8 +358,11 @@ foreach ( scandir( $tests_dir ) as $i => $file ) {
 		for ( $i = 0; $i < strlen( $line ); $i++ ) {
 			$char = $line[ $i ];
 
+			// As in mysqltest, a delimiter outside quotes ends a command, even if it starts with a quote.
+			$is_delimiter = null === $quotes && $char === $delimiter[0] && substr( $line, $i, strlen( $delimiter ) ) === $delimiter;
+
 			// Handle quotes.
-			if ( '\'' === $char || '"' === $char || '`' === $char ) {
+			if ( ! $is_delimiter && ( '\'' === $char || '"' === $char || '`' === $char ) ) {
 				$prefix     = substr( $line, 0, $i );
 				$slashes    = strlen( $prefix ) - strlen( rtrim( $prefix, '\\' ) );
 				$is_escaped = 1 === $slashes % 2;
@@ -328,7 +376,7 @@ foreach ( scandir( $tests_dir ) as $i => $file ) {
 			}
 
 			// Found delimiter - end query or command.
-			if ( $char === $delimiter[0] && substr( $line, $i, strlen( $delimiter ) ) === $delimiter && null === $quotes ) {
+			if ( $is_delimiter ) {
 				$i   += strlen( $delimiter ) - 1;
 				$char = $line[ $i ] ?? null;
 
@@ -337,17 +385,29 @@ foreach ( scandir( $tests_dir ) as $i => $file ) {
 					$delimiter = trim( substr( $query, strlen( 'delimiter' ) ) );
 				} elseif ( preg_match( $skip_pattern, $query ) ) {
 					// skip commands
-					if ( ! $skip_next ) {
+					if ( null === $expected_error ) {
 						$sql_modes->run_command( $query );
 					}
-				} else {
-					if ( ! $skip_next ) {
-						$queries[ $query ][ $sql_modes->get_modes() ] = true;
+				} elseif ( '' !== $query ) {
+					$modes = $sql_modes->get_modes();
+					if ( null === $expected_error ) {
+						$queries[ $query ][ $modes ] = false;
 						$sql_modes->run_query( $query );
+					} else {
+						// A syntax error must be the only allowed result. ER_SYNTAX_ERROR doesn't
+						// count, because it comes from semantic checks on queries that parse.
+						$is_syntax_error = in_array( $query, $queries_with_hidden_syntax_errors, true ) || (
+							1 === preg_match( '/^(?:--\s*)?error\s+(?:ER_PARSE_ERROR|1064)\s*(?:#|$)/i', $expected_error )
+							&& ! in_array( $file, $tests_with_indirect_syntax_errors, true )
+							&& 0 === preg_match( '/^prepare\s+\w+\s+from\s+[\'"@]/i', $query )
+						);
+
+						// A failed query changes no state. Any other result shows that it parses.
+						$queries[ $query ][ $modes ] = ( $queries[ $query ][ $modes ] ?? true ) && $is_syntax_error;
 					}
 				}
 				// The "error" command works like "--error", but it ends with a delimiter.
-				$skip_next = 1 === preg_match( '/^error\b/i', $query );
+				$expected_error = preg_match( '/^error\b/i', $query ) && ! error_command_allows_success( $query ) ? $query : null;
 
 				$query = '';
 
@@ -384,8 +444,29 @@ if ( false === $output ) {
 	exit( 1 );
 }
 foreach ( $queries as $query => $query_modes ) {
-	foreach ( array_keys( $query_modes ) as $modes ) {
-		fputcsv( $output, '' === $modes ? array( $query ) : array( $query, $modes ), ',', '"', '\\' );
+	foreach ( $query_modes as $modes => $is_syntax_error ) {
+		if ( $is_syntax_error ) {
+			$record = array( $query, $modes, 'syntax_error' );
+		} else {
+			$record = '' === $modes ? array( $query ) : array( $query, $modes );
+		}
+		fputcsv( $output, $record, ',', '"', '\\' );
 	}
 }
 fclose( $output );
+
+/**
+ * Check whether an "error" command lets the next command succeed.
+ *
+ * The "error" command of mysqltest lists the errors that the next command may fail with.
+ * Normally, the test breaks if that command succeeds. Error 0 or SQLSTATE 00000 anywhere
+ * in the list means "no error", as in "--error 0,ER_PARSE_ERROR", so the command may either
+ * fail or succeed. The value of a variable in the list isn't known, so a variable doesn't
+ * count.
+ *
+ * @param string $command The command, as "--error <list>" or "error <list>".
+ * @return bool Whether the next command may succeed.
+ */
+function error_command_allows_success( string $command ): bool {
+	return 1 === preg_match( '/^(?:--\s*)?error\s+(?:[^#,]*,\s*)*(?:0|S00000)\s*(?:[,#]|$)/i', $command );
+}
