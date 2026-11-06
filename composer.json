@@ -59,13 +59,17 @@
 			"npm --prefix wordpress run env:cli -- plugin install gutenberg --version=22.3.0",
 			"npm --prefix wordpress run env:cli -- plugin install query-monitor"
 		],
-		"wp-test-ensure-env": [
-			"if [ ! -f wordpress/src/wp-load.php ]; then composer run wp-setup; fi",
+		"wp-test-ensure-php-env": [
+			"if [ ! -f wordpress/wp-tests-config.php ]; then composer run wp-setup; fi",
 			"@putenv COMPOSE_IGNORE_ORPHANS=true",
+			"if [ ! -f wordpress/vendor/bin/phpunit ]; then npm --prefix wordpress run env:composer -- update -W; fi"
+		],
+		"wp-test-ensure-env": [
+			"@wp-test-ensure-php-env",
 			"cd wordpress && if [ -z \"$(DOTENV_CONFIG_QUIET=true node tools/local-env/scripts/docker.js ps -q)\" ]; then cd ..; composer run wp-test-start; fi"
 		],
 		"wp-test-php": [
-			"@wp-test-ensure-env @no_additional_args",
+			"@wp-test-ensure-php-env @no_additional_args",
 			"@wp-test-remove-database @no_additional_args",
 			"cd wordpress && node tools/local-env/scripts/docker.js run --rm php php -d opcache.enable_cli=1 -d opcache.memory_consumption=256 -d opcache.jit=tracing -d opcache.jit_buffer_size=64M ./vendor/bin/phpunit @additional_args"
 		],
