@@ -20,8 +20,8 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 	 * input, which needs the CLIENT_MULTI_STATEMENTS client flag. MySQL rejects them
 	 * too without it.
 	 *
-	 * 90 failures are marked rows that the parser accepts:
-	 * - 88 are rejected by checks that run during MySQL's parsing, in grammar actions
+	 * 92 failures are marked rows that the parser accepts:
+	 * - 90 are rejected by checks that run during MySQL's parsing, in grammar actions
 	 *   and parse tree classes. This parser has neither.
 	 * - 2 use "?" outside a prepared statement. MySQL allows it only when preparing,
 	 *   and this lexer always allows it.
@@ -30,7 +30,7 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 	 * language legitimately changes.
 	 */
 	const EXPECTED_QUERIES  = 77319;
-	const EXPECTED_FAILURES = 133;
+	const EXPECTED_FAILURES = 135;
 
 	public function test_corpus_acceptance_rate(): void {
 		$parser = WP_MySQL_Parser_Factory::create_parser();
@@ -131,6 +131,7 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 			'--error with another error listed'   => array( 'explain select cast(1 as decimal(4294967296))', $regular ),
 			'a listed query with another error'   => array( 'explain select cast(1 as decimal(64, 999999999999999999999999999999))', $syntax_error ),
 			'a listed query after a semantic one' => array( 'GET DIAGNOSTICS var', $syntax_error ),
+			'a listed query the parser accepts'   => array( "alter table t1 add partition\n(partition p1 values in (maxvalue, maxvalue))", $syntax_error ),
 			'--error that also allows success'    => array( '((SELECT * FROM t1 LIMIT 1) LIMIT 2) LIMIT 3', $regular ),
 			'PREPARE with text'                   => array( 'prepare stmt from "select ??"', $regular ),
 			'PREPARE after an --error comment'    => array( "prepare s from 'select GROUP_CONCAT(DISTINCT ?,? ORDER BY ? SEPARATOR ?)'", $regular ),

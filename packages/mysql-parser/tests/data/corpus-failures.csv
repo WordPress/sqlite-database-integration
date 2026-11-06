@@ -412,6 +412,8 @@ END"
 "XA START '1', 0x01, 18446744073709551615"
 "alter table t1 add b integer;
 call p1"
+"alter table t1 add partition
+(partition p1 values in (maxvalue, maxvalue))"
 "create function bug12812() returns char(2)
 begin
 return 'ok';
@@ -502,6 +504,9 @@ partition by list (a)
 subpartition by hash(a)
 (partition p0 values in (0),
 partition p1 values in (1) (subpartition sp0))"
+"create table t1 (a int, b int)
+partition by list columns(a,b)
+( partition p0 values in ((maxvalue, 0)))"
 "create table t1 (a int, b int)
 partition by list columns(a,b)
 (partition p0 values in ((maxvalue,maxvalue)))"

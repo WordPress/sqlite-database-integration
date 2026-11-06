@@ -225,6 +225,8 @@ $queries_with_hidden_syntax_errors = array(
 	"create procedure proc_26503_error_3()\nbegin\nretry:\nrepeat\nbegin\ndeclare continue handler for sqlexception\nbegin\nleave retry;\nend\n\nselect \"do something\";\nend\nuntil true end repeat retry;\nend",
 	"create procedure proc_26503_error_4()\nbegin\nretry:\nrepeat\nbegin\ndeclare continue handler for sqlexception\nleave retry;\n\nselect \"do something\";\nend\nuntil true end repeat retry;\nend",
 	'explain select cast(1 as decimal(64, 999999999999999999999999999999))',
+	"create table t1 (a int, b int)\npartition by list columns(a,b)\n( partition p0 values in ((maxvalue, 0)))",
+	"alter table t1 add partition\n(partition p1 values in (maxvalue, maxvalue))",
 );
 
 $queries = array();
