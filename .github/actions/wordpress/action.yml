@@ -1,0 +1,36 @@
+name: Prepare WordPress
+description: Set up the WordPress repository.
+runs:
+  using: composite
+  steps:
+    - name: Resolve WordPress cache key
+      id: wordpress
+      shell: bash
+      env:
+        # The setup script builds the "wordpress" folder and copies "db.copy" into it.
+        SETUP_HASH: ${{ hashFiles( 'wp-setup.sh', 'packages/plugin-sqlite-database-integration/db.copy' ) }}
+      run: |
+        version="$( sed -n 's/^WP_VERSION="\(.*\)"$/\1/p' wp-setup.sh )"
+        commit="$( git ls-remote --exit-code https://github.com/WordPress/wordpress-develop.git "refs/heads/$version" | cut -f1 )"
+        echo "cache-key=wordpress-$( node --version )-$commit-$SETUP_HASH" >> "$GITHUB_OUTPUT"
+
+    - name: Restore WordPress from the cache
+      id: cache
+      uses: actions/cache/restore@v6
+      with:
+        path: wordpress
+        key: ${{ steps.wordpress.outputs.cache-key }}
+
+    - name: Set up WordPress
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: composer run wp-test-ensure-php-env
+
+    # Save now rather than using "actions/cache", which saves at the end of the job.
+    # Saving after the tests would also cache files they create, like the SQLite database.
+    - name: Save WordPress to the cache
+      if: steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: wordpress
+        key: ${{ steps.wordpress.outputs.cache-key }}
