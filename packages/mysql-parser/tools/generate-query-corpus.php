@@ -42,10 +42,8 @@ require_once __DIR__ . '/query-corpus-decoding.php';
 $data_dir   = __DIR__ . '/../data/mysql-server-query-corpus';
 $query_file = $data_dir . '/mysql-latest.csv';
 
-// Comments and other prefixes to skip:
+// Prefixes to skip:
 $prefixes = array(
-	'#',
-	'--',
 	'{',
 	'}',
 );
@@ -224,6 +222,7 @@ $queries_with_hidden_syntax_errors = array(
 	"create procedure proc_26503_error_2()\nbegin\nretry:\nrepeat\nbegin\ndeclare continue handler for sqlexception\niterate retry;\n\nselect \"do something\";\nend\nuntil true end repeat retry;\nend",
 	"create procedure proc_26503_error_3()\nbegin\nretry:\nrepeat\nbegin\ndeclare continue handler for sqlexception\nbegin\nleave retry;\nend\n\nselect \"do something\";\nend\nuntil true end repeat retry;\nend",
 	"create procedure proc_26503_error_4()\nbegin\nretry:\nrepeat\nbegin\ndeclare continue handler for sqlexception\nleave retry;\n\nselect \"do something\";\nend\nuntil true end repeat retry;\nend",
+	"CREATE FUNCTION f1() RETURNS INT\nBEGIN\nCREATE TEMPORARY TABLE t2 (c1 INT);\nALTER TEMPORARY TABLE tm1 UNION=(t1,t2);\nINSERT INTO t2 (c1) VALUES (2);\nRETURN (SELECT MAX(c1) FROM tm1);\nEND",
 	'explain select cast(1 as decimal(64, 999999999999999999999999999999))',
 	"create table t1 (a int, b int)\npartition by list columns(a,b)\n( partition p0 values in ((maxvalue, 0)))",
 	"alter table t1 add partition\n(partition p1 values in (maxvalue, maxvalue))",
@@ -278,6 +277,11 @@ foreach ( scandir( $tests_dir ) as $i => $file ) {
 	// As in mysqltest, only LF and CRLF end a line. Other line separators are part of
 	// the query, such as the ones that "comments.test" uses to test whitespace.
 	foreach ( preg_split( '/\r?\n/', $contents ) as $line ) {
+		// As in mysqltest, a command or a comment can be indented when no query is open.
+		if ( '' === $query ) {
+			$line = ltrim( $line );
+		}
+
 		// Skip command bodies for perl, append_file, and write_file commands.
 		if ( $command_body_terminator ) {
 			if ( trim( $line ) === $command_body_terminator ) {
