@@ -539,6 +539,12 @@ partition by range columns(a,b)
 insert into t1 values (1),(2),(3);
 select * from t1 where i = 2;
 drop table t1;"
+"create table t1 (i int);
+insert into t1 values (1);
+select * from t1 where i = 1;
+insert into t1 values (2),(3),(4);
+select * from t1 where i = 2;
+select * from t1 where i = 3"
 "create table t4 (c1 int) engine=myisam pack_keys=2"
 "create view v1 as select a from t3;
 create procedure bug10100pt(level int, lim int)
@@ -615,6 +621,9 @@ end"
 "select 2;
 select 3;
 select 4"
+"select 5;
+select 6;
+select 50, 'abc';"
 "select ?"
 "select ? from t1"
 "select @update_failed;

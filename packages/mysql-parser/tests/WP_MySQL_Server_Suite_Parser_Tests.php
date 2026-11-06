@@ -16,7 +16,7 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 	 * The exact corpus tally. The parser should reject a row marked as a syntax error,
 	 * and accept any other row. A failure is a row where it does the opposite.
 	 *
-	 * 43 failures are regular rows that the parser rejects. They are multi-statement
+	 * 45 failures are regular rows that the parser rejects. They are multi-statement
 	 * input, which needs the CLIENT_MULTI_STATEMENTS client flag. MySQL rejects them
 	 * too without it.
 	 *
@@ -29,8 +29,8 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 	 * The exact failing set is pinned in FAILURES_PATH; update it when the accepted
 	 * language legitimately changes.
 	 */
-	const EXPECTED_QUERIES  = 78147;
-	const EXPECTED_FAILURES = 142;
+	const EXPECTED_QUERIES  = 78153;
+	const EXPECTED_FAILURES = 144;
 
 	public function test_corpus_acceptance_rate(): void {
 		$parser = WP_MySQL_Parser_Factory::create_parser();
@@ -99,6 +99,7 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 			'carriage return in a version comment'   => array( "DO 1 /*!80034\r+1*/" ),
 			'a delimiter set with --delimiter'       => array( "CREATE PROCEDURE p_flush_status()\nBEGIN\nDECLARE x INT DEFAULT 3000;\nWHILE x DO\nSET x = x-1;\nFLUSH STATUS;\nEND WHILE;\nEND " ),
 			'a query after --delimiter ;'            => array( 'DROP PROCEDURE p_flush_status' ),
+			'a delimiter that starts with a quote'   => array( "select \"abcd'\";" ),
 			'a query after an indented --error'      => array( 'call po_add_order_line (99, 1, 100, 1)' ),
 			'a query after an indented comment'      => array( "UPDATE t0 SET c0 = 1 WHERE (t0.c0 IS NULL)>>('' COLLATE 'utf8mb4_0900_ai_ci')" ),
 			'a query after an indented command'      => array( "DO version_tokens_lock_exclusive('vt3', 'vt5', 'vt1', 4)" ),

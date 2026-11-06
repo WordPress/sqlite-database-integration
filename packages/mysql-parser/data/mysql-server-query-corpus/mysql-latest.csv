@@ -61770,6 +61770,20 @@ ORDER BY 1"
 "select 2;
 select 3;
 select 4"
+"select 5;
+select 6;
+select 50, 'abc';"
+"select ""abcd'"";"
+"select ""'abcd"";"
+"select 5"
+"select 'finish'"
+"create table t1 (i int);
+insert into t1 values (1);
+select * from t1 where i = 1;
+insert into t1 values (2),(3),(4);
+select * from t1 where i = 2;
+select * from t1 where i = 3"
+"show status like 'Slow_queries'"
 "CALL mtr.add_suppression(""Unsafe statement written to the binary log using statement format since BINLOG_FORMAT = STATEMENT."")"
 "CALL mtr.add_suppression(""REVOKE/GRANT failed while storing table level ""
 ""and column level grants in the privilege ""
@@ -117736,7 +117750,6 @@ SELECT                     * FROM t1 UNION SELECT * FROM t2) q"
 "create table t1 (a int, index (a), b int)"
 "insert t1 values (1,1),(2,2),(3,3),(4,4),(5,5)"
 "insert t1 select a+1, a+b from t1"
-"show status like 'Slow_queries'"
 "select count(*) from t1 where a=7"
 "select count(*) from t1 where b=13"
 "select count(*) from t1 where b=13 union select count(*) from t1 where a=7"

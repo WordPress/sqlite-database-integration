@@ -351,8 +351,11 @@ foreach ( scandir( $tests_dir ) as $i => $file ) {
 		for ( $i = 0; $i < strlen( $line ); $i++ ) {
 			$char = $line[ $i ];
 
+			// As in mysqltest, a delimiter outside quotes ends a command, even if it starts with a quote.
+			$is_delimiter = null === $quotes && $char === $delimiter[0] && substr( $line, $i, strlen( $delimiter ) ) === $delimiter;
+
 			// Handle quotes.
-			if ( '\'' === $char || '"' === $char || '`' === $char ) {
+			if ( ! $is_delimiter && ( '\'' === $char || '"' === $char || '`' === $char ) ) {
 				$prefix     = substr( $line, 0, $i );
 				$slashes    = strlen( $prefix ) - strlen( rtrim( $prefix, '\\' ) );
 				$is_escaped = 1 === $slashes % 2;
@@ -366,7 +369,7 @@ foreach ( scandir( $tests_dir ) as $i => $file ) {
 			}
 
 			// Found delimiter - end query or command.
-			if ( $char === $delimiter[0] && substr( $line, $i, strlen( $delimiter ) ) === $delimiter && null === $quotes ) {
+			if ( $is_delimiter ) {
 				$i   += strlen( $delimiter ) - 1;
 				$char = $line[ $i ] ?? null;
 
