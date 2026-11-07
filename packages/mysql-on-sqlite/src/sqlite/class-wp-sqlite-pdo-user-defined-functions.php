@@ -79,6 +79,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'utc_date'                     => 'utc_date',
 		'utc_time'                     => 'utc_time',
 		'utc_timestamp'                => 'utc_timestamp',
+		'convert_tz'                   => 'convert_tz',
 		'version'                      => 'version',
 		'reverse'                      => 'reverse',
 
@@ -891,6 +892,91 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 */
 	public function utc_timestamp() {
 		return gmdate( 'Y-m-d H:i:s', time() );
+	}
+
+	/**
+	 * Method to emulate MySQL CONVERT_TZ() function.
+	 *
+	 * Converts a datetime value from one time zone to another, returning
+	 * a 'Y-m-d H:i:s' string like MySQL does. Returns NULL when any
+	 * argument is NULL, when the datetime is not a valid date or datetime,
+	 * or when either time zone is unknown.
+	 *
+	 * Named time zones use PHP's time zone database, so DST is handled and
+	 * conversions succeed even when MySQL's time zone tables are empty
+	 * (where MySQL itself would return NULL). Offsets like '+00:00' and
+	 * aliases 'UTC' and 'SYSTEM' are also supported.
+	 *
+	 * @param string|null $dt       Datetime string, e.g. '2026-09-29 12:00:00'.
+	 * @param string|null $from_tz Source time zone, e.g. '+00:00'.
+	 * @param string|null $to_tz   Target time zone, e.g. 'America/New_York'.
+	 *
+	 * @return string|null Converted datetime, or NULL.
+	 */
+	public function convert_tz( $dt, $from_tz, $to_tz ) {
+		if ( null === $dt || null === $from_tz || null === $to_tz ) {
+			return null;
+		}
+
+		$dt      = trim( (string) $dt );
+		$from_tz = trim( (string) $from_tz );
+		$to_tz   = trim( (string) $to_tz );
+
+		if ( '' === $dt || '' === $from_tz || '' === $to_tz ) {
+			return null;
+		}
+
+		// Hours are limited to 00-23 so PHP cannot roll '25:00:00' over.
+		if ( 1 !== preg_match( '/^\d{4}-\d{1,2}-\d{1,2}(?:[ T](?:[01]?\d|2[0-3]):[0-5]?\d:[0-5]?\d(?:\.\d+)?)?$/', $dt ) ) {
+			return null;
+		}
+
+		/*
+		 * Reject zero-dates ('0000-00-00') and impossible calendar dates
+		 * ('2026-02-31'). The previous check compared ltrim() output against
+		 * '0', which never matches, so both were converted and PHP rolled
+		 * them over into a real date.
+		 */
+		if ( 1 === preg_match( '/^(\d{4})-(\d{1,2})-(\d{1,2})/', $dt, $matches ) ) {
+			if ( ! checkdate( (int) $matches[2], (int) $matches[3], (int) $matches[1] ) ) {
+				return null;
+			}
+		}
+
+		if ( 0 === strcasecmp( $from_tz, 'SYSTEM' ) ) {
+			$from_tz = date_default_timezone_get();
+		}
+		if ( 0 === strcasecmp( $to_tz, 'SYSTEM' ) ) {
+			$to_tz = date_default_timezone_get();
+		}
+
+		/*
+		 * MySQL accepts numeric offsets only from -13:59 through +14:00.
+		 * PHP's DateTimeZone is more permissive (+15:00, -14:00), so the
+		 * range is enforced here to match MySQL's NULL for invalid zones.
+		 */
+		foreach ( array( $from_tz, $to_tz ) as $zone ) {
+			if ( 1 === preg_match( '/^([+-])(\d{1,2}):(\d{2})$/', $zone, $offset ) ) {
+				$minutes = ( (int) $offset[2] * 60 ) + (int) $offset[3];
+				if (
+					(int) $offset[3] > 59
+					|| ( '+' === $offset[1] && $minutes > 14 * 60 )
+					|| ( '-' === $offset[1] && $minutes > ( 13 * 60 + 59 ) )
+				) {
+					return null;
+				}
+			}
+		}
+
+		try {
+			$from_zone = new DateTimeZone( $from_tz );
+			$to_zone   = new DateTimeZone( $to_tz );
+			$date      = new DateTimeImmutable( $dt, $from_zone );
+		} catch ( Exception $e ) {
+			return null;
+		}
+
+		return $date->setTimezone( $to_zone )->format( 'Y-m-d H:i:s' );
 	}
 
 	/**
