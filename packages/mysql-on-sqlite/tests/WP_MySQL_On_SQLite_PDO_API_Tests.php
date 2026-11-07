@@ -855,8 +855,10 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		$this->assertSame( '1', $this->driver->lastInsertId() );
 		$this->assertSame( '1', $this->driver->lastInsertId( 'ignored_sequence_name' ) );
 
+		// DDL does not clear the value: MySQL keeps returning the last
+		// generated id after a CREATE TABLE.
 		$this->driver->query( 'CREATE TABLE another_table (id INT)' );
-		$this->assertSame( '0', $this->driver->lastInsertId() );
+		$this->assertSame( '1', $this->driver->lastInsertId() );
 	}
 
 	public function test_last_insert_id_rejects_invalid_sequence_name(): void {
