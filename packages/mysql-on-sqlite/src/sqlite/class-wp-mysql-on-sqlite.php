@@ -715,6 +715,17 @@ class WP_MySQL_On_SQLite extends PDO {
 	private $in_transaction = false;
 
 	/**
+	 * Whether the active transaction was started by the user, e.g., via the
+	 * "START TRANSACTION" statement or the PDO "beginTransaction()" method.
+	 *
+	 * Internal transactions, such as the exclusive transaction used while
+	 * configuring the database, are not user transactions.
+	 *
+	 * @var bool
+	 */
+	private $user_transaction = false;
+
+	/**
 	 * Names of active user savepoints, outermost first.
 	 *
 	 * MySQL replaces a savepoint with the same name, while SQLite only shadows it.
@@ -1172,14 +1183,52 @@ class WP_MySQL_On_SQLite extends PDO {
 				}
 			}
 
-			if ( $wrap_in_transaction ) {
-				$this->begin_wrapper_transaction();
+			/*
+			 * MySQL implicitly commits an open transaction before DDL statements,
+			 * so DDL cannot be rolled back together with the earlier statements
+			 * of a transaction. CREATE TEMPORARY TABLE and DROP TEMPORARY TABLE
+			 * are the exceptions. OPTIMIZE TABLE and REPAIR TABLE recreate the
+			 * table and cannot be rolled back either, so they are treated as DDL.
+			 *
+			 * See: https://dev.mysql.com/doc/refman/8.4/en/implicit-commit.html
+			 */
+			if (
+				null !== $statement_node
+				&& $this->user_transaction
+				&& $this->statement_causes_implicit_commit( $statement_node )
+			) {
+				$this->commit_user_transaction();
 			}
 
-			$this->execute_mysql_query( $ast );
+			/*
+			 * A statement that recreates a table must not fire the foreign key
+			 * actions of referencing tables when dropping the original table.
+			 * Foreign keys can only be disabled outside a transaction, so they
+			 * are disabled here, before the statement's wrapper transaction
+			 * begins, and enabled again below, after it has ended.
+			 *
+			 * See: https://www.sqlite.org/lang_altertable.html#otheralter
+			 */
+			$disables_foreign_keys = null !== $statement_node
+				&& $this->statement_disables_foreign_keys( $statement_node );
+			if ( $disables_foreign_keys ) {
+				$this->execute_sqlite_query( 'PRAGMA foreign_keys = OFF' );
+			}
 
-			if ( $wrap_in_transaction ) {
-				$this->commit_wrapper_transaction();
+			try {
+				if ( $wrap_in_transaction ) {
+					$this->begin_wrapper_transaction();
+				}
+
+				$this->execute_mysql_query( $ast );
+
+				if ( $wrap_in_transaction ) {
+					$this->commit_wrapper_transaction();
+				}
+			} finally {
+				if ( $disables_foreign_keys ) {
+					$this->execute_sqlite_query( 'PRAGMA foreign_keys = ON' );
+				}
 			}
 
 			if ( null === $this->last_result_statement ) {
@@ -1405,8 +1454,9 @@ class WP_MySQL_On_SQLite extends PDO {
 		// Unlike a COMMIT statement, PDO::commit() doesn't roll back on failure,
 		// so the caller can still call PDO::rollBack(), as with PDO MySQL.
 		$this->connection->query( 'COMMIT' );
-		$this->in_transaction  = false;
-		$this->savepoint_names = array();
+		$this->in_transaction   = false;
+		$this->savepoint_names  = array();
+		$this->user_transaction = false;
 		return true;
 	}
 
@@ -2152,8 +2202,9 @@ class WP_MySQL_On_SQLite extends PDO {
 		 * @see self::begin_wrapper_transaction()
 		 */
 		$this->connection->query( 'BEGIN IMMEDIATE' );
-		$this->in_transaction  = true;
-		$this->savepoint_names = array();
+		$this->in_transaction   = true;
+		$this->savepoint_names  = array();
+		$this->user_transaction = true;
 	}
 
 	/**
@@ -2162,6 +2213,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	private function commit_user_transaction(): void {
 		// MySQL doesn't throw an error if there is no active transaction.
 		if ( ! $this->inTransaction() ) {
+			$this->user_transaction = false;
 			return;
 		}
 		try {
@@ -2175,8 +2227,9 @@ class WP_MySQL_On_SQLite extends PDO {
 			}
 			throw $e;
 		}
-		$this->in_transaction  = false;
-		$this->savepoint_names = array();
+		$this->in_transaction   = false;
+		$this->savepoint_names  = array();
+		$this->user_transaction = false;
 	}
 
 	/**
@@ -2190,8 +2243,9 @@ class WP_MySQL_On_SQLite extends PDO {
 			}
 		} finally {
 			// A ROLLBACK always ends the transaction, even when it fails.
-			$this->in_transaction  = false;
-			$this->savepoint_names = array();
+			$this->in_transaction   = false;
+			$this->savepoint_names  = array();
+			$this->user_transaction = false;
 		}
 	}
 
@@ -3143,6 +3197,16 @@ class WP_MySQL_On_SQLite extends PDO {
 				throw $this->new_access_denied_to_information_schema_exception();
 			}
 
+			// MySQL rejects dropping a table that is referenced by a foreign key
+			// constraint of another table. Otherwise, dropping the parent would
+			// silently delete or modify the rows of the referencing tables.
+			if ( ! $table_is_temporary ) {
+				$this->assert_table_not_referenced(
+					$this->unquote_sqlite_identifier( $this->translate( $table_ref ) ),
+					'drop'
+				);
+			}
+
 			$parts = array();
 			foreach ( $child_node->get_children() as $child ) {
 				$is_token = $child instanceof WP_MySQL_Token;
@@ -3185,6 +3249,12 @@ class WP_MySQL_On_SQLite extends PDO {
 		$table_name = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
 		if ( 'information_schema' === strtolower( $database ) ) {
 			throw $this->new_access_denied_to_information_schema_exception();
+		}
+
+		// Like MySQL, truncating a table that is referenced by a foreign key
+		// constraint of another table is rejected.
+		if ( ! $this->information_schema_builder->temporary_table_exists( $table_name ) ) {
+			$this->assert_table_not_referenced( $table_name, 'truncate' );
 		}
 
 		$this->execute_sqlite_query(
@@ -5773,6 +5843,132 @@ class WP_MySQL_On_SQLite extends PDO {
 	}
 
 	/**
+	 * Whether the statement causes an implicit commit, like in MySQL.
+	 *
+	 * MySQL ends any open transaction before DDL statements, so DDL cannot be
+	 * rolled back together with the earlier statements of a transaction. The
+	 * TEMPORARY keyword is the exception: CREATE TEMPORARY TABLE and DROP
+	 * TEMPORARY TABLE do not cause an implicit commit. OPTIMIZE TABLE and
+	 * REPAIR TABLE recreate the table and cannot be rolled back either, so
+	 * they are treated as DDL here as well.
+	 *
+	 * See: https://dev.mysql.com/doc/refman/8.4/en/implicit-commit.html
+	 *
+	 * @param WP_Parser_Node $statement_node The concrete statement AST node.
+	 * @return bool Whether the statement causes an implicit commit.
+	 */
+	private function statement_causes_implicit_commit( WP_Parser_Node $statement_node ): bool {
+		if ( 'tableAdministrationStatement' === $statement_node->rule_name ) {
+			$first_token = $statement_node->get_first_child_token();
+			return WP_MySQL_Lexer::OPTIMIZE_SYMBOL === $first_token->id
+				|| WP_MySQL_Lexer::REPAIR_SYMBOL === $first_token->id;
+		}
+
+		if (
+			! in_array(
+				$statement_node->rule_name,
+				array( 'createStatement', 'alterStatement', 'dropStatement', 'truncateTableStatement' ),
+				true
+			)
+		) {
+			return false;
+		}
+
+		// CREATE TEMPORARY TABLE and DROP TEMPORARY TABLE do not commit.
+		$subtree = $statement_node->get_first_child_node();
+		return ! (
+			null !== $subtree
+			&& in_array( $subtree->rule_name, array( 'createTable', 'dropTable' ), true )
+			&& $subtree->has_child_token( WP_MySQL_Lexer::TEMPORARY_SYMBOL )
+		);
+	}
+
+	/**
+	 * Whether the statement recreates a table and therefore must run with
+	 * foreign keys disabled, so that dropping the original table does not
+	 * fire the foreign key actions of the referencing tables.
+	 *
+	 * @param WP_Parser_Node $statement_node The concrete statement AST node.
+	 * @return bool Whether the statement must run with foreign keys disabled.
+	 */
+	private function statement_disables_foreign_keys( WP_Parser_Node $statement_node ): bool {
+		if ( 'alterStatement' === $statement_node->rule_name ) {
+			return true;
+		}
+
+		if ( 'tableAdministrationStatement' === $statement_node->rule_name ) {
+			$first_token = $statement_node->get_first_child_token();
+			return WP_MySQL_Lexer::OPTIMIZE_SYMBOL === $first_token->id
+				|| WP_MySQL_Lexer::REPAIR_SYMBOL === $first_token->id;
+		}
+
+		// "DROP INDEX `PRIMARY` ON <table>" recreates the table without the
+		// primary key, as MySQL allows, while SQLite does not support it.
+		if ( 'dropStatement' === $statement_node->rule_name ) {
+			$subtree   = $statement_node->get_first_child_node();
+			$index_ref = null !== $subtree && 'dropIndex' === $subtree->rule_name
+				? $subtree->get_first_child_node( 'indexRef' )
+				: null;
+			if ( null === $index_ref ) {
+				return false;
+			}
+			$index_name = $this->unquote_sqlite_identifier( $this->translate( $index_ref ) );
+			return 'PRIMARY' === strtoupper( $index_name );
+		}
+
+		return false;
+	}
+
+	/**
+	 * Reject dropping or truncating a table that is referenced by a foreign key
+	 * constraint of another table, like MySQL does.
+	 *
+	 * MySQL fails "DROP TABLE" with error 3730 and "TRUNCATE TABLE" with error
+	 * 1701 in this case, rather than silently deleting or modifying the rows of
+	 * the referencing tables.
+	 *
+	 * @param string $table_name The unquoted name of the referenced table.
+	 * @param string $statement  The statement name, "drop" or "truncate".
+	 * @throws WP_MySQL_On_SQLite_Exception When the table is referenced.
+	 */
+	private function assert_table_not_referenced( string $table_name, string $statement ): void {
+		$tables = $this->execute_sqlite_query(
+			"SELECT name FROM main.sqlite_master WHERE type = 'table'"
+		)->fetchAll( PDO::FETCH_COLUMN );
+		foreach ( $tables as $child_table ) {
+			if ( 0 === strcasecmp( (string) $child_table, $table_name ) ) {
+				// A self-referencing foreign key does not block the statement.
+				continue;
+			}
+			$foreign_keys = $this->execute_sqlite_query(
+				sprintf(
+					'PRAGMA foreign_key_list(%s)',
+					$this->quote_sqlite_identifier( (string) $child_table )
+				)
+			)->fetchAll( PDO::FETCH_ASSOC );
+			foreach ( $foreign_keys as $foreign_key ) {
+				if ( 0 === strcasecmp( (string) $foreign_key['table'], $table_name ) ) {
+					if ( 'truncate' === $statement ) {
+						throw $this->new_driver_exception(
+							sprintf(
+								'Cannot truncate a table referenced in a foreign key constraint (`%s`)',
+								$child_table
+							)
+						);
+					}
+					throw $this->new_driver_exception(
+						sprintf(
+							"Cannot drop table '%s' referenced by a foreign key constraint on table '%s'.",
+							$table_name,
+							$child_table
+						)
+					);
+				}
+			}
+		}
+	}
+
+	/**
 	 * Recreate an existing table using data in the information schema.
 	 *
 	 * This is used for a generic support of ALTER TABLE queries, as well as
@@ -5830,9 +6026,9 @@ class WP_MySQL_On_SQLite extends PDO {
 		 *   https://www.sqlite.org/lang_altertable.html#making_other_kinds_of_table_schema_changes
 		 */
 
-		// 1. If foreign key constraints are enabled, disable them.
-		$pragma_foreign_keys = $this->execute_sqlite_query( 'PRAGMA foreign_keys' )->fetchColumn();
-		$this->execute_sqlite_query( 'PRAGMA foreign_keys = OFF' );
+		// 1. Snapshot the foreign key violations that exist before the rebuild,
+		// so that new ones introduced by the rebuild can be detected below.
+		$foreign_key_violations_before = $this->execute_sqlite_query( 'PRAGMA foreign_key_check' )->fetchAll( PDO::FETCH_ASSOC );
 
 		// 2. Create a new table with the new schema.
 		$tmp_table_name        = self::RESERVED_PREFIX . "tmp_{$table_name}_" . uniqid();
@@ -5895,10 +6091,27 @@ class WP_MySQL_On_SQLite extends PDO {
 			$this->execute_sqlite_query( $query );
 		}
 
-		// 7. If foreign key constraints were enabled, verify and enable them.
-		if ( 1 === (int) $pragma_foreign_keys ) {
-			$this->execute_sqlite_query( 'PRAGMA foreign_key_check' );
-			$this->execute_sqlite_query( 'PRAGMA foreign_keys = ON' );
+		// 7. Fail if the rebuild introduced new foreign key violations. The
+		// check runs inside the statement's wrapper transaction, so failing
+		// rolls the rebuild back. Pre-existing violations are tolerated,
+		// matching MySQL, which does not re-validate existing rows. Enabling
+		// foreign keys again is the caller's job, as the pragma is a no-op
+		// inside a transaction.
+		$foreign_key_violations = $this->execute_sqlite_query( 'PRAGMA foreign_key_check' )->fetchAll( PDO::FETCH_ASSOC );
+		$violation_keys_before  = array();
+		foreach ( $foreign_key_violations_before as $violation ) {
+			$violation_keys_before[] = implode( "\x1f", $violation );
+		}
+		foreach ( $foreign_key_violations as $violation ) {
+			if ( ! in_array( implode( "\x1f", $violation ), $violation_keys_before, true ) ) {
+				throw $this->new_driver_exception(
+					sprintf(
+						'Recreating the table introduced a foreign key constraint violation in table "%s", row "%s".',
+						$violation['table'],
+						$violation['rowid']
+					)
+				);
+			}
 		}
 
 		// @TODO: Triggers and views.

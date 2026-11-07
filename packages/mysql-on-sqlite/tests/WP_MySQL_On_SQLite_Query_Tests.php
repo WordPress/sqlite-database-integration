@@ -126,7 +126,10 @@ class WP_MySQL_On_SQLite_Query_Tests extends TestCase {
 				}
 				$this->engine->query( $query );
 			}
-			$this->engine->commit();
+			// A DDL statement implicitly commits the transaction, like in MySQL.
+			if ( $this->engine->inTransaction() ) {
+				$this->engine->commit();
+			}
 		} catch ( Throwable $e ) {
 			$message  = sprintf(
 				'Error occurred while creating tables or indexes...<br />Query was: %s<br />',

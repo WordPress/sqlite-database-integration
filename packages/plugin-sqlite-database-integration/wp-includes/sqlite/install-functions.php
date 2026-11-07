@@ -53,9 +53,14 @@ function sqlite_make_db_sqlite() {
 
 			$translator->query( $query );
 		}
-		$translator->commit();
+		// DDL statements implicitly commit the transaction, like in MySQL.
+		if ( $translator->inTransaction() ) {
+			$translator->commit();
+		}
 	} catch ( PDOException $err ) {
-		$translator->rollBack();
+		if ( $translator->inTransaction() ) {
+			$translator->rollBack();
+		}
 		$message  = sprintf(
 			'Error occurred while creating tables or indexes...<br />Query was: %s<br />',
 			var_export( $query, true )

@@ -907,8 +907,8 @@ class WP_MySQL_On_SQLite_Translation_Tests extends TestCase {
 		$this->driver->query( 'CREATE TABLE t (id INT)' );
 		$this->assertQuery(
 			array(
-				'PRAGMA foreign_keys',
 				'PRAGMA foreign_keys = OFF',
+				'PRAGMA foreign_key_check',
 				'CREATE TABLE `<tmp-table>` ( `id` INTEGER, `a` INTEGER )' . $this->strict_suffix,
 				'INSERT INTO `<tmp-table>` (`rowid`, `id`) SELECT `rowid`, `id` FROM `t`',
 				"SELECT 1 FROM main.sqlite_master WHERE type = 'table' AND name = 'sqlite_sequence'",
@@ -947,8 +947,8 @@ class WP_MySQL_On_SQLite_Translation_Tests extends TestCase {
 		$this->driver->query( 'CREATE TABLE t (id INT)' );
 		$this->assertQuery(
 			array(
-				'PRAGMA foreign_keys',
 				'PRAGMA foreign_keys = OFF',
+				'PRAGMA foreign_key_check',
 				'CREATE TABLE `<tmp-table>` ( `id` INTEGER, `a` INTEGER NOT NULL )' . $this->strict_suffix,
 				'INSERT INTO `<tmp-table>` (`rowid`, `id`) SELECT `rowid`, `id` FROM `t`',
 				"SELECT 1 FROM main.sqlite_master WHERE type = 'table' AND name = 'sqlite_sequence'",
@@ -980,8 +980,8 @@ class WP_MySQL_On_SQLite_Translation_Tests extends TestCase {
 		$this->driver->query( 'CREATE TABLE t (id INT)' );
 		$this->assertQuery(
 			array(
-				'PRAGMA foreign_keys',
 				'PRAGMA foreign_keys = OFF',
+				'PRAGMA foreign_key_check',
 				'CREATE TABLE `<tmp-table>` ( `id` INTEGER, `a` INTEGER DEFAULT \'0\' )' . $this->strict_suffix,
 				'INSERT INTO `<tmp-table>` (`rowid`, `id`) SELECT `rowid`, `id` FROM `t`',
 				"SELECT 1 FROM main.sqlite_master WHERE type = 'table' AND name = 'sqlite_sequence'",
@@ -1013,8 +1013,8 @@ class WP_MySQL_On_SQLite_Translation_Tests extends TestCase {
 		$this->driver->query( 'CREATE TABLE t (id INT)' );
 		$this->assertQuery(
 			array(
-				'PRAGMA foreign_keys',
 				'PRAGMA foreign_keys = OFF',
+				'PRAGMA foreign_key_check',
 				'CREATE TABLE `<tmp-table>` ( `id` INTEGER, `a` INTEGER NOT NULL DEFAULT \'0\' )' . $this->strict_suffix,
 				'INSERT INTO `<tmp-table>` (`rowid`, `id`) SELECT `rowid`, `id` FROM `t`',
 				"SELECT 1 FROM main.sqlite_master WHERE type = 'table' AND name = 'sqlite_sequence'",
@@ -1046,8 +1046,8 @@ class WP_MySQL_On_SQLite_Translation_Tests extends TestCase {
 		$this->driver->query( 'CREATE TABLE t (id INT)' );
 		$this->assertQuery(
 			array(
-				'PRAGMA foreign_keys',
 				'PRAGMA foreign_keys = OFF',
+				'PRAGMA foreign_key_check',
 				'CREATE TABLE `<tmp-table>` ( `id` INTEGER, `a` INTEGER, `b` TEXT COLLATE NOCASE, `c` INTEGER )' . $this->strict_suffix,
 				'INSERT INTO `<tmp-table>` (`rowid`, `id`) SELECT `rowid`, `id` FROM `t`',
 				"SELECT 1 FROM main.sqlite_master WHERE type = 'table' AND name = 'sqlite_sequence'",
@@ -1085,8 +1085,8 @@ class WP_MySQL_On_SQLite_Translation_Tests extends TestCase {
 		$this->driver->query( 'CREATE TABLE t (id INT, a TEXT)' );
 		$this->assertQuery(
 			array(
-				'PRAGMA foreign_keys',
 				'PRAGMA foreign_keys = OFF',
+				'PRAGMA foreign_key_check',
 				'CREATE TABLE `<tmp-table>` ( `id` INTEGER )' . $this->strict_suffix,
 				'INSERT INTO `<tmp-table>` (`rowid`, `id`) SELECT `rowid`, `id` FROM `t`',
 				"SELECT 1 FROM main.sqlite_master WHERE type = 'table' AND name = 'sqlite_sequence'",
@@ -1119,8 +1119,8 @@ class WP_MySQL_On_SQLite_Translation_Tests extends TestCase {
 		$this->driver->query( 'CREATE TABLE t (id INT, a INT, b TEXT)' );
 		$this->assertQuery(
 			array(
-				'PRAGMA foreign_keys',
 				'PRAGMA foreign_keys = OFF',
+				'PRAGMA foreign_key_check',
 				'CREATE TABLE `<tmp-table>` ( `id` INTEGER )' . $this->strict_suffix,
 				'INSERT INTO `<tmp-table>` (`rowid`, `id`) SELECT `rowid`, `id` FROM `t`',
 				"SELECT 1 FROM main.sqlite_master WHERE type = 'table' AND name = 'sqlite_sequence'",
@@ -1159,8 +1159,8 @@ class WP_MySQL_On_SQLite_Translation_Tests extends TestCase {
 		$this->driver->query( 'CREATE TABLE t (a INT)' );
 		$this->assertQuery(
 			array(
-				'PRAGMA foreign_keys',
 				'PRAGMA foreign_keys = OFF',
+				'PRAGMA foreign_key_check',
 				'CREATE TABLE `<tmp-table>` ( `b` INTEGER )' . $this->strict_suffix,
 				'INSERT INTO `<tmp-table>` (`rowid`) SELECT `rowid` FROM `t`',
 				"SELECT 1 FROM main.sqlite_master WHERE type = 'table' AND name = 'sqlite_sequence'",
@@ -1197,8 +1197,8 @@ class WP_MySQL_On_SQLite_Translation_Tests extends TestCase {
 		$this->driver->query( 'CREATE TABLE t (a INT)' );
 		$this->assertQuery(
 			array(
-				'PRAGMA foreign_keys',
 				'PRAGMA foreign_keys = OFF',
+				'PRAGMA foreign_key_check',
 				'CREATE TABLE `<tmp-table>` ( `a` INTEGER )' . $this->strict_suffix,
 				'INSERT INTO `<tmp-table>` (`rowid`) SELECT `rowid` FROM `t`',
 				"SELECT 1 FROM main.sqlite_master WHERE type = 'table' AND name = 'sqlite_sequence'",
@@ -2244,10 +2244,15 @@ class WP_MySQL_On_SQLite_Translation_Tests extends TestCase {
 
 		$executed_queries = array_column( $this->driver->get_last_sqlite_queries(), 'sql' );
 
-		// Remove BEGIN and COMMIT/ROLLBACK queries.
-		if ( count( $executed_queries ) > 2 ) {
-			$executed_queries = array_values( array_slice( $executed_queries, 1, -1, true ) );
-		}
+		// Remove wrapper transaction queries.
+		$executed_queries = array_values(
+			array_filter(
+				$executed_queries,
+				function ( $query ) {
+					return ! in_array( $query, array( 'BEGIN', 'BEGIN IMMEDIATE', 'COMMIT', 'ROLLBACK' ), true );
+				}
+			)
+		);
 
 		// Remove temporary table existence checks.
 		$executed_queries = array_values(
