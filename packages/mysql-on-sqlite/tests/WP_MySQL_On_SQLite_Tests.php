@@ -11997,6 +11997,48 @@ END;
 		);
 	}
 
+	public function testEmptyBitLiteral(): void {
+		// An empty bit-value literal is an empty binary string, like an empty
+		// hex literal, and not the one-byte value "x'0'". See #612.
+		$this->assertEquals(
+			$this->assertQuery( "SELECT x'' AS v" ),
+			$this->assertQuery( "SELECT b'' AS v" )
+		);
+		$this->assertEquals(
+			array( (object) array( 'length' => '0' ) ),
+			$this->assertQuery( "SELECT LENGTH(b'') AS length" )
+		);
+
+		$this->assertQuery( 'CREATE TABLE t (id INT PRIMARY KEY, data BLOB)' );
+		$this->assertQuery( "INSERT INTO t (id, data) VALUES (1, b'')" );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'   => '1',
+					'data' => '',
+				),
+			),
+			$this->assertQuery( 'SELECT id, HEX(data) AS data FROM t' )
+		);
+	}
+
+	public function testEmptyBitLiteralComparesLikeEmptyHexLiteral(): void {
+		// Hex and bit literals translate to blob literals, and a blob never
+		// equals a text value in SQLite. MySQL compares the empty binary
+		// string equal to the empty text string, a difference tracked for
+		// hex literals in #575. The empty bit literal behaves like the empty
+		// hex literal, in both directions.
+		$this->assertEquals(
+			$this->assertQuery( "SELECT x'' = '' AS v" ),
+			$this->assertQuery( "SELECT b'' = '' AS v" )
+		);
+
+		$this->assertEquals(
+			array( (object) array( 'v' => '1' ) ),
+			$this->assertQuery( "SELECT b'' = x'' AS v" )
+		);
+	}
+
 	public function testColumnInfo(): void {
 		$this->assertQuery(
 			'CREATE TABLE t (
