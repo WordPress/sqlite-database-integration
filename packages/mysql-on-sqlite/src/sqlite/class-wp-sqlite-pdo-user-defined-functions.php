@@ -823,19 +823,50 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	/**
 	 * Method to emulate MySQL DATEDIFF() function.
 	 *
-	 * This function compares two dates value and returns the difference.
+	 * Returns the number of days from the end date to the start date. Only the
+	 * date parts of the values are used. When either value is NULL or is not
+	 * a valid date, NULL is returned.
 	 *
-	 * @param string $start Start date.
-	 * @param string $end   End date.
+	 * The result must be an integer. SQLite compares a text value as greater
+	 * than any number, so a numeric string would break comparisons like
+	 * "DATEDIFF(...) > 30".
 	 *
-	 * @return string
+	 * @param string|null $start Start date.
+	 * @param string|null $end   End date.
+	 *
+	 * @return int|null
 	 */
 	public function datediff( $start, $end ) {
-		$start_date = new DateTime( $start );
-		$end_date   = new DateTime( $end );
-		$interval   = $end_date->diff( $start_date, false );
+		$dates = array();
+		foreach ( array( $start, $end ) as $value ) {
+			if ( null === $value ) {
+				return null;
+			}
 
-		return $interval->format( '%r%a' );
+			/*
+			 * Reject values that can't be parsed, invalid dates like "2019-02-29",
+			 * values without a date like "10:00:00", and relative values like
+			 * "tomorrow". MySQL returns NULL for all of these.
+			 */
+			$parts = date_parse( $value );
+			if (
+				$parts['error_count'] > 0
+				|| $parts['warning_count'] > 0
+				|| false === $parts['year']
+				|| false === $parts['month']
+				|| false === $parts['day']
+				|| isset( $parts['relative'] )
+			) {
+				return null;
+			}
+
+			$dates[] = new DateTime(
+				sprintf( '%04d-%02d-%02d', $parts['year'], $parts['month'], $parts['day'] ),
+				new DateTimeZone( 'UTC' )
+			);
+		}
+
+		return (int) $dates[1]->diff( $dates[0] )->format( '%r%a' );
 	}
 
 	/**

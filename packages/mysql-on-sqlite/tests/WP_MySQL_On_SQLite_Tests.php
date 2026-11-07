@@ -1608,6 +1608,67 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		);
 	}
 
+	/**
+	 * @dataProvider datediffFunctionValues
+	 */
+	public function testDatediffFunction( string $args, ?string $expected ): void {
+		$result = $this->assertQuery( "SELECT DATEDIFF($args) AS value" );
+		$this->assertSame( $expected, $result[0]->value );
+	}
+
+	public static function datediffFunctionValues(): array {
+		// Expected values were taken from MySQL 26.10.
+		return array(
+			'dates'                   => array( "'2020-01-02', '2020-01-01'", '1' ),
+			'dates reversed'          => array( "'2020-01-01', '2020-01-02'", '-1' ),
+			'same date'               => array( "'2020-01-01', '2020-01-01'", '0' ),
+			'leap year'               => array( "'2021-03-01', '2020-02-29'", '366' ),
+			'mysql docs example 1'    => array( "'2007-12-31 23:59:59', '2007-12-30'", '1' ),
+			'mysql docs example 2'    => array( "'2010-11-30 23:59:59', '2010-12-31'", '-31' ),
+			'times across midnight'   => array( "'2020-01-02 00:00:01', '2020-01-01 23:59:59'", '1' ),
+			'times across midnight 2' => array( "'2020-01-01 23:59:59', '2020-01-02 00:00:01'", '-1' ),
+			'later time on same date' => array( "'2020-01-01', '2020-01-01 23:59:59'", '0' ),
+			'fewer than 24 hours'     => array( "'2020-01-02 12:00:00', '2020-01-01 13:00:00'", '1' ),
+			'iso 8601'                => array( "'2020-01-02T10:00:00', '2020-01-01'", '1' ),
+			'fractional seconds'      => array( "'2020-01-02 10:00:00.123456', '2020-01-01'", '1' ),
+			'no delimiters'           => array( "'20200102', '2020-01-01'", '1' ),
+			'slash delimiters'        => array( "'2020/01/02', '2020-01-01'", '1' ),
+			'two-digit year'          => array( "'99-01-02', '1999-01-01'", '1' ),
+			'year zero'               => array( "'0000-01-01', '0000-01-02'", '-1' ),
+			'null start'              => array( "NULL, '2020-01-01'", null ),
+			'null end'                => array( "'2020-01-01', NULL", null ),
+			'zero date'               => array( "'0000-00-00', '2020-01-01'", null ),
+			'invalid day of month'    => array( "'2019-02-29', '2019-02-28'", null ),
+			'invalid month'           => array( "'2020-13-01', '2020-01-01'", null ),
+			'not a date'              => array( "'bad', '2020-01-01'", null ),
+			'empty string'            => array( "'', '2020-01-01'", null ),
+			'time without a date'     => array( "'10:00:00', '2020-01-01'", null ),
+			'date without a year'     => array( "'January 2', '2020-01-01'", null ),
+			'now'                     => array( "'now', '2020-01-01'", null ),
+			'relative date'           => array( "'tomorrow', '2020-01-01'", null ),
+			'date with relative part' => array( "'2020-01-02 +1 day', '2020-01-01'", null ),
+		);
+	}
+
+	public function testDatediffFunctionInNumericComparisons(): void {
+		$this->assertQuery( 'CREATE TABLE _posts (id INT PRIMARY KEY, post_date DATETIME)' );
+		$this->assertQuery(
+			"INSERT INTO _posts (id, post_date) VALUES
+				(1, '2024-01-31 10:00:00'),
+				(2, '2024-01-21 23:59:59'),
+				(3, '2023-12-01 00:00:00')"
+		);
+
+		$result = $this->assertQuery( "SELECT id FROM _posts WHERE DATEDIFF('2024-01-31 09:00:00', post_date) > 30 ORDER BY id" );
+		$this->assertEquals( array( (object) array( 'id' => '3' ) ), $result );
+
+		$result = $this->assertQuery( "SELECT id FROM _posts WHERE DATEDIFF('2024-01-31 09:00:00', post_date) <= 30 ORDER BY id" );
+		$this->assertEquals( array( (object) array( 'id' => '1' ), (object) array( 'id' => '2' ) ), $result );
+
+		$result = $this->assertQuery( "SELECT id FROM _posts WHERE DATEDIFF('2024-01-31 09:00:00', post_date) = 10 ORDER BY id" );
+		$this->assertEquals( array( (object) array( 'id' => '2' ) ), $result );
+	}
+
 	public function testLeftFunction1Char() {
 		$result = $this->assertQuery(
 			'SELECT LEFT("abc", 1) as output'
