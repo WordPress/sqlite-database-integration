@@ -1137,7 +1137,12 @@ class WP_MySQL_Lexer {
 		'ENCLOSED'                               => self::ENCLOSED_SYMBOL,
 		'ENCRYPTION'                             => self::ENCRYPTION_SYMBOL,
 		'END'                                    => self::END_SYMBOL,
-		'END_OF_INPUT'                           => self::EOF,
+		/*
+		 * "END_OF_INPUT" is the name of the internal end-of-input terminal in
+		 * the MySQL grammar, but it is not a keyword in MySQL. Typed input is
+		 * tokenized as an identifier, so that it can be used as an alias,
+		 * while the EOF token is only emitted at the end of the input.
+		 */
 		'ENDS'                                   => self::ENDS_SYMBOL,
 		'ENGINE'                                 => self::ENGINE_SYMBOL,
 		'ENGINES'                                => self::ENGINES_SYMBOL,
@@ -2842,10 +2847,18 @@ class WP_MySQL_Lexer {
 		) {
 			$is_quoted                 = "'" === $next_byte;
 			$this->bytes_already_read += 2; // Consume "0x" or "x'".
+			$hex_digits_start          = $this->bytes_already_read;
 			$this->bytes_already_read += strspn( $this->sql, self::HEX_DIGIT_MASK, $this->bytes_already_read );
 			if ( $is_quoted ) {
+				/*
+				 * In MySQL, quoted hex literals must contain an even number of
+				 * digits, including zero digits for an empty literal. Odd-length
+				 * literals are rejected with a syntax error.
+				 */
+				$hex_digit_count = $this->bytes_already_read - $hex_digits_start;
 				if (
-					$this->bytes_already_read >= $this->sql_length
+					1 === ( $hex_digit_count % 2 )
+					|| $this->bytes_already_read >= $this->sql_length
 					|| "'" !== $this->sql[ $this->bytes_already_read ]
 				) {
 					return null; // Invalid input.
