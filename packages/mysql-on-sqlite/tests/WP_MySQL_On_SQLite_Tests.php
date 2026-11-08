@@ -6200,6 +6200,44 @@ QUERY
 		);
 	}
 
+	public function testMultiTableDeleteWithLeftJoinSkipsUnmatchedRows(): void {
+		$this->assertQuery( 'CREATE TABLE p (id INT PRIMARY KEY, type TEXT)' );
+		$this->assertQuery( 'CREATE TABLE pm (id INT PRIMARY KEY, post_id INT)' );
+		$this->assertQuery( "INSERT INTO p VALUES (1, 'revision'), (2, 'revision'), (3, 'post')" );
+		$this->assertQuery( 'INSERT INTO pm VALUES (1, 1), (2, 1), (3, 3)' );
+
+		// Post 2 has no metadata, so its "pm" ROWID is NULL.
+		$result = $this->assertQuery(
+			"DELETE p, pm FROM p LEFT JOIN pm ON pm.post_id = p.id WHERE p.type = 'revision'"
+		);
+		$this->assertSame( 4, $result );
+
+		$result = $this->assertQuery( 'SELECT id FROM p ORDER BY id' );
+		$this->assertSame( array( '3' ), array_column( $result, 'id' ) );
+		$result = $this->assertQuery( 'SELECT id FROM pm ORDER BY id' );
+		$this->assertSame( array( '3' ), array_column( $result, 'id' ) );
+	}
+
+	public function testMultiTableDeleteWithLeftJoinAndNoMatchesInJoinedTable(): void {
+		$this->assertQuery( 'CREATE TABLE p (id INT PRIMARY KEY)' );
+		$this->assertQuery( 'CREATE TABLE pm (id INT PRIMARY KEY, post_id INT)' );
+		$this->assertQuery( 'INSERT INTO p VALUES (1), (2), (3)' );
+		$this->assertQuery( 'INSERT INTO pm VALUES (1, 3)' );
+
+		// Only the joined table is a target, and it has no matching rows.
+		$result = $this->assertQuery( 'DELETE pm FROM p LEFT JOIN pm ON pm.post_id = p.id WHERE p.id < 3' );
+		$this->assertSame( 0, $result );
+
+		// Both tables are targets, and the joined table has no matching rows.
+		$result = $this->assertQuery( 'DELETE p, pm FROM p LEFT JOIN pm ON pm.post_id = p.id WHERE p.id < 3' );
+		$this->assertSame( 2, $result );
+
+		$result = $this->assertQuery( 'SELECT id FROM p ORDER BY id' );
+		$this->assertSame( array( '3' ), array_column( $result, 'id' ) );
+		$result = $this->assertQuery( 'SELECT id FROM pm ORDER BY id' );
+		$this->assertSame( array( '1' ), array_column( $result, 'id' ) );
+	}
+
 	public function testDeleteReturnsZeroAffectedRowsWhenNoMatchingRows() {
 		$this->assertQuery( 'CREATE TABLE t (id INT)' );
 		$this->assertQuery( 'INSERT INTO t (id) VALUES (1)' );
