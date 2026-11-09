@@ -27,7 +27,7 @@ use PHPUnit\Framework\TestCase;
  */
 abstract class WP_MySQL_On_SQLite_Regexp_Test_Case extends TestCase {
 	const DATA_DIR = __DIR__ . '/data';
-	const SOURCES  = array( 'mysql-server-suite' );
+	const SOURCES  = array( 'mysql-server-suite', 'icu-regextst' );
 
 	// The SQL of each check, with the subject, pattern, template, and match type argument.
 	const QUERIES = array(

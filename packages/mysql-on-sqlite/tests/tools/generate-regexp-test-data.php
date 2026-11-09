@@ -14,6 +14,10 @@
  *                       test suite, in "tests/mysql/data/mysql-server-tests-queries.csv".
  *                       Each pattern gets the literal subjects that the suite uses with
  *                       it and a fixed set of varied subjects, in match type "c".
+ *   icu-regextst        The cases of ICU's "regextst.txt", at a pinned commit. The flags
+ *                       "i", "m", "s", and "D" map to the match types "i", "m", "n", and
+ *                       "u", and "x" to "(?x)". Cases with flags that MySQL has no match
+ *                       type for ("Q", "e"), regions, or lone surrogates are left out.
  *
  * USAGE:
  *   MYSQL_PORT=3306 MYSQL_PWD=root php tests/tools/generate-regexp-test-data.php [<source>...]
@@ -46,6 +50,10 @@ const VARIED_SUBJECTS = array(
 	"non\u{A0}breaking line\u{2028}separator next\u{85}line",
 );
 
+// ICU's test cases, at a pinned commit.
+const ICU_REGEXTST_URL    = 'https://raw.githubusercontent.com/unicode-org/icu/438d6ec0c1d8b6a3f572a7fcc89efc302e05c937/icu4c/source/test/testdata/regextst.txt';
+const ICU_REGEXTST_SHA256 = 'e435b6a8601f016347770be8003280ac9d4ba182de48bd6f08a4402cd65eae52';
+
 $sources = array_slice( $argv, 1 );
 if ( ! $sources ) {
 	$sources = WP_MySQL_On_SQLite_Regexp_Test_Case::SOURCES;
@@ -56,6 +64,9 @@ foreach ( $sources as $source ) {
 	if ( 'mysql-server-suite' === $source ) {
 		$description = 'Patterns of REGEXP, RLIKE, and REGEXP_*() in the MySQL server test suite, in "tests/mysql/data/mysql-server-tests-queries.csv".';
 		$cases       = get_mysql_server_suite_cases();
+	} elseif ( 'icu-regextst' === $source ) {
+		$description = 'Cases of ' . ICU_REGEXTST_URL . ', under the Unicode License V3. See "icu-regextst-license.txt".';
+		$cases       = get_icu_regextst_cases();
 	} else {
 		throw new InvalidArgumentException( "Unknown source: $source" );
 	}
@@ -172,6 +183,190 @@ function get_string_literal( array $tokens, int $index ): ?string {
 		return null;
 	}
 	return $tokens[ $index ]->get_value();
+}
+
+/**
+ * Get the cases of ICU's "regextst.txt". Read the lines like RegexTest::Extended()
+ * in ICU's "regextst.cpp", and take the subject without its group tags.
+ */
+function get_icu_regextst_cases(): array {
+	$text = file_get_contents( ICU_REGEXTST_URL );
+	if ( ICU_REGEXTST_SHA256 !== hash( 'sha256', (string) $text ) ) {
+		throw new RuntimeException( 'Unexpected contents of ' . ICU_REGEXTST_URL );
+	}
+
+	// A line is a pattern, flags, a subject, and a comment. ICU reads the fields one
+	// by one, so the atomic groups keep PCRE from trying other places for them.
+	$space   = '[\t\n\f\r\p{Z}]*';
+	$comment = '/^' . $space . '(?:#.*)?$/uD';
+	$fields  = '/^(?>' . $space . '([\'"\/])(.*?)\1)(?>' . $space . '([ixsmdteDEGLMQvabtyYzZ2-9]*))(?!\p{L})(?>' . $space . '([\'"\/])(.*?)\4)' . $space . '(?:#.*)?$/uD';
+
+	// ICU reads lines that end with a line feed, so it skips a last line without one.
+	$lines = array_slice( preg_split( '/\r?\n/', preg_replace( '/^\xEF\xBB\xBF/', '', $text ) ), 0, -1 );
+	$cases = array();
+	foreach ( $lines as $index => $line ) {
+		if ( preg_match( $comment, $line ) ) {
+			continue;
+		}
+		if ( ! preg_match( $fields, $line, $match ) ) {
+			throw new RuntimeException( "Unexpected line in regextst.txt: $line" );
+		}
+		list( , , $pattern, $flags, , $subject ) = $match;
+
+		// MySQL has no literal mode ("Q") or strict escapes ("e").
+		if ( false !== strpbrk( $flags, 'Qe' ) ) {
+			continue;
+		}
+
+		// Remove the group tags, and skip regions and lone surrogates.
+		$subject = icu_unescape( $subject );
+		if ( null === $subject || preg_match( '/<\/?r>/', $subject ) ) {
+			continue;
+		}
+		$subject = preg_replace( '/<\/?[0-9]+>/', '', $subject );
+
+		$match_type = false === strpos( $flags, 'i' ) ? 'c' : 'i';
+		$flag_types = array(
+			'm' => 'm',
+			's' => 'n',
+			'D' => 'u',
+		);
+		foreach ( $flag_types as $flag => $type ) {
+			if ( false !== strpos( $flags, $flag ) ) {
+				$match_type .= $type;
+			}
+		}
+		if ( false !== strpos( $flags, 'x' ) ) {
+			$pattern = "(?x)$pattern";
+		}
+
+		// Flags for ICU's API, like the number of searches, give the same MySQL case.
+		$key = "$pattern\0$match_type\0$subject";
+		if ( ! isset( $cases[ $key ] ) ) {
+			$cases[ $key ] = array(
+				'line'       => $index + 1,
+				'pattern'    => $pattern,
+				'match_type' => $match_type,
+				'subject'    => $subject,
+			);
+		}
+	}
+	return array_values( $cases );
+}
+
+/**
+ * Unescape text like UnicodeString::unescape() in ICU, which gives an empty string
+ * for an invalid escape sequence.
+ *
+ * @return string|null The text, or null when it has a lone surrogate, which UTF-8 can't hold.
+ */
+function icu_unescape( string $text ): ?string {
+	$chars  = preg_split( '//u', $text, -1, PREG_SPLIT_NO_EMPTY );
+	$result = '';
+	$count  = count( $chars );
+	for ( $i = 0; $i < $count; $i++ ) {
+		if ( '\\' !== $chars[ $i ] ) {
+			$result .= $chars[ $i ];
+			continue;
+		}
+		$code_point = icu_unescape_at( $chars, $i );
+		if ( null === $code_point ) {
+			return '';
+		}
+		if ( $code_point >= 0xD800 && $code_point <= 0xDFFF ) {
+			return null;
+		}
+		$result .= mb_chr( $code_point, 'UTF-8' );
+	}
+	return $result;
+}
+
+/**
+ * Unescape an escape sequence like u_unescapeAt() in ICU.
+ *
+ * @param string[] $chars The characters of the text.
+ * @param int      $i     The index of the backslash. It moves to the end of the sequence.
+ * @return int|null The code point, or null for an invalid escape sequence.
+ */
+function icu_unescape_at( array $chars, int &$i ): ?int {
+	if ( ! isset( $chars[ $i + 1 ] ) ) {
+		return null;
+	}
+	$char = $chars[ ++$i ];
+
+	// Hexadecimal and octal escapes: \uhhhh, \Uhhhhhhhh, \xhh, \x{h...}, and \ooo.
+	$base   = 16;
+	$min    = 0;
+	$max    = 0;
+	$braces = false;
+	$result = 0;
+	$digits = 0;
+	if ( 'u' === $char ) {
+		$min = 4;
+		$max = 4;
+	} elseif ( 'U' === $char ) {
+		$min = 8;
+		$max = 8;
+	} elseif ( 'x' === $char ) {
+		$braces = '{' === ( $chars[ $i + 1 ] ?? null );
+		$min    = 1;
+		$max    = $braces ? 8 : 2;
+		$i     += (int) $braces;
+	} elseif ( preg_match( '/^[0-7]$/', $char ) ) {
+		$base   = 8;
+		$min    = 1;
+		$max    = 3;
+		$result = (int) $char;
+		$digits = 1;
+	}
+	if ( $min > 0 ) {
+		$digit_pattern = 16 === $base ? '/^[0-9a-fA-F]$/' : '/^[0-7]$/';
+		while ( $digits < $max && isset( $chars[ $i + 1 ] ) ) {
+			$char = $chars[ $i + 1 ];
+			if ( ! preg_match( $digit_pattern, $char ) ) {
+				break;
+			}
+			$result = $result * $base + intval( $char, $base );
+			++$i;
+			++$digits;
+		}
+		if ( $digits < $min || ( $braces && '}' !== $char ) || $result >= 0x110000 ) {
+			return null;
+		}
+		$i += (int) $braces;
+
+		// Join a lead surrogate with an escaped trail surrogate after it.
+		if ( $result >= 0xD800 && $result <= 0xDBFF && '\\' === ( $chars[ $i + 1 ] ?? null ) ) {
+			$next  = $i + 1;
+			$trail = icu_unescape_at( $chars, $next );
+			if ( null !== $trail && $trail >= 0xDC00 && $trail <= 0xDFFF ) {
+				$i = $next;
+				return 0x10000 + ( ( $result - 0xD800 ) << 10 ) + ( $trail - 0xDC00 );
+			}
+		}
+		return $result;
+	}
+
+	// C escapes, like \n, and control characters, like \cA.
+	$controls = array(
+		'a' => 0x07,
+		'b' => 0x08,
+		'e' => 0x1B,
+		'f' => 0x0C,
+		'n' => 0x0A,
+		'r' => 0x0D,
+		't' => 0x09,
+		'v' => 0x0B,
+	);
+	if ( isset( $controls[ $char ] ) ) {
+		return $controls[ $char ];
+	}
+	if ( 'c' === $char && isset( $chars[ $i + 1 ] ) ) {
+		return mb_ord( $chars[ ++$i ], 'UTF-8' ) & 0x1F;
+	}
+
+	// Any other character escapes itself.
+	return mb_ord( $char, 'UTF-8' );
 }
 
 /**
