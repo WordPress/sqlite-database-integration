@@ -266,6 +266,52 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		);
 	}
 
+	/**
+	 * @dataProvider regexpLikeQueries
+	 */
+	public function testRegexpLike( $query, $expected_result ) {
+		$this->assertQuery( $query );
+		$this->assertSame( $expected_result, $this->last_result[0]->result );
+	}
+
+	public static function regexpLikeQueries() {
+		return array(
+			'no match type'          => array( "SELECT REGEXP_LIKE('ABC', 'b') AS result", '1' ),
+			'empty match type'       => array( "SELECT REGEXP_LIKE('ABC', 'b', '') AS result", '1' ),
+			'case-sensitive'         => array( "SELECT REGEXP_LIKE('ABC', 'b', 'c') AS result", '0' ),
+			'case-insensitive'       => array( "SELECT REGEXP_LIKE('ABC', 'b', 'i') AS result", '1' ),
+			'last "i" wins'          => array( "SELECT REGEXP_LIKE('ABC', 'b', 'ci') AS result", '1' ),
+			'last "c" wins'          => array( "SELECT REGEXP_LIKE('ABC', 'b', 'ic') AS result", '0' ),
+			'single line'            => array( "SELECT REGEXP_LIKE('a\\nb', '^b') AS result", '0' ),
+			'multiline'              => array( "SELECT REGEXP_LIKE('a\\nb', '^b', 'm') AS result", '1' ),
+			'dot without line break' => array( "SELECT REGEXP_LIKE('a\\nb', 'a.b') AS result", '0' ),
+			'dot with line break'    => array( "SELECT REGEXP_LIKE('a\\nb', 'a.b', 'n') AS result", '1' ),
+			'Unix line breaks'       => array( "SELECT REGEXP_LIKE('a\\nb', '^b', 'mu') AS result", '1' ),
+			'repeated letters'       => array( "SELECT REGEXP_LIKE('a\\nb', '^b', 'mm') AS result", '1' ),
+			'NULL subject'           => array( "SELECT REGEXP_LIKE(NULL, 'b') AS result", null ),
+			'NULL pattern'           => array( "SELECT REGEXP_LIKE('ABC', NULL) AS result", null ),
+			'NULL match type'        => array( "SELECT REGEXP_LIKE('ABC', 'b', NULL) AS result", null ),
+			'NULL REGEXP subject'    => array( "SELECT NULL REGEXP 'b' AS result", null ),
+			'NULL REGEXP pattern'    => array( "SELECT 'ABC' REGEXP NULL AS result", null ),
+			'NULL NOT REGEXP'        => array( "SELECT NULL NOT REGEXP 'b' AS result", null ),
+		);
+	}
+
+	/**
+	 * @dataProvider regexpLikeInvalidMatchTypeQueries
+	 */
+	public function testRegexpLikeWithInvalidMatchType( $query ) {
+		$this->assertQueryError( $query, 'Incorrect arguments to regexp_like' );
+	}
+
+	public static function regexpLikeInvalidMatchTypeQueries() {
+		return array(
+			'subject and pattern' => array( "SELECT REGEXP_LIKE('ABC', 'b', 'x')" ),
+			'NULL subject'        => array( "SELECT REGEXP_LIKE(NULL, 'b', 'x')" ),
+			'NULL pattern'        => array( "SELECT REGEXP_LIKE('ABC', NULL, 'x')" ),
+		);
+	}
+
 	public function testInsertDateNow() {
 		$this->assertQuery(
 			"INSERT INTO _dates (option_name, option_value) VALUES ('first', now());"
