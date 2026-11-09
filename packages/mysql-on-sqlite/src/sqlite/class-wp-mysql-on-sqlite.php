@@ -4431,12 +4431,17 @@ class WP_MySQL_On_SQLite extends PDO {
 				return $this->translate_bit_expr( $node );
 			case 'simpleExprBody':
 				return $this->translate_simple_expr_body( $node );
+			case 'predicate':
+				$operations = $node->get_first_child_node( 'predicateOperations' );
+				$token      = null === $operations ? null : $operations->get_first_child_token();
+				if ( null !== $token && WP_MySQL_Lexer::REGEXP_SYMBOL === $token->id ) {
+					return $this->translate_regexp_predicate( $node, $operations );
+				}
+				return $this->translate_sequence( $node->get_children() );
 			case 'predicateOperations':
 				$token = $node->get_first_child_token();
 				if ( WP_MySQL_Lexer::LIKE_SYMBOL === $token->id ) {
 					return $this->translate_like( $node );
-				} elseif ( WP_MySQL_Lexer::REGEXP_SYMBOL === $token->id ) {
-					return $this->translate_regexp_functions( $node );
 				}
 				return $this->translate_sequence( $node->get_children() );
 			case 'runtimeFunctionCall':
@@ -5154,31 +5159,28 @@ class WP_MySQL_On_SQLite extends PDO {
 	/**
 	 * Translate MySQL REGEXP expression to SQLite.
 	 *
-	 * @param  WP_Parser_Node $node       The "predicateOperations" AST node.
+	 * @param  WP_Parser_Node $node       The "predicate" AST node.
+	 * @param  WP_Parser_Node $operations The "predicateOperations" AST node.
 	 * @return string                     The translated value.
 	 * @throws WP_MySQL_On_SQLite_Exception When the translation fails.
 	 */
-	private function translate_regexp_functions( WP_Parser_Node $node ): string {
-		$tokens    = $node->get_descendant_tokens();
+	private function translate_regexp_predicate( WP_Parser_Node $node, WP_Parser_Node $operations ): string {
+		$tokens    = $operations->get_descendant_tokens();
 		$is_binary = isset( $tokens[1] ) && WP_MySQL_Lexer::BINARY_SYMBOL === $tokens[1]->id;
+		$subject   = $this->translate( $node->get_first_child_node() );
+		$pattern   = $this->translate( $operations->get_first_child_node() );
+		$not       = null === $node->get_first_child_node( 'notRule' ) ? '' : 'NOT ';
 
 		/*
-		 * If the query says REGEXP BINARY, the comparison is byte-by-byte
-		 * and letter casing matters – lowercase and uppercase letters are
-		 * represented using different byte codes.
+		 * Call the REGEXP function directly, so that REGEXP BINARY can pass
+		 * a flag for byte-by-byte, case-sensitive matching.
 		 *
-		 * The REGEXP function can't be easily made to accept two
-		 * parameters, so we'll have to use a hack to get around this.
+		 * The parentheses keep the MySQL precedence. In SQLite, REGEXP binds
+		 * as loosely as "=", so "1 = 'a' REGEXP 'a'" would be "(1 = 'a') REGEXP 'a'".
 		 *
-		 * If the first character of the pattern is a null byte, we'll
-		 * remove it and make the comparison case-sensitive. This should
-		 * be reasonably safe since PHP does not allow null bytes in
-		 * regular expressions anyway.
+		 * PDO narrows integer UDF arguments to 32 bits, so pass the operands as text.
 		 */
-		if ( true === $is_binary ) {
-			return 'REGEXP CHAR(0) || ' . $this->translate( $node->get_first_child_node() );
-		}
-		return 'REGEXP ' . $this->translate( $node->get_first_child_node() );
+		return sprintf( '(%sREGEXP(CAST(%s AS TEXT), CAST(%s AS TEXT)%s))', $not, $pattern, $subject, $is_binary ? ', 1' : '' );
 	}
 
 	/**
@@ -5393,6 +5395,17 @@ class WP_MySQL_On_SQLite extends PDO {
 				}
 			case 'VERSION':
 				return $this->quote_sqlite_value( $this->get_mysql_server_version_string() );
+			case 'REGEXP_LIKE':
+			case 'REGEXP_SUBSTR':
+			case 'REGEXP_INSTR':
+			case 'REGEXP_REPLACE':
+				// PDO narrows integer UDF arguments to 32 bits, so pass the subject, the
+				// pattern, and REGEXP_REPLACE's replacement as text.
+				$text_args = min( count( $args ), 'REGEXP_REPLACE' === $name ? 3 : 2 );
+				for ( $i = 0; $i < $text_args; $i++ ) {
+					$args[ $i ] = sprintf( 'CAST(%s AS TEXT)', $args[ $i ] );
+				}
+				return sprintf( '%s(%s)', $name, implode( ', ', $args ) );
 			default:
 				return $this->translate_sequence( $node->get_children() );
 		}
