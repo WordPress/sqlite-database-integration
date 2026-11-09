@@ -88,3 +88,13 @@ cp "$WP_DIR/.env.example" "$WP_DIR/.env"
 echo "Installing dependencies..."
 npm --prefix "$WP_DIR" install
 npm --prefix "$WP_DIR" run build:dev
+
+# 10. Create "wp-tests-config.php" like "tools/local-env/scripts/install.js" does, so PHPUnit doesn't need "env:install".
+echo "Creating the 'wp-tests-config.php' file..."
+sed \
+	-e "s/youremptytestdbnamehere/wordpress_develop_tests/" \
+	-e "s/yourusernamehere/root/" \
+	-e "s/yourpasswordhere/password/" \
+	-e "s/localhost/mysql/" \
+	"$WP_DIR/wp-tests-config-sample.php" > "$WP_DIR/wp-tests-config.php"
+printf "\ndefine( 'FS_METHOD', 'direct' );\n" >> "$WP_DIR/wp-tests-config.php"

@@ -28,13 +28,9 @@ jobs:
           echo "PHP_FPM_GID=$(id -g)" >> $GITHUB_ENV
 
       - name: Prepare WordPress
-        run: composer run wp-setup
+        uses: ./.github/actions/wordpress
 
       - name: Run end-to-end tests
         uses: ./.github/actions/playwright
         with:
           test-script: test-e2e
-
-      - name: Stop Docker containers
-        if: always()
-        run: composer run wp-test-clean

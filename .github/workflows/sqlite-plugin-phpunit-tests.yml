@@ -31,12 +31,11 @@ jobs:
           echo "PHP_FPM_UID=$(id -u)" >> $GITHUB_ENV
           echo "PHP_FPM_GID=$(id -g)" >> $GITHUB_ENV
 
+      - name: Prepare WordPress
+        uses: ./.github/actions/wordpress
+
       - name: Run SQLite plugin single-site PHPUnit tests
         run: composer run wp-test-sqlite-plugin-php
 
       - name: Run SQLite plugin multisite PHPUnit tests
         run: composer run wp-test-sqlite-plugin-php-multisite
-
-      - name: Stop Docker containers
-        if: always()
-        run: composer run wp-test-clean
