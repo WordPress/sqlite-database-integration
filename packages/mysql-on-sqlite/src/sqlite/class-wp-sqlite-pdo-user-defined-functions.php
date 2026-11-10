@@ -61,6 +61,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'localtimestamp'               => 'now',
 		'isnull'                       => 'isnull',
 		'regexp'                       => 'regexp',
+		'regexp_like'                  => 'regexp_like',
 		'field'                        => 'field',
 		'log'                          => 'log',
 		'least'                        => 'least',
@@ -565,12 +566,15 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	}
 
 	/**
-	 * Method to emulate MySQL REGEXP() function.
+	 * Method to emulate MySQL REGEXP operator.
 	 *
-	 * @param string $pattern Regular expression to match.
-	 * @param string $field   Haystack.
+	 * SQLite runs "X REGEXP Y" as "regexp(Y, X)". MySQL runs the operator
+	 * as REGEXP_LIKE(), so this method uses regexp_like().
 	 *
-	 * @return integer 1 if matched, 0 if not matched.
+	 * @param string|null $pattern Regular expression to match.
+	 * @param string|null $field   Haystack.
+	 *
+	 * @return int|null 1 if matched, 0 if not matched, NULL if an argument is NULL.
 	 */
 	public function regexp( $pattern, $field ) {
 		/*
@@ -587,17 +591,62 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		 * be reasonably safe since PHP does not allow null bytes in
 		 * regular expressions anyway.
 		 */
-		if ( "\x00" === $pattern[0] ) {
-			$pattern = substr( $pattern, 1 );
-			$flags   = '';
-		} else {
-			// Otherwise, the search is case-insensitive.
-			$flags = 'i';
+		if ( is_string( $pattern ) && 0 === strpos( $pattern, "\x00" ) ) {
+			return $this->regexp_like( $field, substr( $pattern, 1 ), 'c' );
 		}
+		return $this->regexp_like( $field, $pattern );
+	}
+
+	/**
+	 * Method to emulate MySQL REGEXP_LIKE() function.
+	 *
+	 * @param string|null $subject    Haystack.
+	 * @param string|null $pattern    Regular expression to match.
+	 * @param string|null $match_type Optional. Letters that change how the pattern matches.
+	 *                                Without "c" or "i", the match is case-insensitive.
+	 *
+	 * @throws Exception When the match type has an unknown letter.
+	 * @return int|null 1 if matched, 0 if not matched, NULL if an argument is NULL.
+	 */
+	public function regexp_like( $subject, $pattern, $match_type = '' ) {
+		if ( null === $match_type ) {
+			return null;
+		}
+
+		/*
+		 * Apply the letters in order, so that the last of "c" and "i" wins, like in MySQL.
+		 * The "u" letter needs no flag, as PCRE treats only "\n" as a line break by default.
+		 */
+		$case_insensitive = true;
+		$flags            = '';
+		$length           = strlen( $match_type );
+		for ( $i = 0; $i < $length; $i++ ) {
+			$letter = $match_type[ $i ];
+			if ( 'c' === $letter ) {
+				$case_insensitive = false;
+			} elseif ( 'i' === $letter ) {
+				$case_insensitive = true;
+			} elseif ( 'm' === $letter ) {
+				$flags .= 'm';
+			} elseif ( 'n' === $letter ) {
+				$flags .= 's';
+			} elseif ( 'u' !== $letter ) {
+				throw new Exception( 'Incorrect arguments to regexp_like' );
+			}
+		}
+		if ( $case_insensitive ) {
+			$flags .= 'i';
+		}
+
+		// Like MySQL, reject an invalid match type even for a NULL subject or pattern.
+		if ( null === $subject || null === $pattern ) {
+			return null;
+		}
+
 		$pattern = str_replace( '/', '\/', $pattern );
 		$pattern = '/' . $pattern . '/' . $flags;
 
-		return preg_match( $pattern, $field );
+		return preg_match( $pattern, $subject );
 	}
 
 	/**
