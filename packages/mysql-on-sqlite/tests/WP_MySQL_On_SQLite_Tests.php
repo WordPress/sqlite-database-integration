@@ -11985,6 +11985,7 @@ END;
 	 */
 	public function testOddLengthQuotedHexadecimalLiteralsAreRejected( string $literal ): void {
 		$this->expectException( WP_MySQL_On_SQLite_Exception::class );
+		$this->expectExceptionMessage( 'MySQL query syntax error.' );
 		$this->assertQuery( "SELECT $literal" );
 	}
 
@@ -11995,6 +11996,52 @@ END;
 			array( "x'711'" ),
 			array( "X'711'" ),
 		);
+	}
+
+	/**
+	 * @dataProvider malformedQueries
+	 */
+	public function testMalformedQueryIsRejectedWithASyntaxError( string $query ): void {
+		try {
+			$this->query( $query );
+			$this->fail( 'An exception was expected, but none was thrown.' );
+		} catch ( WP_MySQL_On_SQLite_Exception $e ) {
+			// Like MySQL, a syntax error reports SQLSTATE "42000" with error 1064.
+			$this->assertSame( 'MySQL query syntax error.', $e->getMessage() );
+			$this->assertSame( '42000', $e->getCode() );
+			$this->assertSame( array( '42000', 1064, 'MySQL query syntax error.' ), $e->errorInfo );
+		}
+	}
+
+	public static function malformedQueries(): array {
+		return array(
+			array( "SELECT 'abc" ),       // Unterminated string literal.
+			array( "SELECT x'ab01xyz'" ), // Quoted hex literal with non-hex digits.
+		);
+	}
+
+	public function testEndOfInputWordIsAnIdentifier(): void {
+		// In MySQL, "END_OF_INPUT" is the name of an internal grammar terminal,
+		// but not a keyword: typed input is tokenized as an identifier, so it
+		// can be used as an alias, with or without a trailing semicolon.
+		$this->assertQuery( 'SELECT 1 END_OF_INPUT' );
+		$this->assertSame( '1', $this->last_result[0]->{'END_OF_INPUT'} );
+
+		$this->assertQuery( 'SELECT 1 END_OF_INPUT;' );
+		$this->assertSame( '1', $this->last_result[0]->{'END_OF_INPUT'} );
+
+		$this->assertQuery( 'SELECT 1 AS END_OF_INPUT' );
+		$this->assertSame( '1', $this->last_result[0]->{'END_OF_INPUT'} );
+
+		// Trailing input after the alias is a syntax error.
+		try {
+			$this->query( "SELECT 1 END_OF_INPUT 'abc'" );
+			$this->fail( 'An exception was expected, but none was thrown.' );
+		} catch ( WP_MySQL_On_SQLite_Exception $e ) {
+			$this->assertSame( 'Failed to parse the MySQL query.', $e->getMessage() );
+			$this->assertSame( '42000', $e->getCode() );
+			$this->assertSame( array( '42000', 1064, 'Failed to parse the MySQL query.' ), $e->errorInfo );
+		}
 	}
 
 	public function testColumnInfo(): void {
