@@ -324,6 +324,11 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 	public static function regexpLikeErrors() {
 		return array(
 			'invalid pattern' => array( "REGEXP_LIKE('abc', '(abc')", 'Invalid regular expression: (abc.' ),
+			'unknown escape'  => array( "REGEXP_LIKE('y', '\\\\y')", 'Invalid regular expression: \\y.' ),
+			'ICU escape'      => array( "REGEXP_LIKE('A', '\\\\u0041')", 'Invalid regular expression: \\u0041.' ),
+			'bad property'    => array( "REGEXP_LIKE('a', '\\\\p{Foo}')", 'Invalid regular expression: \\p{Foo}.' ),
+			'operator escape' => array( "'y' REGEXP '\\\\y'", 'Invalid regular expression: \\y.' ),
+			'binary escape'   => array( "X'FF' REGEXP '\\\\y'", 'Invalid regular expression: \\y.' ),
 			'extra argument'  => array(
 				"REGEXP_LIKE('abc', 'abc', 'c', 'extra')",
 				'SQLSTATE[HY000]: General error: 1 wrong number of arguments to function REGEXP_LIKE()',

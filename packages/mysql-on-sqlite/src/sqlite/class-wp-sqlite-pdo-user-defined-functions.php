@@ -1100,7 +1100,12 @@ class WP_SQLite_PDO_User_Defined_Functions {
 			}
 		}
 
-		$modifiers = $binary_mode ? '' : 'u';
+		/*
+		 * PHP 7 can read an unknown escape as literal text. For "\y", that matches ICU,
+		 * but "\u0041" matches "u0041", where ICU matches "A". The "X" modifier makes
+		 * all of them errors, like in PHP 8.
+		 */
+		$modifiers = $binary_mode ? 'X' : 'uX';
 		if ( ! $case_sensitive ) {
 			$modifiers .= 'i';
 		}
