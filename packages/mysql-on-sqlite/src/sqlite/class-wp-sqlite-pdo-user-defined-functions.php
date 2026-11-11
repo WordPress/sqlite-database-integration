@@ -607,11 +607,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		 */
 		$byte_mode = 1 === $binary || ! $this->regexp_is_utf8( $pattern ) || ! $this->regexp_is_utf8( $field );
 		$compiled  = $this->regexp_compile( $pattern, $byte_mode ? 'c' : '', $byte_mode );
-		$result    = preg_match( $compiled, $field );
-		if ( false === $result ) {
-			$this->regexp_fail( $pattern );
-		}
-		return $result;
+		return $this->regexp_match( $compiled, $pattern, $field );
 	}
 
 	/**
@@ -635,11 +631,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		// and case-sensitively, unless the match type says otherwise.
 		$byte_mode = ! $this->regexp_is_utf8( $pattern ) || ! $this->regexp_is_utf8( $expr );
 		$compiled  = $this->regexp_compile( $pattern, $byte_mode ? 'c' . $match_type : $match_type, $byte_mode );
-		$result    = preg_match( $compiled, $expr );
-		if ( false === $result ) {
-			$this->regexp_fail( $pattern );
-		}
-		return $result;
+		return $this->regexp_match( $compiled, $pattern, $expr );
 	}
 
 	/**
@@ -1061,6 +1053,8 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 *   sensitivity can differ between rows.
 	 * - SQLite converts numbers to text in its own format, so `20e0` reads "20.0"
 	 *   (MySQL: "20"), and `0.000001` reads "1.0e-06".
+	 * - A repeated group, like `(a|b)*`, can exceed PCRE's limits on a subject of
+	 *   about 50,000 characters, or 2,000 on PHP 7.2.
 	 *
 	 * @param string $pattern     The MySQL regex pattern.
 	 * @param string $match_type  MySQL match_type flag string.
@@ -1212,6 +1206,33 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 */
 	private function regexp_is_utf8( $value ) {
 		return 1 === preg_match( '//u', $value );
+	}
+
+	/**
+	 * Run preg_match(), and report a failure as a MySQL error.
+	 *
+	 * @param string $compiled PCRE-wrapped pattern.
+	 * @param string $pattern  The original MySQL regex pattern, for error messages.
+	 * @param string $subject  The subject string.
+	 *
+	 * @throws Exception On a preg failure.
+	 * @return int 1 on match, 0 on no match.
+	 */
+	private function regexp_match( $compiled, $pattern, $subject ) {
+		$result = preg_match( $compiled, $subject );
+
+		/*
+		 * PHP's JIT stack is small, so a repeated group, such as "(a|b)*", can fail on
+		 * a subject of a few thousand characters. Matching without JIT goes further.
+		 * PHP 7.2 has no "(*NO_JIT)", and matching without JIT can crash it.
+		 */
+		if ( false === $result && PREG_JIT_STACKLIMIT_ERROR === preg_last_error() && PHP_VERSION_ID >= 70300 ) {
+			$result = preg_match( $compiled[0] . '(*NO_JIT)' . substr( $compiled, 1 ), $subject );
+		}
+		if ( false === $result ) {
+			$this->regexp_fail( $pattern );
+		}
+		return $result;
 	}
 
 	/**
