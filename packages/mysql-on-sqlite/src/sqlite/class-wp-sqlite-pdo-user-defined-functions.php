@@ -1048,23 +1048,19 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * (UTF-8) modifier is applied unless byte-oriented matching is requested.
 	 * Case-insensitive is the default.
 	 *
-	 * MySQL's native engine is ICU; we use PHP's PCRE. The two diverge in a
-	 * few corners:
+	 * MySQL uses ICU, which differs from PCRE in some syntax, like ICU-only escapes
+	 * and nested sets. The known failures of the REGEXP test suites list these
+	 * cases. Other known differences:
 	 *
-	 * - Some Unicode property shorthands and POSIX class spellings differ.
-	 * - PCRE accepts both `(?<name>...)` and `(?P<name>...)`; MySQL accepts
-	 *   only the former and errors on the latter.
-	 * - ICU supports multi-code-point case folds such as "ß" matching "ss";
-	 *   PCRE's case-insensitive mode does not.
-	 *
-	 * Known limitations of this emulation:
-	 *
-	 * - The default (case-insensitive) is correct for the usual
-	 *   `utf8mb4_0900_ai_ci` collation; callers that rely on a `_bin` or
-	 *   `_cs` collation must pass an explicit `c` match_type because this
-	 *   helper has no access to the session collation.
-	 * - Data that is not valid UTF-8, and REGEXP BINARY, are matched byte by
-	 *   byte and case-sensitively, like MySQL binary strings.
+	 * - Text matching ignores case unless the `c` flag is passed, as the column
+	 *   collation isn't known here.
+	 * - PCRE doesn't match "ß" with "ss" when ignoring case, `$` also matches
+	 *   between CR and LF, and `(?P<name>...)` is valid.
+	 * - Data that isn't valid UTF-8 is matched byte by byte and case-sensitively,
+	 *   like MySQL binary strings. Other binary values match as text, so case
+	 *   sensitivity can differ between rows.
+	 * - SQLite converts numbers to text in its own format, so `20e0` reads "20.0"
+	 *   (MySQL: "20"), and `0.000001` reads "1.0e-06".
 	 *
 	 * @param string $pattern     The MySQL regex pattern.
 	 * @param string $match_type  MySQL match_type flag string.
