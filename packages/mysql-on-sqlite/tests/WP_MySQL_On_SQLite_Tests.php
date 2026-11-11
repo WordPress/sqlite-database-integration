@@ -679,6 +679,58 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$this->assertSame( '1', $this->last_result[0]->r );
 	}
 
+	/**
+	 * @dataProvider regexpBigIntegerCases
+	 */
+	public function testRegexpBigIntegerOperands( $sql, $expected ) {
+		$this->assertQuery( "SELECT $sql AS r" );
+		$this->assertSame( $expected, $this->last_result[0]->r );
+	}
+
+	public static function regexpBigIntegerCases() {
+		return array(
+			// The smallest values that don't fit in 32 bits.
+			'2^31, subject'       => array( "REGEXP_LIKE(2147483648, '^2147483648\$')", '1' ),
+			'-2^31 - 1, subject'  => array( "REGEXP_LIKE(-2147483649, '^-2147483649\$')", '1' ),
+			'largest BIGINT'      => array( "REGEXP_LIKE(9223372036854775807, '^9223372036854775807\$')", '1' ),
+
+			'REGEXP_LIKE subject' => array( "REGEXP_LIKE(9999999999, '^9')", '1' ),
+			'REGEXP_LIKE pattern' => array( "REGEXP_LIKE('9999999999', 9999999999)", '1' ),
+			'operator subject'    => array( "9999999999 REGEXP '^9'", '1' ),
+			'operator pattern'    => array( "'9999999999' REGEXP 9999999999", '1' ),
+			'negated operator'    => array( "9999999999 NOT REGEXP '^9'", '0' ),
+			'REGEXP BINARY'       => array( "9999999999 REGEXP BINARY '^9'", '1' ),
+		);
+	}
+
+	public function testRegexpBigIntegerColumn() {
+		$this->assertQuery( 'CREATE TABLE phones (id INT PRIMARY KEY, phone BIGINT)' );
+		$this->assertQuery( 'INSERT INTO phones VALUES (1, 15551234567), (2, 42), (3, NULL)' );
+		$this->assertQuery(
+			"SELECT
+				phone REGEXP '^1' AS operator_result,
+				REGEXP_LIKE(phone, '^1') AS like_result
+			FROM phones ORDER BY id"
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'operator_result' => '1',
+					'like_result'     => '1',
+				),
+				(object) array(
+					'operator_result' => '0',
+					'like_result'     => '0',
+				),
+				(object) array(
+					'operator_result' => null,
+					'like_result'     => null,
+				),
+			),
+			$this->last_result
+		);
+	}
+
 	public function testInsertDateNow() {
 		$this->assertQuery(
 			"INSERT INTO _dates (option_name, option_value) VALUES ('first', now());"
