@@ -690,6 +690,30 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$this->assertSame( '1', $this->last_result[0]->r );
 	}
 
+	public function testRegexpEscapedKIsLiteral() {
+		// Like ICU, read "\K" as "K", also in a set. In quoted text, it stays "\K".
+		$this->assertQuery(
+			"SELECT
+				REGEXP_LIKE('K', '\\\\K') AS letter,
+				REGEXP_LIKE('ab', 'a\\\\Kb') AS no_reset,
+				'aKb' REGEXP 'a\\\\Kb' AS operator_result,
+				REGEXP_LIKE('K', '[\\\\K]') AS in_set,
+				REGEXP_LIKE('\\\\K', '^\\\\Q\\\\K\\\\E\$') AS quoted"
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'letter'          => '1',
+					'no_reset'        => '0',
+					'operator_result' => '1',
+					'in_set'          => '1',
+					'quoted'          => '1',
+				),
+			),
+			$this->last_result
+		);
+	}
+
 	/**
 	 * @dataProvider regexpUnterminatedQuoteCases
 	 */

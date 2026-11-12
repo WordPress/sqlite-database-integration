@@ -1147,7 +1147,8 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	}
 
 	/**
-	 * Escape pattern delimiters and NUL bytes that are not already escaped.
+	 * Escape pattern delimiters and NUL bytes that are not already escaped, and
+	 * read "\K" as "K".
 	 *
 	 * PHP before 8.2 rejects NUL bytes in patterns, so they become "\x00".
 	 *
@@ -1160,6 +1161,13 @@ class WP_SQLite_PDO_User_Defined_Functions {
 			'/'  => '\\/',
 			"\0" => '\\x00',
 		);
+
+		/*
+		 * ICU reads "\K" as "K". In PCRE, "\K" moves the start of the match, even to
+		 * before the place where the search started, like in "(?<=\Ka)".
+		 */
+		$escapes = $special + array( 'K' => 'K' );
+
 		$escaped = '';
 		$quoted  = false;
 		$length  = strlen( $pattern );
@@ -1179,7 +1187,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 			}
 			if ( '\\' === $character && $i + 1 < $length ) {
 				$next     = $pattern[ $i + 1 ];
-				$escaped .= isset( $special[ $next ] ) ? $special[ $next ] : $character . $next;
+				$escaped .= isset( $escapes[ $next ] ) ? $escapes[ $next ] : $character . $next;
 				$quoted   = 'Q' === $next;
 				++$i;
 			} elseif ( isset( $special[ $character ] ) ) {
