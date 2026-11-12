@@ -67,6 +67,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'regexp_like'                  => 'regexp_like',
 		'regexp_replace'               => 'regexp_replace',
 		'regexp_substr'                => 'regexp_substr',
+		'regexp_instr'                 => 'regexp_instr',
 		'field'                        => 'field',
 		'log'                          => 'log',
 		'least'                        => 'least',
@@ -104,6 +105,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'regexp_like'    => array( 2, 3 ),
 		'regexp_replace' => array( 3, 4, 5, 6 ),
 		'regexp_substr'  => array( 2, 3, 4, 5 ),
+		'regexp_instr'   => array( 2, 3, 4, 5, 6 ),
 	);
 
 	/** @var string[] Compiled PCRE patterns, keyed by byte mode, "\G" variant, match type, and pattern. */
@@ -765,6 +767,72 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	}
 
 	/**
+	 * Method to emulate MySQL REGEXP_INSTR() function.
+	 *
+	 * Unlike the other functions, it searches the subject from pos on, as if it started
+	 * there. So "^" and "\G" match at pos, and lookbehinds don't see the text before it.
+	 *
+	 * @param string|null           $expr          The subject string.
+	 * @param string|null           $pattern       The regex pattern.
+	 * @param int|float|string|null $pos           Optional. The 1-based character position to start at.
+	 *                                             It isn't checked for an empty subject.
+	 * @param int|float|string|null $occurrence    Optional. Which match to find. A value below 1
+	 *                                             finds the first match.
+	 * @param int|float|string|null $return_option Optional. 0 for the position of the match, or 1
+	 *                                             for the position after it.
+	 * @param string|null           $match_type    Optional. Letters that change how the pattern matches.
+	 *
+	 * @throws Exception If return_option is not 0 or 1, the match type has an unknown
+	 *                   letter, the pattern is invalid, or pos is out of range.
+	 * @return int|null The 1-based character position, 0 if there is no match, or NULL if
+	 *                  any argument is NULL.
+	 */
+	public function regexp_instr( $expr, $pattern, $pos = 1, $occurrence = 1, $return_option = 0, $match_type = '' ) {
+		// Like MySQL, check the arguments in this order, so that a NULL argument makes
+		// the result NULL only when the checks before it pass.
+		if ( null !== $return_option && 0 !== (int) $return_option && 1 !== (int) $return_option ) {
+			throw new Exception( 'Incorrect arguments to regexp_instr: return_option must be 1 or 0.' );
+		}
+		$this->regexp_check_match_type( 'regexp_instr', $match_type );
+		if ( null === $match_type ) {
+			return null;
+		}
+
+		// Like REGEXP_LIKE(), match data that is not valid UTF-8 byte by byte.
+		$byte_mode  = ! $this->regexp_is_utf8( $pattern ) || ! $this->regexp_is_utf8( $expr );
+		$match_type = $byte_mode ? 'c' . $match_type : $match_type;
+		if ( null !== $pattern ) {
+			$this->regexp_compile( $pattern, $match_type, $byte_mode );
+		}
+		if ( null === $expr || null === $pattern || null === $pos || null === $occurrence || null === $return_option ) {
+			return null;
+		}
+
+		// MySQL doesn't check pos for an empty subject, and reports its matches at pos.
+		if ( '' === $expr ) {
+			$match = $this->regexp_find_match( $pattern, $match_type, $byte_mode, '', 0, (int) $occurrence );
+			return null === $match ? 0 : (int) $pos;
+		}
+
+		$byte_start = $this->regexp_char_to_byte_offset( $expr, (int) $pos, false, $byte_mode );
+		$match      = $this->regexp_find_match( $pattern, $match_type, $byte_mode, substr( $expr, $byte_start ), 0, (int) $occurrence );
+		if ( null === $match ) {
+			return 0;
+		}
+
+		$byte_offset = $byte_start + $match[0][1];
+		if ( 1 === (int) $return_option ) {
+			$byte_offset += strlen( $match[0][0] );
+		}
+		if ( $byte_mode ) {
+			return $byte_offset + 1;
+		}
+
+		// Every byte except a UTF-8 continuation byte starts a character.
+		return $byte_offset + 1 - preg_match_all( '/[\x80-\xBF]/', substr( $expr, 0, $byte_offset ) );
+	}
+
+	/**
 	 * Method to emulate MySQL FIELD() function.
 	 *
 	 * This function gets the list argument and compares the first item to all the others.
@@ -1184,8 +1252,8 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 *   sensitivity, and whether positions count bytes, can differ between rows.
 	 * - SQLite converts numbers to text in its own format, so `20e0` reads "20.0"
 	 *   (MySQL: "20"), and `0.000001` reads "1.0e-06".
-	 * - `pos` and `occurrence` use PHP's integer conversion, so `2.6` means 2
-	 *   (MySQL: 3), and `'2e1'` means 20 (MySQL: 2).
+	 * - `pos`, `occurrence`, and `return_option` use PHP's integer conversion, so
+	 *   `2.6` means 2 (MySQL: 3), and `'2e1'` means 20 (MySQL: 2).
 	 * - A repeated group, like `(a|b)*`, can exceed PCRE's limits on a subject of
 	 *   about 50,000 characters, or 2,000 on PHP 7.2.
 	 *
