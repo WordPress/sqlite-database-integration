@@ -22,10 +22,13 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	public static function register_for( $pdo ): self {
 		$instance = new self();
 		foreach ( $instance->functions as $f => $t ) {
-			if ( $pdo instanceof Pdo\Sqlite ) {
-				$pdo->createFunction( $f, array( $instance, $t ) );
-			} else {
-				$pdo->sqliteCreateFunction( $f, array( $instance, $t ) );
+			$arities = $instance->function_arities[ $f ] ?? array( -1 );
+			foreach ( $arities as $arity ) {
+				if ( $pdo instanceof Pdo\Sqlite ) {
+					$pdo->createFunction( $f, array( $instance, $t ), $arity );
+				} else {
+					$pdo->sqliteCreateFunction( $f, array( $instance, $t ), $arity );
+				}
 			}
 		}
 		return $instance;
@@ -86,6 +89,21 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		// Internal helper functions.
 		'_helper_like_to_glob_pattern' => '_helper_like_to_glob_pattern',
 	);
+
+	/**
+	 * Exact argument counts for functions with optional arguments.
+	 *
+	 * Functions absent from this array are registered as variadic.
+	 *
+	 * @var array
+	 */
+	private $function_arities = array(
+		'regexp'      => array( 2, 3 ),
+		'regexp_like' => array( 2, 3 ),
+	);
+
+	/** @var string[] Compiled PCRE patterns, keyed by byte mode, match type, and pattern. */
+	private $regexp_cache = array();
 
 	/**
 	 * First element of the RAND(N) LCG state (the value the output is derived from).
@@ -568,85 +586,52 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	/**
 	 * Method to emulate MySQL REGEXP operator.
 	 *
-	 * SQLite runs "X REGEXP Y" as "regexp(Y, X)". MySQL runs the operator
-	 * as REGEXP_LIKE(), so this method uses regexp_like().
+	 * SQLite runs "X REGEXP Y" as "regexp(Y, X)".
 	 *
 	 * @param string|null $pattern Regular expression to match.
 	 * @param string|null $field   Haystack.
+	 * @param int         $binary  1 for REGEXP BINARY, which matches bytes
+	 *                             case-sensitively; 0 otherwise.
 	 *
+	 * @throws Exception If the pattern is not a valid regular expression.
 	 * @return int|null 1 if matched, 0 if not matched, NULL if an argument is NULL.
 	 */
-	public function regexp( $pattern, $field ) {
-		/*
-		 * If the original query says REGEXP BINARY
-		 * the comparison is byte-by-byte and letter casing now
-		 * matters since lower- and upper-case letters have different
-		 * byte codes.
-		 *
-		 * The REGEXP function can't be easily made to accept two
-		 * parameters, so we'll have to use a hack to get around this.
-		 *
-		 * If the first character of the pattern is a null byte, we'll
-		 * remove it and make the comparison case-sensitive. This should
-		 * be reasonably safe since PHP does not allow null bytes in
-		 * regular expressions anyway.
-		 */
-		if ( is_string( $pattern ) && 0 === strpos( $pattern, "\x00" ) ) {
-			return $this->regexp_like( $field, substr( $pattern, 1 ), 'c' );
+	public function regexp( $pattern, $field, $binary = 0 ) {
+		if ( null === $pattern || null === $field ) {
+			return null;
 		}
-		return $this->regexp_like( $field, $pattern );
+
+		/*
+		 * Data that is not valid UTF-8 can only be a binary string in MySQL,
+		 * and MySQL matches binary strings byte by byte and case-sensitively.
+		 */
+		$byte_mode = 1 === $binary || ! $this->regexp_is_utf8( $pattern ) || ! $this->regexp_is_utf8( $field );
+		$compiled  = $this->regexp_compile( $pattern, $byte_mode ? 'c' : '', $byte_mode );
+		return $this->regexp_match( $compiled, $pattern, $field );
 	}
 
 	/**
 	 * Method to emulate MySQL REGEXP_LIKE() function.
 	 *
-	 * @param string|null $subject    Haystack.
-	 * @param string|null $pattern    Regular expression to match.
+	 * @param string|null $expr       The subject string.
+	 * @param string|null $pattern    The regex pattern.
 	 * @param string|null $match_type Optional. Letters that change how the pattern matches.
 	 *                                Without "c" or "i", the match is case-insensitive.
 	 *
-	 * @throws Exception When the match type has an unknown letter.
-	 * @return int|null 1 if matched, 0 if not matched, NULL if an argument is NULL.
+	 * @throws Exception If the match type has an unknown letter, or the pattern is invalid.
+	 * @return int|null 1 on match, 0 on no match, NULL if any argument is NULL.
 	 */
-	public function regexp_like( $subject, $pattern, $match_type = '' ) {
-		if ( null === $match_type ) {
+	public function regexp_like( $expr, $pattern, $match_type = '' ) {
+		$this->regexp_check_match_type( 'regexp_like', $match_type );
+		if ( null === $expr || null === $pattern || null === $match_type ) {
 			return null;
 		}
 
-		/*
-		 * Apply the letters in order, so that the last of "c" and "i" wins, like in MySQL.
-		 * The "u" letter needs no flag, as PCRE treats only "\n" as a line break by default.
-		 */
-		$case_insensitive = true;
-		$flags            = '';
-		$length           = strlen( $match_type );
-		for ( $i = 0; $i < $length; $i++ ) {
-			$letter = $match_type[ $i ];
-			if ( 'c' === $letter ) {
-				$case_insensitive = false;
-			} elseif ( 'i' === $letter ) {
-				$case_insensitive = true;
-			} elseif ( 'm' === $letter ) {
-				$flags .= 'm';
-			} elseif ( 'n' === $letter ) {
-				$flags .= 's';
-			} elseif ( 'u' !== $letter ) {
-				throw new Exception( 'Incorrect arguments to regexp_like' );
-			}
-		}
-		if ( $case_insensitive ) {
-			$flags .= 'i';
-		}
-
-		// Like MySQL, reject an invalid match type even for a NULL subject or pattern.
-		if ( null === $subject || null === $pattern ) {
-			return null;
-		}
-
-		$pattern = str_replace( '/', '\/', $pattern );
-		$pattern = '/' . $pattern . '/' . $flags;
-
-		return preg_match( $pattern, $subject );
+		// Like the REGEXP operator, match data that is not valid UTF-8 byte by byte,
+		// and case-sensitively, unless the match type says otherwise.
+		$byte_mode = ! $this->regexp_is_utf8( $pattern ) || ! $this->regexp_is_utf8( $expr );
+		$compiled  = $this->regexp_compile( $pattern, $byte_mode ? 'c' . $match_type : $match_type, $byte_mode );
+		return $this->regexp_match( $compiled, $pattern, $expr );
 	}
 
 	/**
@@ -1029,5 +1014,247 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		$pattern = preg_replace( '/\\\\(.)/s', '$1', $pattern );
 
 		return $pattern;
+	}
+
+	/**
+	 * Check that a match type has only known letters.
+	 *
+	 * Like MySQL, the functions check it before they return NULL for a NULL argument.
+	 *
+	 * @param string      $function_name The function name, for the error message.
+	 * @param string|null $match_type    MySQL match_type flag string.
+	 *
+	 * @throws Exception If the match type has an unknown letter.
+	 */
+	private function regexp_check_match_type( $function_name, $match_type ) {
+		$match_type = (string) $match_type;
+		if ( strspn( $match_type, 'cimnu' ) < strlen( $match_type ) ) {
+			throw new Exception( "Incorrect arguments to $function_name" );
+		}
+	}
+
+	/**
+	 * Compile a MySQL-style regex into a PCRE pattern string.
+	 *
+	 * Translates MySQL match_type flags (c/i/m/n/u) to PCRE modifiers. The u
+	 * (UTF-8) modifier is applied unless byte-oriented matching is requested.
+	 * Case-insensitive is the default.
+	 *
+	 * MySQL uses ICU, which differs from PCRE in some syntax, like ICU-only escapes
+	 * and nested sets. The known failures of the REGEXP test suites list these
+	 * cases. Other known differences:
+	 *
+	 * - Text matching ignores case unless the `c` flag is passed, as the column
+	 *   collation isn't known here.
+	 * - PCRE doesn't match "ß" with "ss" when ignoring case, `$` also matches
+	 *   between CR and LF, and `(?P<name>...)` is valid.
+	 * - Data that isn't valid UTF-8 is matched byte by byte and case-sensitively,
+	 *   like MySQL binary strings. Other binary values match as text, so case
+	 *   sensitivity can differ between rows.
+	 * - SQLite converts numbers to text in its own format, so `20e0` reads "20.0"
+	 *   (MySQL: "20"), and `0.000001` reads "1.0e-06".
+	 * - A repeated group, like `(a|b)*`, can exceed PCRE's limits on a subject of
+	 *   about 50,000 characters, or 2,000 on PHP 7.2.
+	 *
+	 * @param string $pattern     The MySQL regex pattern.
+	 * @param string $match_type  MySQL match_type flag string.
+	 * @param bool   $binary_mode Whether to match bytes instead of UTF-8 characters.
+	 *
+	 * @throws Exception If the pattern is empty or invalid.
+	 * @return string PCRE-ready pattern with delimiter and modifiers.
+	 */
+	private function regexp_compile( $pattern, $match_type, $binary_mode = false ) {
+		$match_type = (string) $match_type;
+		$pattern    = (string) $pattern;
+		if ( '' === $pattern ) {
+			throw new Exception( 'Illegal argument to a regular expression.' );
+		}
+		$cache_key = ( $binary_mode ? 'bytes:' : 'text:' ) . $match_type . ':' . $pattern;
+		if ( isset( $this->regexp_cache[ $cache_key ] ) ) {
+			return $this->regexp_cache[ $cache_key ];
+		}
+
+		$case_sensitive = false;
+		$multiline      = false;
+		$dotall         = false;
+		$unix_lines     = false;
+		$len            = strlen( $match_type );
+		for ( $i = 0; $i < $len; $i++ ) {
+			$flag = $match_type[ $i ];
+			if ( 'c' === $flag ) {
+				$case_sensitive = true;
+			} elseif ( 'i' === $flag ) {
+				$case_sensitive = false;
+			} elseif ( 'm' === $flag ) {
+				$multiline = true;
+			} elseif ( 'n' === $flag ) {
+				$dotall = true;
+			} elseif ( 'u' === $flag ) {
+				$unix_lines = true;
+			}
+		}
+
+		/*
+		 * PHP 7 can read an unknown escape as literal text. For "\y", that matches ICU,
+		 * but "\u0041" matches "u0041", where ICU matches "A". The "X" modifier makes
+		 * all of them errors, like in PHP 8.
+		 */
+		$modifiers = $binary_mode ? 'X' : 'uX';
+		if ( ! $case_sensitive ) {
+			$modifiers .= 'i';
+		}
+		if ( $multiline ) {
+			$modifiers .= 'm';
+		}
+		if ( $dotall ) {
+			$modifiers .= 's';
+		}
+
+		/*
+		 * In binary data, MySQL ends lines at CR, LF, VT and FF. No PCRE setting
+		 * matches that. (*ANY) also ends lines at the byte 0x85, which is a part of
+		 * characters like "ą" (0xC4 0x85). (*ANYCRLF) misses only the rare VT and FF.
+		 */
+		if ( $unix_lines ) {
+			$newline = '(*LF)';
+		} elseif ( $binary_mode ) {
+			$newline = '(*ANYCRLF)';
+		} else {
+			$newline = '(*ANY)';
+		}
+		$compiled = '/' . $newline . $this->regexp_escape_pattern( $pattern ) . '/' . $modifiers;
+
+		/*
+		 * Compile the pattern by matching it against an empty string. Only a compile
+		 * error emits a PHP warning, so silence it and report a MySQL error instead.
+		 * A limit error concerns only the empty string, so the pattern is valid.
+		 */
+		set_error_handler( static function () {} );
+		try {
+			$valid = false !== preg_match( $compiled, '' ) || PREG_INTERNAL_ERROR !== preg_last_error();
+		} finally {
+			restore_error_handler();
+		}
+		if ( ! $valid ) {
+			$this->regexp_fail( $pattern );
+		}
+		// A query can use many patterns, such as one from a column, so drop the oldest one.
+		if ( count( $this->regexp_cache ) >= 64 ) {
+			array_shift( $this->regexp_cache );
+		}
+		$this->regexp_cache[ $cache_key ] = $compiled;
+		return $compiled;
+	}
+
+	/**
+	 * Escape pattern delimiters and NUL bytes that are not already escaped.
+	 *
+	 * PHP before 8.2 rejects NUL bytes in patterns, so they become "\x00".
+	 *
+	 * @param string $pattern The regex pattern.
+	 *
+	 * @return string Pattern safe to wrap in slash delimiters.
+	 */
+	private function regexp_escape_pattern( $pattern ) {
+		$special = array(
+			'/'  => '\\/',
+			"\0" => '\\x00',
+		);
+		$escaped = '';
+		$quoted  = false;
+		$length  = strlen( $pattern );
+		for ( $i = 0; $i < $length; ++$i ) {
+			$character = $pattern[ $i ];
+			if ( $quoted ) {
+				if ( '\\' === $character && $i + 1 < $length && 'E' === $pattern[ $i + 1 ] ) {
+					$escaped .= '\\E';
+					$quoted   = false;
+					++$i;
+				} elseif ( isset( $special[ $character ] ) ) {
+					$escaped .= '\\E' . $special[ $character ] . '\\Q';
+				} else {
+					$escaped .= $character;
+				}
+				continue;
+			}
+			if ( '\\' === $character && $i + 1 < $length ) {
+				$next     = $pattern[ $i + 1 ];
+				$escaped .= isset( $special[ $next ] ) ? $special[ $next ] : $character . $next;
+				$quoted   = 'Q' === $next;
+				++$i;
+			} elseif ( isset( $special[ $character ] ) ) {
+				$escaped .= $special[ $character ];
+			} else {
+				$escaped .= $character;
+			}
+		}
+
+		// Close quoted text that runs to the end, so that a trailing backslash
+		// can't escape the delimiter.
+		if ( $quoted ) {
+			$escaped .= '\\E';
+		}
+		return $escaped;
+	}
+
+	/**
+	 * Check whether a string is valid UTF-8.
+	 *
+	 * @param string $value The string.
+	 *
+	 * @return bool Whether the string is valid UTF-8.
+	 */
+	private function regexp_is_utf8( $value ) {
+		return 1 === preg_match( '//u', $value );
+	}
+
+	/**
+	 * Run preg_match(), and report a failure as a MySQL error.
+	 *
+	 * @param string $compiled PCRE-wrapped pattern.
+	 * @param string $pattern  The original MySQL regex pattern, for error messages.
+	 * @param string $subject  The subject string.
+	 *
+	 * @throws Exception On a preg failure.
+	 * @return int 1 on match, 0 on no match.
+	 */
+	private function regexp_match( $compiled, $pattern, $subject ) {
+		$result = preg_match( $compiled, $subject );
+
+		/*
+		 * PHP's JIT stack is small, so a repeated group, such as "(a|b)*", can fail on
+		 * a subject of a few thousand characters. Matching without JIT goes further.
+		 * PHP 7.2 has no "(*NO_JIT)", and matching without JIT can crash it.
+		 */
+		if ( false === $result && PREG_JIT_STACKLIMIT_ERROR === preg_last_error() && PHP_VERSION_ID >= 70300 ) {
+			$result = preg_match( $compiled[0] . '(*NO_JIT)' . substr( $compiled, 1 ), $subject );
+		}
+		if ( false === $result ) {
+			$this->regexp_fail( $pattern );
+		}
+		return $result;
+	}
+
+	/**
+	 * Translate a preg_* failure into a caller-friendly exception message.
+	 *
+	 * Uses preg_last_error() to distinguish invalid patterns from runtime
+	 * limit failures.
+	 *
+	 * @param string $pattern The original MySQL regex pattern.
+	 *
+	 * @throws Exception Always.
+	 * @return void
+	 */
+	private function regexp_fail( $pattern ) {
+		$err = preg_last_error();
+		if (
+			PREG_BACKTRACK_LIMIT_ERROR === $err
+			|| PREG_RECURSION_LIMIT_ERROR === $err
+			|| PREG_JIT_STACKLIMIT_ERROR === $err
+		) {
+			throw new Exception( 'Regular expression evaluation exceeded internal limits.' );
+		}
+		throw new Exception( 'Invalid regular expression: ' . $pattern . '.' );
 	}
 }
