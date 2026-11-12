@@ -66,6 +66,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'regexp'                       => 'regexp',
 		'regexp_like'                  => 'regexp_like',
 		'regexp_replace'               => 'regexp_replace',
+		'regexp_substr'                => 'regexp_substr',
 		'field'                        => 'field',
 		'log'                          => 'log',
 		'least'                        => 'least',
@@ -102,6 +103,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'regexp'         => array( 2, 3 ),
 		'regexp_like'    => array( 2, 3 ),
 		'regexp_replace' => array( 3, 4, 5, 6 ),
+		'regexp_substr'  => array( 2, 3, 4, 5 ),
 	);
 
 	/** @var string[] Compiled PCRE patterns, keyed by byte mode, "\G" variant, match type, and pattern. */
@@ -716,6 +718,50 @@ class WP_SQLite_PDO_User_Defined_Functions {
 			}
 		}
 		return $result . substr( $expr, $offset );
+	}
+
+	/**
+	 * Method to emulate MySQL REGEXP_SUBSTR() function.
+	 *
+	 * @param string|null           $expr       The subject string.
+	 * @param string|null           $pattern    The regex pattern.
+	 * @param int|float|string|null $pos        Optional. The 1-based character position to start at.
+	 *                                          It may be one past the last character.
+	 * @param int|float|string|null $occurrence Optional. Which match to return. A value below 1
+	 *                                          returns the first match.
+	 * @param string|null           $match_type Optional. Letters that change how the pattern matches.
+	 *
+	 * @throws Exception If the match type has an unknown letter, the pattern is invalid,
+	 *                   or pos is out of range.
+	 * @return string|null The match, or NULL if there is no match or any argument is NULL.
+	 */
+	public function regexp_substr( $expr, $pattern, $pos = 1, $occurrence = 1, $match_type = '' ) {
+		// Like MySQL, check the arguments in this order, so that a NULL argument makes
+		// the result NULL only when the checks before it pass.
+		$this->regexp_check_match_type( 'regexp_substr', $match_type );
+		if ( null === $match_type ) {
+			return null;
+		}
+
+		// Like REGEXP_LIKE(), match data that is not valid UTF-8 byte by byte.
+		$byte_mode  = ! $this->regexp_is_utf8( $pattern ) || ! $this->regexp_is_utf8( $expr );
+		$match_type = $byte_mode ? 'c' . $match_type : $match_type;
+		if ( null !== $pattern ) {
+			$this->regexp_compile( $pattern, $match_type, $byte_mode );
+		}
+		if ( null === $pos || null === $occurrence ) {
+			return null;
+		}
+		if ( (int) $pos < 1 ) {
+			throw new Exception( "Incorrect parameters in the call to native function 'regexp_substr'" );
+		}
+		if ( null === $expr || null === $pattern ) {
+			return null;
+		}
+
+		$byte_start = $this->regexp_char_to_byte_offset( $expr, (int) $pos, true, $byte_mode );
+		$match      = $this->regexp_find_match( $pattern, $match_type, $byte_mode, $expr, $byte_start, (int) $occurrence );
+		return null === $match ? null : $match[0][0];
 	}
 
 	/**
@@ -1390,6 +1436,29 @@ class WP_SQLite_PDO_User_Defined_Functions {
 			},
 			$replacement
 		);
+	}
+
+	/**
+	 * Find one match from an offset.
+	 *
+	 * @param string $pattern    The MySQL regex pattern.
+	 * @param string $match_type MySQL match_type flag string.
+	 * @param bool   $byte_mode  Whether every byte is a character.
+	 * @param string $subject    The subject string.
+	 * @param int    $offset     The byte offset to start at.
+	 * @param int    $occurrence Which match to find. A value below 1 finds the first match.
+	 *
+	 * @throws Exception On a preg failure.
+	 * @return array|null The match, with offsets, or NULL if there is none.
+	 */
+	private function regexp_find_match( $pattern, $match_type, $byte_mode, $subject, $offset, $occurrence ) {
+		$index = 0;
+		foreach ( $this->regexp_matches( $pattern, $match_type, $byte_mode, $subject, $offset ) as $match ) {
+			if ( ++$index >= $occurrence ) {
+				return $match;
+			}
+		}
+		return null;
 	}
 
 	/**

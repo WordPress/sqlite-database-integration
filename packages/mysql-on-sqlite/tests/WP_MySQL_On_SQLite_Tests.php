@@ -385,6 +385,14 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			'REGEXP_REPLACE, pos one past end' => array( "X'C485FF'", "REGEXP_REPLACE(b, '\$', 'x', 4)", "\xC4\x85\xFFx" ),
 			'REGEXP_REPLACE, occurrence'       => array( "X'C485FF'", "REGEXP_REPLACE(b, '(.)', '[\$1]', 2, 1)", "\xC4[\x85]\xFF" ),
 			'REGEXP_REPLACE, empty matches'    => array( "X'C485FF'", "REGEXP_REPLACE(b, 'x*', '-')", "-\xC4-\x85-\xFF-" ),
+
+			'REGEXP_SUBSTR, any byte'          => array( "X'61FF62'", "REGEXP_SUBSTR(b, 'a.b')", "a\xFFb" ),
+			'REGEXP_SUBSTR, other case'        => array( "X'61FF41'", "REGEXP_SUBSTR(b, 'a.a')", null ),
+			'REGEXP_SUBSTR, ignore case'       => array( "X'61FF41'", "REGEXP_SUBSTR(b, 'a.a', 1, 1, 'i')", "a\xFFA" ),
+			'REGEXP_SUBSTR, pos'               => array( "X'C485FF61'", "REGEXP_SUBSTR(b, '.', 2)", "\x85" ),
+			'REGEXP_SUBSTR, pos one past end'  => array( "X'C485FF'", "REGEXP_SUBSTR(b, 'x*', 4)", '' ),
+			'REGEXP_SUBSTR, occurrence'        => array( "X'C485FF'", "REGEXP_SUBSTR(b, '.', 1, 3)", "\xFF" ),
+			'REGEXP_SUBSTR, empty matches'     => array( "X'C485FF'", "REGEXP_SUBSTR(b, 'x*', 1, 4)", '' ),
 		);
 	}
 
@@ -436,13 +444,15 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$this->assertQuery(
 			"SELECT
 				'$subject' REGEXP '^(a|b)*\$' AS operator_result,
-				REGEXP_LIKE('$subject', '^(a|b)*\$') AS like_result"
+				REGEXP_LIKE('$subject', '^(a|b)*\$') AS like_result,
+				LENGTH(REGEXP_SUBSTR('$subject', '(a|b)+')) AS substr_length"
 		);
 		$this->assertEquals(
 			array(
 				(object) array(
 					'operator_result' => '1',
 					'like_result'     => '1',
+					'substr_length'   => '20000',
 				),
 			),
 			$this->last_result
@@ -1061,7 +1071,97 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			'REGEXP_REPLACE, second occurrence' => array( "REGEXP_REPLACE('aab', '\\\\Ga', '-', 1, 2)", 'a-b' ),
 			'REGEXP_REPLACE, in a comment'      => array( "REGEXP_REPLACE('aa', '(?#\\\\G)a', 'x', 2)", 'ax' ),
 			'REGEXP_REPLACE, escaped backslash' => array( "REGEXP_REPLACE('a\\\\Gb', '\\\\\\\\G', '-', 2)", 'a-b' ),
+
+			'REGEXP_SUBSTR, after empty match'  => array( "REGEXP_SUBSTR('abc', '\\\\G', 1, 2)", null ),
+			'REGEXP_SUBSTR, pos'                => array( "REGEXP_SUBSTR('abc', '\\\\G.', 2)", null ),
+			'REGEXP_SUBSTR, in a comment'       => array( "REGEXP_SUBSTR('aa', '(?#\\\\G)a', 2)", 'a' ),
+			'REGEXP_SUBSTR, second occurrence'  => array( "REGEXP_SUBSTR('abc', '\\\\G.', 1, 2)", 'b' ),
 		);
+	}
+
+	/**
+	 * @dataProvider regexpSubstrCases
+	 */
+	public function testRegexpSubstr( $sql, $expected ) {
+		$this->assertQuery( "SELECT $sql AS r" );
+		$this->assertSame( $expected, $this->last_result[0]->r );
+	}
+
+	public static function regexpSubstrCases() {
+		return array(
+			'basic match'            => array( "REGEXP_SUBSTR('abc123def', '[0-9]+')", '123' ),
+			'no match'               => array( "REGEXP_SUBSTR('abcdef', '[0-9]+')", null ),
+			'pos'                    => array( "REGEXP_SUBSTR('abc123def456', '[0-9]+', 5)", '23' ),
+			'pos with occurrence=2'  => array( "REGEXP_SUBSTR('abc123def456', '[0-9]+', 5, 2)", '456' ),
+			'occurrence'             => array( "REGEXP_SUBSTR('a1 b2 c3', '[a-z][0-9]', 1, 2)", 'b2' ),
+			'occurrence too high'    => array( "REGEXP_SUBSTR('a1 b2', '[a-z][0-9]', 1, 5)", null ),
+			'match_type c'           => array( "REGEXP_SUBSTR('ABC', 'abc', 1, 1, 'c')", null ),
+			'multibyte match'        => array( "REGEXP_SUBSTR('café', 'é')", 'é' ),
+			// MySQL allows pos = char_count + 1.
+			'pos one past end'       => array( "REGEXP_SUBSTR('abc', 'a', 4)", null ),
+			'zero-width at end'      => array( "REGEXP_SUBSTR('abc', '\$', 4)", '' ),
+			'null expr'              => array( 'REGEXP_SUBSTR(NULL, \'abc\')', null ),
+			'null pattern'           => array( "REGEXP_SUBSTR('abc', NULL)", null ),
+			'null pos'               => array( "REGEXP_SUBSTR('abc', 'a', NULL)", null ),
+			'null occurrence'        => array( "REGEXP_SUBSTR('abc', 'a', 1, NULL)", null ),
+			'null match_type'        => array( "REGEXP_SUBSTR('abc', 'a', 1, 1, NULL)", null ),
+			// A NULL match_type returns NULL before the pattern and pos are checked.
+			'null match_type first'  => array( "REGEXP_SUBSTR('abc', '(abc', 0, 1, NULL)", null ),
+			// A NULL occurrence returns NULL before pos is checked.
+			'null occurrence, pos 0' => array( "REGEXP_SUBSTR('abc', 'a', 0, NULL)", null ),
+		);
+	}
+
+	/**
+	 * @dataProvider regexpSubstrErrors
+	 */
+	public function testRegexpSubstrErrors( $sql, $message ) {
+		$this->assertQueryError( "SELECT $sql", $message );
+	}
+
+	public static function regexpSubstrErrors() {
+		// Like MySQL, check the pattern and pos before NULL arguments make the result NULL.
+		$pos_error = "Incorrect parameters in the call to native function 'regexp_substr'";
+		return array(
+			'invalid pattern'                  => array( "REGEXP_SUBSTR('abc', '(abc')", 'Invalid regular expression: (abc.' ),
+			'invalid pattern, pos zero'        => array( "REGEXP_SUBSTR('abc', '(', 0)", 'Invalid regular expression: (.' ),
+			'invalid pattern, NULL subject'    => array( "REGEXP_SUBSTR(NULL, '(')", 'Invalid regular expression: (.' ),
+			'invalid pattern, NULL occurrence' => array( "REGEXP_SUBSTR('abc', '(', 1, NULL)", 'Invalid regular expression: (.' ),
+			'empty pattern, NULL subject'      => array( "REGEXP_SUBSTR(NULL, '')", 'Illegal argument to a regular expression.' ),
+			'invalid match type'               => array( "REGEXP_SUBSTR('abc', 'a', 1, 1, 'x')", 'Incorrect arguments to regexp_substr' ),
+			'invalid match type, NULL subject' => array( "REGEXP_SUBSTR(NULL, 'a', 1, 1, 'x')", 'Incorrect arguments to regexp_substr' ),
+			'invalid match type, NULL pos'     => array( "REGEXP_SUBSTR('abc', 'a', NULL, 1, 'x')", 'Incorrect arguments to regexp_substr' ),
+			'pos zero'                         => array( "REGEXP_SUBSTR('abc', 'a', 0)", $pos_error ),
+			'pos negative'                     => array( "REGEXP_SUBSTR('abc', 'a', -1)", $pos_error ),
+			'pos zero, empty subject'          => array( "REGEXP_SUBSTR('', 'a', 0)", $pos_error ),
+			'pos zero, NULL subject'           => array( "REGEXP_SUBSTR(NULL, 'a', 0)", $pos_error ),
+			'pos zero, NULL pattern'           => array( "REGEXP_SUBSTR('abc', NULL, 0)", $pos_error ),
+			'pos two past end'                 => array( "REGEXP_SUBSTR('abc', 'a', 5)", 'Index out of bounds in regular expression search.' ),
+			'pos far past end'                 => array( "REGEXP_SUBSTR('abc', 'a', 10)", 'Index out of bounds in regular expression search.' ),
+			'extra argument'                   => array(
+				"REGEXP_SUBSTR('abc', 'a', 1, 1, 'c', 'extra')",
+				'SQLSTATE[HY000]: General error: 1 wrong number of arguments to function REGEXP_SUBSTR()',
+			),
+		);
+	}
+
+	public function testRegexpSubstrOccurrenceClampedToOne() {
+		// MySQL clamps occurrence <= 0 to 1.
+		$this->assertQuery( "SELECT REGEXP_SUBSTR('abcabc', 'b', 1, 0) AS r" );
+		$this->assertSame( 'b', $this->last_result[0]->r );
+		$this->assertQuery( "SELECT REGEXP_SUBSTR('abcabc', 'b', 1, -5) AS r" );
+		$this->assertSame( 'b', $this->last_result[0]->r );
+	}
+
+	public function testRegexpSubstrLookbehindAcrossPos() {
+		// The lookbehind sees bytes before pos because the full subject is kept.
+		$this->assertQuery( "SELECT REGEXP_SUBSTR('ab', '(?<=a)b', 2) AS r" );
+		$this->assertSame( 'b', $this->last_result[0]->r );
+	}
+
+	public function testRegexpSubstrNumericSubject() {
+		$this->assertQuery( "SELECT REGEXP_SUBSTR(123, '2') AS r" );
+		$this->assertSame( '2', $this->last_result[0]->r );
 	}
 
 	/**
@@ -1081,6 +1181,8 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 
 			'REGEXP_LIKE subject'  => array( "REGEXP_LIKE(9999999999, '^9')", '1' ),
 			'REGEXP_LIKE pattern'  => array( "REGEXP_LIKE('9999999999', 9999999999)", '1' ),
+			'REGEXP_SUBSTR'        => array( "REGEXP_SUBSTR(9999999999, '9+')", '9999999999' ),
+			'REGEXP_SUBSTR regex'  => array( "REGEXP_SUBSTR('9999999999', 9999999999)", '9999999999' ),
 			'REGEXP_REPLACE'       => array( "REGEXP_REPLACE(9999999999, '9', '1')", '1111111111' ),
 			'REGEXP_REPLACE regex' => array( "REGEXP_REPLACE('9999999999', 9999999999, 'x')", 'x' ),
 			'replacement'          => array( "REGEXP_REPLACE('a', 'a', 9999999999)", '9999999999' ),
@@ -1098,7 +1200,8 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			"SELECT
 				phone REGEXP '^1' AS operator_result,
 				REGEXP_LIKE(phone, '^1') AS like_result,
-				REGEXP_REPLACE(phone, '^1', '') AS replace_result
+				REGEXP_REPLACE(phone, '^1', '') AS replace_result,
+				REGEXP_SUBSTR(phone, '^[0-9]{3}') AS substr_result
 			FROM phones ORDER BY id"
 		);
 		$this->assertEquals(
@@ -1107,16 +1210,19 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 					'operator_result' => '1',
 					'like_result'     => '1',
 					'replace_result'  => '5551234567',
+					'substr_result'   => '155',
 				),
 				(object) array(
 					'operator_result' => '0',
 					'like_result'     => '0',
 					'replace_result'  => '42',
+					'substr_result'   => null,
 				),
 				(object) array(
 					'operator_result' => null,
 					'like_result'     => null,
 					'replace_result'  => null,
+					'substr_result'   => null,
 				),
 			),
 			$this->last_result

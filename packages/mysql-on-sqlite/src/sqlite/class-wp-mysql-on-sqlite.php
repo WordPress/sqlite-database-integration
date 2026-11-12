@@ -5396,6 +5396,7 @@ class WP_MySQL_On_SQLite extends PDO {
 			case 'VERSION':
 				return $this->quote_sqlite_value( $this->get_mysql_server_version_string() );
 			case 'REGEXP_LIKE':
+			case 'REGEXP_SUBSTR':
 			case 'REGEXP_REPLACE':
 				// PDO narrows integer UDF arguments to 32 bits, so pass the subject, the
 				// pattern, and REGEXP_REPLACE's replacement as text.
