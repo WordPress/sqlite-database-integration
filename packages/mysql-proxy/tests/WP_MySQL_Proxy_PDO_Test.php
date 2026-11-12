@@ -47,6 +47,20 @@ class WP_MySQL_Proxy_PDO_Test extends WP_MySQL_Proxy_Test {
 		);
 	}
 
+	public function test_duplicate_column_names(): void {
+		$result = $this->pdo->query( 'SELECT 1 AS x, 2 AS x' );
+		$this->assertEquals( 2, $result->columnCount() );
+		$this->assertEquals( array( array( 1, 2 ) ), $result->fetchAll( PDO::FETCH_NUM ) );
+
+		$result = $this->pdo->query( 'SELECT a.id, b.id FROM (SELECT 1 AS id) a JOIN (SELECT 2 AS id) b ON 1=1' );
+		$this->assertEquals( array( array( 1, 2 ) ), $result->fetchAll( PDO::FETCH_NUM ) );
+	}
+
+	public function test_null_values(): void {
+		$result = $this->pdo->query( 'SELECT NULL AS a, 1 AS b, NULL AS c' );
+		$this->assertSame( array( array( null, 1, null ) ), $result->fetchAll( PDO::FETCH_NUM ) );
+	}
+
 	public function test_prepared_statement(): void {
 		$this->pdo->exec( 'CREATE TABLE t (id INT PRIMARY KEY, name TEXT)' );
 		$this->pdo->exec( 'INSERT INTO t (id, name) VALUES (123, "abc"), (456, "def")' );
