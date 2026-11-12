@@ -266,6 +266,63 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		);
 	}
 
+	public function testRegexpFunctionsWithTableColumns() {
+		$this->assertQuery(
+			"INSERT INTO _options (option_name, option_value) VALUES
+				('test-ignore', 'unchanged'),
+				('test-remove', 'unchanged'),
+				('keep', 'unchanged');"
+		);
+
+		$this->assertQuery(
+			"SELECT
+				option_name,
+				REGEXP_REPLACE(option_name, '(-ignore|-remove)\$', '') AS replacement_result,
+				REGEXP_SUBSTR(option_name, '[^-]+\$') AS substring_result,
+				REGEXP_INSTR(option_name, '-') AS position_result
+			FROM _options
+			WHERE REGEXP_LIKE(option_name, '^test-')
+			ORDER BY option_name"
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'option_name'        => 'test-ignore',
+					'replacement_result' => 'test',
+					'substring_result'   => 'ignore',
+					'position_result'    => '5',
+				),
+				(object) array(
+					'option_name'        => 'test-remove',
+					'replacement_result' => 'test',
+					'substring_result'   => 'remove',
+					'position_result'    => '5',
+				),
+			),
+			$this->last_result
+		);
+
+		$this->assertQuery(
+			"UPDATE _options
+			SET option_value = REGEXP_REPLACE(option_name, '^test-', '')
+			WHERE REGEXP_LIKE(option_name, '^test-')"
+		);
+		$this->assertQuery( "SELECT option_name, option_value FROM _options WHERE option_value != 'unchanged' ORDER BY option_name" );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'option_name'  => 'test-ignore',
+					'option_value' => 'ignore',
+				),
+				(object) array(
+					'option_name'  => 'test-remove',
+					'option_value' => 'remove',
+				),
+			),
+			$this->last_result
+		);
+	}
+
 	/**
 	 * @dataProvider regexpLikeQueries
 	 */
@@ -1299,6 +1356,118 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 	public function testRegexpInstrNumericSubject() {
 		$this->assertQuery( "SELECT REGEXP_INSTR(123, '2') AS r" );
 		$this->assertSame( '2', $this->last_result[0]->r );
+	}
+
+	public function testRegexpEmptyPatternRejected() {
+		// MySQL rejects the empty pattern with ERROR 3685.
+		$this->assertQueryError(
+			"SELECT REGEXP_LIKE('abc', '')",
+			'Illegal argument to a regular expression.'
+		);
+		$this->assertQueryError(
+			"SELECT REGEXP_REPLACE('abc', '', 'x')",
+			'Illegal argument to a regular expression.'
+		);
+		$this->assertQueryError(
+			"SELECT REGEXP_SUBSTR('abc', '')",
+			'Illegal argument to a regular expression.'
+		);
+		$this->assertQueryError(
+			"SELECT REGEXP_INSTR('abc', '')",
+			'Illegal argument to a regular expression.'
+		);
+	}
+
+	/**
+	 * @dataProvider regexpEmptyMatchSteppingCases
+	 */
+	public function testRegexpEmptyMatchStepping( $sql, $expected ) {
+		// Like in ICU, the search continues one character after an empty match, even
+		// when the pattern could match a non-empty string at the same position.
+		$this->assertQuery( "SELECT $sql AS r" );
+		$this->assertSame( $expected, $this->last_result[0]->r );
+	}
+
+	public static function regexpEmptyMatchSteppingCases() {
+		return array(
+			'lazy star'                 => array( "REGEXP_REPLACE('aaa', 'a*?', '[\$0]')", '[]a[]a[]a[]' ),
+			'lazy optional'             => array( "REGEXP_REPLACE('aaa', 'a??', '[\$0]')", '[]a[]a[]a[]' ),
+			'empty alternative first'   => array( "REGEXP_REPLACE('aaa', '|a', '[\$0]')", '[]a[]a[]a[]' ),
+			'boundary alternative'      => array( "REGEXP_REPLACE('ab', '\\\\b|a', '[\$0]')", '[]ab[]' ),
+			'anchor alternative'        => array( "REGEXP_REPLACE('abc', '^|b', '[\$0]')", '[]a[b]c' ),
+			'lookahead alternative'     => array( "REGEXP_REPLACE('ab', '(?=b)|a', '[\$0]')", '[a][]b' ),
+			'greedy, ends with empty'   => array( "REGEXP_REPLACE('aaa', 'a*', '[\$0]')", '[aaa][]' ),
+			'greedy, starts with empty' => array( "REGEXP_REPLACE('baaa', 'a*', '[\$0]')", '[]b[aaa][]' ),
+			'multibyte character'       => array( "REGEXP_REPLACE('éa', 'a*?', '[\$0]')", '[]é[]a[]' ),
+			'astral character'          => array( "REGEXP_REPLACE('a😀b', 'x*', '[\$0]')", '[]a[]😀[]b[]' ),
+			'replace second'            => array( "REGEXP_REPLACE('aaa', 'a*?', '[\$0]', 1, 2)", 'a[]aa' ),
+			'replace past the matches'  => array( "REGEXP_REPLACE('ab', '\\\\b|a', '[\$0]', 1, 3)", 'ab' ),
+			'substr, empty match'       => array( "REGEXP_SUBSTR('aaa', 'a*?', 1, 2)", '' ),
+			'substr, one past the end'  => array( "REGEXP_SUBSTR('aaa', 'a*?', 1, 4)", '' ),
+			'substr, after an empty'    => array( "REGEXP_SUBSTR('baaa', 'a*', 1, 2)", 'aaa' ),
+			'substr, no more matches'   => array( "REGEXP_SUBSTR('aaa', 'a*', 1, 3)", null ),
+			'instr, empty match'        => array( "REGEXP_INSTR('aaa', 'a*?', 1, 3)", '3' ),
+			'instr, boundary'           => array( "REGEXP_INSTR('ab', '\\\\b|a', 1, 2)", '3' ),
+			'instr, astral character'   => array( "REGEXP_INSTR('a😀b', 'x*', 1, 3)", '3' ),
+			'instr, no more matches'    => array( "REGEXP_INSTR('aaa', 'a*', 1, 3)", '0' ),
+		);
+	}
+
+	public function testRegexpAstralPlaneCharacter() {
+		// 4-byte UTF-8 encodes as one code point; char offsets should reflect that.
+		// "x😀y" has three characters (x at 1, 😀 at 2, y at 3).
+		$this->assertQuery( "SELECT REGEXP_SUBSTR('x😀y', '.', 2) AS r" );
+		$this->assertSame( '😀', $this->last_result[0]->r );
+		$this->assertQuery( "SELECT REGEXP_INSTR('😀z', 'z', 1, 1, 1) AS r" );
+		$this->assertSame( '3', $this->last_result[0]->r );
+	}
+
+	public function testRegexpEscapedKInLookbehind() {
+		// "\K" is a literal "K". In PCRE, it could move the start of a match in a lookbehind
+		// to before the search, so that the next search found the same match forever.
+		$this->assertQuery(
+			"SELECT
+				REGEXP_REPLACE('ab', '(?<=\\\\Ka)', 'X') AS replace_result,
+				REGEXP_REPLACE('Kab', '(?<=\\\\Ka)', 'X') AS replace_after_k,
+				REGEXP_SUBSTR('ab', '(?<=\\\\Ka)', 1, 2) AS substr_result,
+				REGEXP_INSTR('Kab', '(?<=\\\\Ka)') AS instr_result"
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'replace_result'  => 'ab',
+					'replace_after_k' => 'KaXb',
+					'substr_result'   => null,
+					'instr_result'    => '3',
+				),
+			),
+			$this->last_result
+		);
+	}
+
+	/**
+	 * @dataProvider regexpQuoteInCommentCases
+	 */
+	public function testRegexpEscapedKAfterQuoteInComment( $sql, $pattern ) {
+		// The escaper reads a "\Q" in a comment as quoted text, so a later "\K" reaches
+		// PCRE. A match that starts before the search is then an error, not an endless loop.
+		$this->assertQueryError(
+			'SELECT ' . sprintf( $sql, $this->engine->quote( $pattern ) ),
+			"Invalid regular expression: $pattern."
+		);
+	}
+
+	public static function regexpQuoteInCommentCases() {
+		$comment  = '(?#\Q)(?<=\Ka)';
+		$extended = "(?x)#\\Q\n(?<=\\Ka)";
+		return array(
+			'REGEXP_REPLACE, comment'          => array( "REGEXP_REPLACE('ab', %s, 'X')", $comment ),
+			'REGEXP_REPLACE, extended comment' => array( "REGEXP_REPLACE('ab', %s, 'X')", $extended ),
+			'REGEXP_SUBSTR, comment'           => array( "REGEXP_SUBSTR('ab', %s, 1, 2)", $comment ),
+			'REGEXP_SUBSTR, extended comment'  => array( "REGEXP_SUBSTR('ab', %s, 1, 2)", $extended ),
+			'REGEXP_INSTR, comment'            => array( "REGEXP_INSTR('ab', %s, 1, 2)", $comment ),
+			'REGEXP_INSTR, extended comment'   => array( "REGEXP_INSTR('ab', %s, 1, 2)", $extended ),
+		);
 	}
 
 	/**
