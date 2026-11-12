@@ -2456,6 +2456,218 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		);
 	}
 
+	/**
+	 * @dataProvider getInlineKeyQueries
+	 */
+	public function testInlineKeys( array $queries ): void {
+		foreach ( $queries as $query ) {
+			$this->assertQuery( $query );
+		}
+
+		// SHOW CREATE TABLE
+		$this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertEquals(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `t` (',
+					'  `id` int DEFAULT NULL,',
+					'  `a` int NOT NULL,',
+					'  `b` int DEFAULT NULL,',
+					'  `c` int NOT NULL,',
+					'  PRIMARY KEY (`a`),',
+					'  UNIQUE KEY `b` (`b`),',
+					'  UNIQUE KEY `c` (`c`)',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$this->last_result[0]->{'Create Table'}
+		);
+
+		// INFORMATION_SCHEMA.COLUMNS
+		$this->assertQuery(
+			"SELECT COLUMN_NAME, IS_NULLABLE, COLUMN_KEY
+			FROM information_schema.columns
+			WHERE table_schema = DATABASE() AND table_name = 't'
+			ORDER BY ORDINAL_POSITION"
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'COLUMN_NAME' => 'id',
+					'IS_NULLABLE' => 'YES',
+					'COLUMN_KEY'  => '',
+				),
+				(object) array(
+					'COLUMN_NAME' => 'a',
+					'IS_NULLABLE' => 'NO',
+					'COLUMN_KEY'  => 'PRI',
+				),
+				(object) array(
+					'COLUMN_NAME' => 'b',
+					'IS_NULLABLE' => 'YES',
+					'COLUMN_KEY'  => 'UNI',
+				),
+				(object) array(
+					'COLUMN_NAME' => 'c',
+					'IS_NULLABLE' => 'NO',
+					'COLUMN_KEY'  => 'UNI',
+				),
+			),
+			$this->last_result
+		);
+
+		// INFORMATION_SCHEMA.STATISTICS
+		$this->assertQuery(
+			"SELECT INDEX_NAME, NON_UNIQUE, COLUMN_NAME, NULLABLE
+			FROM information_schema.statistics
+			WHERE table_schema = DATABASE() AND table_name = 't'
+			ORDER BY INDEX_NAME"
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'INDEX_NAME'  => 'b',
+					'NON_UNIQUE'  => '0',
+					'COLUMN_NAME' => 'b',
+					'NULLABLE'    => 'YES',
+				),
+				(object) array(
+					'INDEX_NAME'  => 'c',
+					'NON_UNIQUE'  => '0',
+					'COLUMN_NAME' => 'c',
+					'NULLABLE'    => '',
+				),
+				(object) array(
+					'INDEX_NAME'  => 'PRIMARY',
+					'NON_UNIQUE'  => '0',
+					'COLUMN_NAME' => 'a',
+					'NULLABLE'    => '',
+				),
+			),
+			$this->last_result
+		);
+
+		// INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+		$this->assertQuery(
+			"SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE
+			FROM information_schema.table_constraints
+			WHERE table_schema = DATABASE() AND table_name = 't'
+			ORDER BY CONSTRAINT_NAME"
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'CONSTRAINT_NAME' => 'b',
+					'CONSTRAINT_TYPE' => 'UNIQUE',
+				),
+				(object) array(
+					'CONSTRAINT_NAME' => 'c',
+					'CONSTRAINT_TYPE' => 'UNIQUE',
+				),
+				(object) array(
+					'CONSTRAINT_NAME' => 'PRIMARY',
+					'CONSTRAINT_TYPE' => 'PRIMARY KEY',
+				),
+			),
+			$this->last_result
+		);
+
+		// INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+		$this->assertQuery(
+			"SELECT CONSTRAINT_NAME, COLUMN_NAME, ORDINAL_POSITION
+			FROM information_schema.key_column_usage
+			WHERE table_schema = DATABASE() AND table_name = 't'
+			ORDER BY CONSTRAINT_NAME"
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'CONSTRAINT_NAME'  => 'b',
+					'COLUMN_NAME'      => 'b',
+					'ORDINAL_POSITION' => '1',
+				),
+				(object) array(
+					'CONSTRAINT_NAME'  => 'c',
+					'COLUMN_NAME'      => 'c',
+					'ORDINAL_POSITION' => '1',
+				),
+				(object) array(
+					'CONSTRAINT_NAME'  => 'PRIMARY',
+					'COLUMN_NAME'      => 'a',
+					'ORDINAL_POSITION' => '1',
+				),
+			),
+			$this->last_result
+		);
+
+		// Key enforcement. The nullable unique key accepts multiple NULLs.
+		$this->assertQuery( 'INSERT INTO t (id, a, b, c) VALUES (1, 1, NULL, 1), (2, 2, NULL, 2), (3, 3, 3, 3)' );
+		$this->assertQueryError(
+			'INSERT INTO t (id, a, b, c) VALUES (4, 1, 4, 4)',
+			'SQLSTATE[23000]: Integrity constraint violation: 19 UNIQUE constraint failed: t.a'
+		);
+		$this->assertQueryError(
+			'INSERT INTO t (id, a, b, c) VALUES (4, 4, 3, 4)',
+			'SQLSTATE[23000]: Integrity constraint violation: 19 UNIQUE constraint failed: t.b'
+		);
+		$this->assertQueryError(
+			'INSERT INTO t (id, a, b, c) VALUES (4, 4, 4, 3)',
+			'SQLSTATE[23000]: Integrity constraint violation: 19 UNIQUE constraint failed: t.c'
+		);
+		$this->assertQueryError(
+			'INSERT INTO t (id, a, b, c) VALUES (4, NULL, 4, 4)',
+			'SQLSTATE[23000]: Integrity constraint violation: 19 NOT NULL constraint failed: t.a'
+		);
+	}
+
+	public static function getInlineKeyQueries(): array {
+		return array(
+			'CREATE TABLE'                       => array(
+				array( 'CREATE TABLE t (id INT, a INT PRIMARY KEY, b INT UNIQUE KEY, c INT NOT NULL UNIQUE)' ),
+			),
+			'ALTER TABLE ADD'                    => array(
+				array(
+					'CREATE TABLE t (id INT)',
+					'ALTER TABLE t ADD a INT PRIMARY KEY',
+					'ALTER TABLE t ADD b INT UNIQUE KEY',
+					'ALTER TABLE t ADD COLUMN c INT NOT NULL UNIQUE',
+				),
+			),
+			'ALTER TABLE ADD with a column list' => array(
+				array(
+					'CREATE TABLE t (id INT)',
+					'ALTER TABLE t ADD (a INT PRIMARY KEY, b INT UNIQUE KEY, c INT NOT NULL UNIQUE)',
+				),
+			),
+		);
+	}
+
+	public function testInlineUniqueKeyIsNotPrimaryKey(): void {
+		$this->assertQuery( 'CREATE TABLE t (a INT UNIQUE KEY)' );
+
+		$this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertEquals(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `t` (',
+					'  `a` int DEFAULT NULL,',
+					'  UNIQUE KEY `a` (`a`)',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$this->last_result[0]->{'Create Table'}
+		);
+
+		// The column is nullable, and the unique key accepts multiple NULLs.
+		$this->assertQuery( 'INSERT INTO t (a) VALUES (NULL), (NULL), (1)' );
+		$this->assertQueryError(
+			'INSERT INTO t (a) VALUES (1)',
+			'SQLSTATE[23000]: Integrity constraint violation: 19 UNIQUE constraint failed: t.a'
+		);
+	}
+
 	public function testColumnWithOnUpdate() {
 		// CREATE TABLE with ON UPDATE
 		$this->assertQuery(
