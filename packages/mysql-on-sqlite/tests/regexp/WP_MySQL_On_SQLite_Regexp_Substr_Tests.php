@@ -988,18 +988,6 @@ class WP_MySQL_On_SQLite_Regexp_Substr_Tests extends WP_MySQL_On_SQLite_Regexp_T
 			);
 		}
 
-		// Since PCRE2 10.45, a caseless \p{Lu} matches any cased letter, like ICU.
-		if ( version_compare( $pcre_version, '10.45', '<' ) ) {
-			array_push(
-				$failures,
-				'icu-regextst:41',
-				'icu-regextst:43',
-				'icu-regextst:189',
-				'icu-regextst:1061',
-				'icu-regextst:1063'
-			);
-		}
-
 		return $failures;
 	}
 }

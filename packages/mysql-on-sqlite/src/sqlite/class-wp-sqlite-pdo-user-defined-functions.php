@@ -1246,6 +1246,11 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 *   collation isn't known here.
 	 * - PCRE doesn't match "ß" with "ss" when ignoring case, `$` also matches
 	 *   between CR and LF, and `(?P<name>...)` is valid.
+	 * - Inline case flags don't change `[:upper:]` and `[:lower:]`, or `\p{Lu}` and
+	 *   `\p{Ll}` on PCRE 10.44 and older: `(?i)[[:upper:]]` with the `c` flag keeps
+	 *   their case, and a `(?-i)` keeps it in the whole pattern.
+	 * - When ignoring case, `[:upper:]`, `[:lower:]`, `\p{Lu}`, and `\p{Ll}` also match
+	 *   letters like "ĸ" or "ℓ", which have no other case. ICU leaves them out.
 	 * - `\G` in a lookbehind doesn't always match where it does in ICU.
 	 * - Data that isn't valid UTF-8 is matched byte by byte and case-sensitively,
 	 *   like MySQL binary strings. Other binary values match as text, so case
@@ -1328,7 +1333,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		} else {
 			$newline = '(*ANY)';
 		}
-		$compiled = '/' . $newline . $this->regexp_translate_pattern( $pattern, $without_g ) . '/' . $modifiers;
+		$compiled = '/' . $newline . $this->regexp_translate_pattern( $pattern, ! $case_sensitive, $without_g ) . '/' . $modifiers;
 
 		/*
 		 * Compile the pattern by matching it against an empty string. Only a compile
@@ -1355,16 +1360,17 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	/**
 	 * Translate a MySQL regex pattern to PCRE syntax.
 	 *
-	 * Splits the pattern into quoted text, escapes, and other characters, so that a
-	 * translation applies only to a whole token.
+	 * Splits the pattern into quoted text, escapes, POSIX classes, and other characters,
+	 * so that a translation applies only to a whole token.
 	 *
-	 * @param string $pattern   The regex pattern.
-	 * @param bool   $without_g Whether "\G" never matches.
+	 * @param string $pattern          The regex pattern.
+	 * @param bool   $case_insensitive Whether the pattern ignores case by default.
+	 * @param bool   $without_g        Whether "\G" never matches.
 	 *
 	 * @throws Exception If the pattern can't be split.
 	 * @return string Pattern safe to wrap in slash delimiters.
 	 */
-	private function regexp_translate_pattern( $pattern, $without_g ) {
+	private function regexp_translate_pattern( $pattern, $case_insensitive, $without_g ) {
 		$tokens = array(
 			// The delimiter, and NUL bytes, which PHP before 8.2 rejects in patterns.
 			'/'    => '\\/',
@@ -1383,8 +1389,29 @@ class WP_SQLite_PDO_User_Defined_Functions {
 			$tokens['\\G'] = '\\b\\B';
 		}
 
+		/*
+		 * With the "u" modifier, PCRE reads [:upper:] and [:lower:] case-sensitively
+		 * even when the pattern ignores case, where ICU matches both cases. PCRE 10.44
+		 * and older read \p{Lu} and \p{Ll} the same way. \p{L&} would ignore "(?-i)", so
+		 * a pattern with it keeps PCRE's classes.
+		 */
+		if ( $case_insensitive && ! preg_match( '/\(\?[a-zA-Z]*-[a-zA-Z]*i/', $pattern ) ) {
+			$tokens += array(
+				'[:upper:]'  => '\\p{L&}',
+				'[:^upper:]' => '\\P{L&}',
+				'[:lower:]'  => '\\p{L&}',
+				'[:^lower:]' => '\\P{L&}',
+				'\\p{Lu}'    => '\\p{L&}',
+				'\\P{Lu}'    => '\\P{L&}',
+				'\\p{Ll}'    => '\\p{L&}',
+				'\\P{Ll}'    => '\\P{L&}',
+			);
+		}
+
+		// A property name stops at a backslash, so that a long run of "\p{" doesn't
+		// scan the rest of the pattern each time.
 		$translated = preg_replace_callback(
-			'/\\\\Q.*?(?:\\\\E|\z)|\\\\.|[\/\0]/s',
+			'/\\\\Q.*?(?:\\\\E|\z)|\[:\^?\w+:\]|\\\\[pP]\{[^}\\\\]*\}|\\\\.|[\/\0]/s',
 			function ( $parts ) use ( $tokens ) {
 				return $this->regexp_translate_token( $parts[0], $tokens );
 			},
