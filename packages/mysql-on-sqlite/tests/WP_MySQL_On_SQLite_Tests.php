@@ -381,15 +381,26 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 	public static function regexpLikeErrors() {
 		return array(
 			'invalid pattern' => array( "REGEXP_LIKE('abc', '(abc')", 'Invalid regular expression: (abc.' ),
-			'unknown escape'  => array( "REGEXP_LIKE('y', '\\\\y')", 'Invalid regular expression: \\y.' ),
 			'short escape'    => array( "REGEXP_LIKE('u004', '\\\\u004')", 'Invalid regular expression: \\u004.' ),
 			'bad property'    => array( "REGEXP_LIKE('a', '\\\\p{Foo}')", 'Invalid regular expression: \\p{Foo}.' ),
-			'operator escape' => array( "'y' REGEXP '\\\\y'", 'Invalid regular expression: \\y.' ),
-			'binary escape'   => array( "X'FF' REGEXP '\\\\y'", 'Invalid regular expression: \\y.' ),
 			'extra argument'  => array(
 				"REGEXP_LIKE('abc', 'abc', 'c', 'extra')",
 				'SQLSTATE[HY000]: General error: 1 wrong number of arguments to function REGEXP_LIKE()',
 			),
+		);
+	}
+
+	public function testRegexpOperatorLiteralEscape() {
+		// The REGEXP operator reads "\y" literally too, also when it matches bytes.
+		$this->assertQuery( "SELECT 'y' REGEXP '\\\\y' AS text_result, X'FF79' REGEXP '\\\\y' AS binary_result" );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'text_result'   => '1',
+					'binary_result' => '1',
+				),
+			),
+			$this->last_result
 		);
 	}
 
@@ -1184,6 +1195,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			'REGEXP_REPLACE, second occurrence' => array( "REGEXP_REPLACE('aab', '\\\\Ga', '-', 1, 2)", 'a-b' ),
 			'REGEXP_REPLACE, in a comment'      => array( "REGEXP_REPLACE('aa', '(?#\\\\G)a', 'x', 2)", 'ax' ),
 			'REGEXP_REPLACE, escaped backslash' => array( "REGEXP_REPLACE('a\\\\Gb', '\\\\\\\\G', '-', 2)", 'a-b' ),
+			'REGEXP_REPLACE, letter in a set'   => array( "REGEXP_REPLACE('aGb', '[\\\\G]', 'x', 2)", 'axb' ),
 
 			'REGEXP_SUBSTR, after empty match'  => array( "REGEXP_SUBSTR('abc', '\\\\G', 1, 2)", null ),
 			'REGEXP_SUBSTR, pos'                => array( "REGEXP_SUBSTR('abc', '\\\\G.', 2)", null ),
@@ -1584,6 +1596,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 	/**
 	 * @dataProvider regexpSetCases
 	 * @dataProvider regexpCodePointEscapeCases
+	 * @dataProvider regexpLiteralEscapeCases
 	 */
 	public function testRegexpIcuSyntax( $pattern, $subject, $expected ) {
 		$this->assertQuery(
@@ -1682,6 +1695,22 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			'octal past 0377'           => array( '\\0400', ' 0', '< 0>' ),
 			'octal NUL'                 => array( '\\00', 'a', 'a' ),
 			'octal range'               => array( '[\\0101-\\0103]', 'ABCD', '<A><B><C>D' ),
+		);
+	}
+
+	public static function regexpLiteralEscapeCases() {
+		return array(
+			'"\\y"'                   => array( '\\y', 'xy', 'x<y>' ),
+			'"\\j" in a set'          => array( '[\\j]+', 'jjx', '<jj>x' ),
+			'"\\K"'                   => array( 'a\\Kb', 'abaKb', 'ab<aKb>' ),
+			'"\\K" in a lookbehind'   => array( '(?<=\\Ka)', 'Kaa', 'Ka<>a' ),
+			'"\\C"'                   => array( '\\C', 'aC', 'a<C>' ),
+			'"\\E" outside of quotes' => array( 'a\\Eb', 'abaEb', 'ab<aEb>' ),
+			'"\\b" in a set'          => array( '[\\b]', 'ab', 'a<b>' ),
+			'"\\z" in a set'          => array( '[\\z]+', 'azz', 'a<zz>' ),
+			'"\\X" in a set'          => array( '[\\X]', 'aX', 'a<X>' ),
+			'"\\b" outside of a set'  => array( '\\bb', 'ab b', 'ab <b>' ),
+			'"\\z" outside of a set'  => array( 'a\\z', 'aa', 'a<a>' ),
 		);
 	}
 

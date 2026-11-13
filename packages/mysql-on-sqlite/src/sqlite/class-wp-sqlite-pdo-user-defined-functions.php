@@ -115,6 +115,19 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 */
 	private const REGEXP_CODE_POINT_ESCAPE = '\\\\u[dD][89abAB][0-9a-fA-F]{2}\\\\u[dD][c-fC-F][0-9a-fA-F]{2}|\\\\u[0-9a-fA-F]{4}|\\\\U[0-9a-fA-F]{8}|\\\\0(?:[0-3][0-7]{0,2}|[4-7][0-7]?)';
 
+	/**
+	 * Letters that ICU reads literally after a backslash, outside of a set. PCRE rejects
+	 * most of them, and reads some differently, like "\K", which moves the start of a
+	 * match, even to before the place where the search started.
+	 */
+	private const REGEXP_LITERAL_ESCAPES = 'gijlmoqyCEFIJKLMOTY';
+
+	/**
+	 * Letters that ICU reads literally after a backslash, in a set. PCRE rejects most of
+	 * them, and reads some differently, like "\b".
+	 */
+	private const REGEXP_LITERAL_SET_ESCAPES = 'bgijklmoqyzABCEFGIJKLMORTXYZ';
+
 	/** @var string[] Compiled PCRE patterns, keyed by byte mode, "\G" variant, match type, and pattern. */
 	private $regexp_cache = array();
 
@@ -1245,9 +1258,9 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * (UTF-8) modifier is applied unless byte-oriented matching is requested.
 	 * Case-insensitive is the default.
 	 *
-	 * MySQL uses ICU, which differs from PCRE in some syntax, like ICU-only escapes.
-	 * The known failures of the REGEXP test suites list these cases. Other known
-	 * differences:
+	 * MySQL uses ICU, which differs from PCRE in some syntax, like `\N{...}` and
+	 * property names. The known failures of the REGEXP test suites list these cases.
+	 * Other known differences:
 	 *
 	 * - Text matching ignores case unless the `c` flag is passed, as the column
 	 *   collation isn't known here.
@@ -1311,9 +1324,9 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		}
 
 		/*
-		 * PHP 7 can read an unknown escape as literal text. For "\y", that matches ICU,
-		 * but ICU rejects "\u004", which has too few digits. The "X" modifier makes all
-		 * of them errors, like in PHP 8.
+		 * PHP 7 can read an unknown escape as literal text. ICU rejects the ones that are
+		 * left after the translation, like "\u004", which has too few digits. The "X"
+		 * modifier makes them errors, like in PHP 8.
 		 */
 		$modifiers = $binary_mode ? 'X' : 'uX';
 		if ( ! $case_sensitive ) {
@@ -1385,12 +1398,6 @@ class WP_SQLite_PDO_User_Defined_Functions {
 			// PCRE's [:punct:] also holds ASCII symbols like "+", where ICU's doesn't.
 			'[:punct:]'  => '\\p{P}',
 			'[:^punct:]' => '\\P{P}',
-
-			/*
-			 * ICU reads "\K" as "K". In PCRE, "\K" moves the start of the match, even to
-			 * before the place where the search started, like in "(?<=\Ka)".
-			 */
-			'\\K'        => 'K',
 		);
 		if ( $without_g ) {
 			// A position can't be both a word boundary and not one, so "\b\B" never
@@ -1489,7 +1496,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	private function regexp_parse_set( array $parts, &$position, $pattern, $tokens ) {
 		// An escape is translated, and another character is escaped if PCRE needs it.
 		$literal = function ( $part ) use ( $tokens ) {
-			return '\\' === $part[0] ? $this->regexp_translate_token( $part, $tokens ) : ( $tokens[ $part ] ?? preg_quote( $part ) );
+			return '\\' === $part[0] ? $this->regexp_translate_token( $part, $tokens, true ) : ( $tokens[ $part ] ?? preg_quote( $part ) );
 		};
 
 		$negated  = '[^' === $parts[ $position++ ];
@@ -1624,10 +1631,11 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 *
 	 * @param string   $token  The token.
 	 * @param string[] $tokens Translations of tokens.
+	 * @param bool     $in_set Whether the token is in a set.
 	 *
 	 * @return string The PCRE equivalent.
 	 */
-	private function regexp_translate_token( $token, $tokens ) {
+	private function regexp_translate_token( $token, $tokens, $in_set = false ) {
 		if ( '\\Q' === substr( $token, 0, 2 ) ) {
 			// Quoting can't hold the delimiter or NUL bytes, so they are escaped between
 			// two quotes. Quoted text that runs to the end gets an "\E", so that a trailing
@@ -1640,6 +1648,10 @@ class WP_SQLite_PDO_User_Defined_Functions {
 				)
 			);
 			return '\\E' === substr( $token, -2 ) ? $quoted : $quoted . '\\E';
+		}
+		$letters = $in_set ? self::REGEXP_LITERAL_SET_ESCAPES : self::REGEXP_LITERAL_ESCAPES;
+		if ( 2 === strlen( $token ) && '\\' === $token[0] && false !== strpos( $letters, $token[1] ) ) {
+			return $token[1];
 		}
 		if ( isset( $tokens[ $token ] ) ) {
 			return $tokens[ $token ];
