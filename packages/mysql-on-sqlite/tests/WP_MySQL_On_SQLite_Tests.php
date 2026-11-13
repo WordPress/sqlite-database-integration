@@ -266,6 +266,63 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		);
 	}
 
+	public function testRegexpFunctionsWithTableColumns() {
+		$this->assertQuery(
+			"INSERT INTO _options (option_name, option_value) VALUES
+				('test-ignore', 'unchanged'),
+				('test-remove', 'unchanged'),
+				('keep', 'unchanged');"
+		);
+
+		$this->assertQuery(
+			"SELECT
+				option_name,
+				REGEXP_REPLACE(option_name, '(-ignore|-remove)\$', '') AS replacement_result,
+				REGEXP_SUBSTR(option_name, '[^-]+\$') AS substring_result,
+				REGEXP_INSTR(option_name, '-') AS position_result
+			FROM _options
+			WHERE REGEXP_LIKE(option_name, '^test-')
+			ORDER BY option_name"
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'option_name'        => 'test-ignore',
+					'replacement_result' => 'test',
+					'substring_result'   => 'ignore',
+					'position_result'    => '5',
+				),
+				(object) array(
+					'option_name'        => 'test-remove',
+					'replacement_result' => 'test',
+					'substring_result'   => 'remove',
+					'position_result'    => '5',
+				),
+			),
+			$this->last_result
+		);
+
+		$this->assertQuery(
+			"UPDATE _options
+			SET option_value = REGEXP_REPLACE(option_name, '^test-', '')
+			WHERE REGEXP_LIKE(option_name, '^test-')"
+		);
+		$this->assertQuery( "SELECT option_name, option_value FROM _options WHERE option_value != 'unchanged' ORDER BY option_name" );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'option_name'  => 'test-ignore',
+					'option_value' => 'ignore',
+				),
+				(object) array(
+					'option_name'  => 'test-remove',
+					'option_value' => 'remove',
+				),
+			),
+			$this->last_result
+		);
+	}
+
 	/**
 	 * @dataProvider regexpLikeQueries
 	 */
@@ -356,26 +413,51 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 	}
 
 	/**
-	 * @dataProvider regexpLikeBinaryDataCases
+	 * @dataProvider regexpBinaryDataCases
 	 */
-	public function testRegexpLikeMatchesBinaryDataByBytes( $value, $sql, $expected ) {
-		// Like the REGEXP operator, REGEXP_LIKE() matches data that is not valid UTF-8
-		// byte by byte, and case-sensitively, unless the match type says otherwise.
+	public function testRegexpFunctionsMatchBinaryDataByBytes( $value, $sql, $expected ) {
+		// Like the REGEXP operator, the functions match data that is not valid UTF-8 byte
+		// by byte, and case-sensitively, unless the match type says otherwise. Positions
+		// count bytes then, like in MySQL binary strings.
 		$this->assertQuery( 'CREATE TABLE blobs (b BLOB)' );
 		$this->assertQuery( "INSERT INTO blobs VALUES ($value)" );
 		$this->assertQuery( "SELECT $sql AS r FROM blobs" );
 		$this->assertSame( $expected, $this->last_result[0]->r );
 	}
 
-	public static function regexpLikeBinaryDataCases() {
+	public static function regexpBinaryDataCases() {
 		return array(
-			'any byte'            => array( "X'61FF62'", "REGEXP_LIKE(b, 'a.b')", '1' ),
-			'other case'          => array( "X'61FF62'", "REGEXP_LIKE(b, 'A.B')", '0' ),
-			'ignore case'         => array( "X'61FF62'", "REGEXP_LIKE(b, 'A.B', 'i')", '1' ),
-			'match case'          => array( "X'61FF62'", "REGEXP_LIKE(b, 'a.b', 'c')", '1' ),
-			'0x85 in a character' => array( "X'78C485FF79'", "REGEXP_LIKE(b, 'x.*y')", '1' ),
-			'CR'                  => array( "X'610D62FF'", "REGEXP_LIKE(b, 'a.b')", '0' ),
-			'CR, Unix line break' => array( "X'610D62FF'", "REGEXP_LIKE(b, 'a.b', 'u')", '1' ),
+			'any byte'                         => array( "X'61FF62'", "REGEXP_LIKE(b, 'a.b')", '1' ),
+			'other case'                       => array( "X'61FF62'", "REGEXP_LIKE(b, 'A.B')", '0' ),
+			'ignore case'                      => array( "X'61FF62'", "REGEXP_LIKE(b, 'A.B', 'i')", '1' ),
+			'match case'                       => array( "X'61FF62'", "REGEXP_LIKE(b, 'a.b', 'c')", '1' ),
+			'0x85 in a character'              => array( "X'78C485FF79'", "REGEXP_LIKE(b, 'x.*y')", '1' ),
+			'CR'                               => array( "X'610D62FF'", "REGEXP_LIKE(b, 'a.b')", '0' ),
+			'CR, Unix line break'              => array( "X'610D62FF'", "REGEXP_LIKE(b, 'a.b', 'u')", '1' ),
+
+			'REGEXP_REPLACE, any byte'         => array( "X'61FF62'", "REGEXP_REPLACE(b, 'a.b', 'x')", 'x' ),
+			'REGEXP_REPLACE, other case'       => array( "X'61FF41'", "REGEXP_REPLACE(b, 'a', 'x')", "x\xFFA" ),
+			'REGEXP_REPLACE, ignore case'      => array( "X'61FF41'", "REGEXP_REPLACE(b, 'a', 'x', 1, 0, 'i')", "x\xFFx" ),
+			'REGEXP_REPLACE, pos'              => array( "X'C485FF61'", "REGEXP_REPLACE(b, '.', 'x', 3)", "\xC4\x85xx" ),
+			'REGEXP_REPLACE, pos one past end' => array( "X'C485FF'", "REGEXP_REPLACE(b, '\$', 'x', 4)", "\xC4\x85\xFFx" ),
+			'REGEXP_REPLACE, occurrence'       => array( "X'C485FF'", "REGEXP_REPLACE(b, '(.)', '[\$1]', 2, 1)", "\xC4[\x85]\xFF" ),
+			'REGEXP_REPLACE, empty matches'    => array( "X'C485FF'", "REGEXP_REPLACE(b, 'x*', '-')", "-\xC4-\x85-\xFF-" ),
+
+			'REGEXP_SUBSTR, any byte'          => array( "X'61FF62'", "REGEXP_SUBSTR(b, 'a.b')", "a\xFFb" ),
+			'REGEXP_SUBSTR, other case'        => array( "X'61FF41'", "REGEXP_SUBSTR(b, 'a.a')", null ),
+			'REGEXP_SUBSTR, ignore case'       => array( "X'61FF41'", "REGEXP_SUBSTR(b, 'a.a', 1, 1, 'i')", "a\xFFA" ),
+			'REGEXP_SUBSTR, pos'               => array( "X'C485FF61'", "REGEXP_SUBSTR(b, '.', 2)", "\x85" ),
+			'REGEXP_SUBSTR, pos one past end'  => array( "X'C485FF'", "REGEXP_SUBSTR(b, 'x*', 4)", '' ),
+			'REGEXP_SUBSTR, occurrence'        => array( "X'C485FF'", "REGEXP_SUBSTR(b, '.', 1, 3)", "\xFF" ),
+			'REGEXP_SUBSTR, empty matches'     => array( "X'C485FF'", "REGEXP_SUBSTR(b, 'x*', 1, 4)", '' ),
+
+			'REGEXP_INSTR, other case'         => array( "X'61FF41'", "REGEXP_INSTR(b, 'A')", '3' ),
+			'REGEXP_INSTR, ignore case'        => array( "X'61FF41'", "REGEXP_INSTR(b, 'A', 1, 1, 0, 'i')", '1' ),
+			'REGEXP_INSTR, position'           => array( "X'C485FF61'", "REGEXP_INSTR(b, 'a')", '4' ),
+			'REGEXP_INSTR, end position'       => array( "X'C485FF61'", "REGEXP_INSTR(b, '.\$', 1, 1, 1)", '5' ),
+			'REGEXP_INSTR, pos'                => array( "X'C485FF61'", "REGEXP_INSTR(b, '^.', 2)", '2' ),
+			'REGEXP_INSTR, occurrence'         => array( "X'C485FF'", "REGEXP_INSTR(b, '.', 1, 3)", '3' ),
+			'REGEXP_INSTR, empty matches'      => array( "X'C485FF'", "REGEXP_INSTR(b, 'x*', 1, 3)", '3' ),
 		);
 	}
 
@@ -427,13 +509,17 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$this->assertQuery(
 			"SELECT
 				'$subject' REGEXP '^(a|b)*\$' AS operator_result,
-				REGEXP_LIKE('$subject', '^(a|b)*\$') AS like_result"
+				REGEXP_LIKE('$subject', '^(a|b)*\$') AS like_result,
+				LENGTH(REGEXP_SUBSTR('$subject', '(a|b)+')) AS substr_length,
+				REGEXP_INSTR('$subject', '(a|b)+\$', 1, 1, 1) AS instr_result"
 		);
 		$this->assertEquals(
 			array(
 				(object) array(
 					'operator_result' => '1',
 					'like_result'     => '1',
+					'substr_length'   => '20000',
+					'instr_result'    => '20001',
 				),
 			),
 			$this->last_result
@@ -518,7 +604,8 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 				s REGEXP p AS matched,
 				s NOT REGEXP p AS not_matched,
 				s REGEXP BINARY p AS binary_matched,
-				REGEXP_LIKE(s, p) AS like_matched
+				REGEXP_LIKE(s, p) AS like_matched,
+				REGEXP_INSTR(s, p) AS position
 			FROM nul_patterns ORDER BY id'
 		);
 		$this->assertEquals(
@@ -528,30 +615,35 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 					'not_matched'    => '0',
 					'binary_matched' => '0',
 					'like_matched'   => '1',
+					'position'       => '2',
 				),
 				(object) array(
 					'matched'        => '0',
 					'not_matched'    => '1',
 					'binary_matched' => '0',
 					'like_matched'   => '0',
+					'position'       => '0',
 				),
 				(object) array(
 					'matched'        => '1',
 					'not_matched'    => '0',
 					'binary_matched' => '0',
 					'like_matched'   => '1',
+					'position'       => '2',
 				),
 				(object) array(
 					'matched'        => '1',
 					'not_matched'    => '0',
 					'binary_matched' => '1',
 					'like_matched'   => '1',
+					'position'       => '1',
 				),
 				(object) array(
 					'matched'        => '1',
 					'not_matched'    => '0',
 					'binary_matched' => '0',
 					'like_matched'   => '1',
+					'position'       => '1',
 				),
 			),
 			$this->last_result
@@ -690,6 +782,30 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$this->assertSame( '1', $this->last_result[0]->r );
 	}
 
+	public function testRegexpEscapedKIsLiteral() {
+		// Like ICU, read "\K" as "K", also in a set. In quoted text, it stays "\K".
+		$this->assertQuery(
+			"SELECT
+				REGEXP_LIKE('K', '\\\\K') AS letter,
+				REGEXP_LIKE('ab', 'a\\\\Kb') AS no_reset,
+				'aKb' REGEXP 'a\\\\Kb' AS operator_result,
+				REGEXP_LIKE('K', '[\\\\K]') AS in_set,
+				REGEXP_LIKE('\\\\K', '^\\\\Q\\\\K\\\\E\$') AS quoted"
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'letter'          => '1',
+					'no_reset'        => '0',
+					'operator_result' => '1',
+					'in_set'          => '1',
+					'quoted'          => '1',
+				),
+			),
+			$this->last_result
+		);
+	}
+
 	/**
 	 * @dataProvider regexpUnterminatedQuoteCases
 	 */
@@ -728,6 +844,633 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 	}
 
 	/**
+	 * @dataProvider regexpReplaceBasicCases
+	 */
+	public function testRegexpReplaceBasic( $expr, $pattern, $replacement, $expected ) {
+		$this->assertQuery(
+			sprintf(
+				"SELECT REGEXP_REPLACE('%s', '%s', '%s') AS r",
+				addslashes( $expr ),
+				addslashes( $pattern ),
+				addslashes( $replacement )
+			)
+		);
+		$this->assertSame( $expected, $this->last_result[0]->r );
+	}
+
+	public static function regexpReplaceBasicCases() {
+		return array(
+			'simple'           => array( 'abcabc', 'b', 'X', 'aXcaXc' ),
+			'no match'         => array( 'abc', 'z', 'X', 'abc' ),
+			'quantifier'       => array( 'aabbcc', 'b+', 'B', 'aaBcc' ),
+			'groups'           => array( 'John Doe', '(\\w+) (\\w+)', '$2 $1', 'Doe John' ),
+			'case-insensitive' => array( 'ABC', 'abc', 'x', 'x' ),
+		);
+	}
+
+	/**
+	 * @dataProvider regexpReplaceErrors
+	 */
+	public function testRegexpReplaceErrors( $sql, $message ) {
+		$this->assertQueryError( "SELECT $sql", $message );
+	}
+
+	public static function regexpReplaceErrors() {
+		// Like MySQL, check the pattern and pos before NULL arguments make the result NULL.
+		$pos_error = "Incorrect parameters in the call to native function 'regexp_replace'";
+		return array(
+			'pos zero'                             => array( "REGEXP_REPLACE('abc', 'a', 'X', 0)", $pos_error ),
+			'pos negative'                         => array( "REGEXP_REPLACE('abc', 'a', 'X', -1)", $pos_error ),
+			'pos zero, empty subject'              => array( "REGEXP_REPLACE('', 'a', 'X', 0)", $pos_error ),
+			'pos zero, NULL subject'               => array( "REGEXP_REPLACE(NULL, 'a', 'X', 0)", $pos_error ),
+			'pos zero, NULL pattern'               => array( "REGEXP_REPLACE('abc', NULL, 'X', 0)", $pos_error ),
+			'pos zero, NULL replacement'           => array( "REGEXP_REPLACE('abc', 'a', NULL, 0)", $pos_error ),
+			'invalid pattern, pos zero'            => array( "REGEXP_REPLACE('abc', '(', 'X', 0)", 'Invalid regular expression: (.' ),
+			'invalid pattern, NULL subject'        => array( "REGEXP_REPLACE(NULL, '(', 'X')", 'Invalid regular expression: (.' ),
+			'invalid pattern, NULL pos'            => array( "REGEXP_REPLACE('abc', '(', 'X', NULL)", 'Invalid regular expression: (.' ),
+			'empty pattern, NULL subject'          => array( "REGEXP_REPLACE(NULL, '', 'X')", 'Illegal argument to a regular expression.' ),
+			'pos two past end'                     => array( "REGEXP_REPLACE('abc', 'a', 'X', 5)", 'Index out of bounds in regular expression search.' ),
+			'pos far past end'                     => array( "REGEXP_REPLACE('abc', 'a', 'X', 10)", 'Index out of bounds in regular expression search.' ),
+			'invalid match type'                   => array( "REGEXP_REPLACE('abc', 'a', 'X', 1, 0, 'x')", 'Incorrect arguments to regexp_replace' ),
+			'invalid match type, NULL subject'     => array( "REGEXP_REPLACE(NULL, 'a', 'X', 1, 0, 'x')", 'Incorrect arguments to regexp_replace' ),
+			'invalid match type, NULL replacement' => array( "REGEXP_REPLACE('abc', 'a', NULL, 1, 0, 'x')", 'Incorrect arguments to regexp_replace' ),
+			'extra argument'                       => array(
+				"REGEXP_REPLACE('abc', 'a', 'x', 1, 0, 'c', 'extra')",
+				'SQLSTATE[HY000]: General error: 1 wrong number of arguments to function REGEXP_REPLACE()',
+			),
+		);
+	}
+
+	/**
+	 * @dataProvider regexpReplaceFullCases
+	 */
+	public function testRegexpReplaceFull( $sql, $expected ) {
+		$this->assertQuery( "SELECT $sql AS r" );
+		$this->assertSame( $expected, $this->last_result[0]->r );
+	}
+
+	public static function regexpReplaceFullCases() {
+		return array(
+			// pos: only replace from position 3 onward (1-based, character).
+			'pos=3'                   => array( "REGEXP_REPLACE('abcabc', 'b', 'X', 3)", 'abcaXc' ),
+			// occurrence=1: replace only the first match after pos.
+			'occurrence=1 from start' => array( "REGEXP_REPLACE('abcabc', 'b', 'X', 1, 1)", 'aXcabc' ),
+			// occurrence=2 from start.
+			'occurrence=2 from start' => array( "REGEXP_REPLACE('abcabc', 'b', 'X', 1, 2)", 'abcaXc' ),
+			// occurrence=0 means all matches from pos.
+			'occurrence=0 from pos 3' => array( "REGEXP_REPLACE('abcabc', 'b', 'X', 3, 0)", 'abcaXc' ),
+			// match_type c with default pos/occurrence.
+			'match_type c'            => array( "REGEXP_REPLACE('ABC', 'abc', 'x', 1, 0, 'c')", 'ABC' ),
+			// match_type i.
+			'match_type i'            => array( "REGEXP_REPLACE('ABC', 'abc', 'x', 1, 0, 'i')", 'x' ),
+			// Multi-byte pos: skip the first character, replace only in the rest.
+			'multibyte pos'           => array( "REGEXP_REPLACE('éabc', 'a', 'X', 2)", 'éXbc' ),
+			// MySQL allows pos = char_count + 1.
+			'pos one past end'        => array( "REGEXP_REPLACE('abc', 'a', 'X', 4)", 'abc' ),
+			'zero-width at end'       => array( "REGEXP_REPLACE('abc', '\$', 'X', 4)", 'abcX' ),
+			'null expr'               => array( "REGEXP_REPLACE(NULL, 'a', 'b')", null ),
+			'null pattern'            => array( "REGEXP_REPLACE('abc', NULL, 'b')", null ),
+			'null replacement'        => array( "REGEXP_REPLACE('abc', 'a', NULL)", null ),
+			// A NULL match_type returns NULL before the pattern and pos are checked.
+			'null match_type first'   => array( "REGEXP_REPLACE('abc', '(abc', 'x', 0, 0, NULL)", null ),
+			// A NULL occurrence returns NULL before pos is checked.
+			'null occurrence, pos 0'  => array( "REGEXP_REPLACE('abc', 'a', 'x', 0, NULL)", null ),
+		);
+	}
+
+	public function testRegexpReplaceNumericOperands() {
+		$this->assertQuery( "SELECT REGEXP_REPLACE(123, '2', 9) AS r" );
+		$this->assertSame( '193', $this->last_result[0]->r );
+	}
+
+	public function testRegexpReplaceOccurrenceBeyondMatches() {
+		// MySQL: if occurrence exceeds the number of matches, return subject unchanged.
+		$this->assertQuery( "SELECT REGEXP_REPLACE('abc', 'a', 'X', 1, 5) AS r" );
+		$this->assertSame( 'abc', $this->last_result[0]->r );
+	}
+
+	public function testRegexpReplaceNegativeOccurrenceClamped() {
+		// MySQL clamps negative occurrence to 1; 0 still means "replace all".
+		$this->assertQuery( "SELECT REGEXP_REPLACE('abcabc', 'b', 'X', 1, -100) AS r" );
+		$this->assertSame( 'aXcabc', $this->last_result[0]->r );
+	}
+
+	public function testRegexpReplaceOccurrenceBackreferenceForms() {
+		$this->assertQuery( "SELECT REGEXP_REPLACE('abc', '(a)(b)(c)', '\$2\$1', 1, 1) AS r" );
+		$this->assertSame( 'ba', $this->last_result[0]->r );
+	}
+
+	public function testRegexpReplaceBraceBackrefIsInvalid() {
+		// MySQL/ICU rejects "${N}"; only named groups are referenced with braces.
+		$this->assertQueryError(
+			"SELECT REGEXP_REPLACE('abc', '(a)(b)(c)', '\${2}\${1}', 1, 1)",
+			'A capture group has an invalid name.'
+		);
+	}
+
+	public function testRegexpReplaceNamedGroupReference() {
+		$this->assertQuery( "SELECT REGEXP_REPLACE('abc', '(?<x>b)', '[\${x}]') AS r" );
+		$this->assertSame( 'a[b]c', $this->last_result[0]->r );
+		$this->assertQuery( "SELECT REGEXP_REPLACE('abc', '(?<x>b)(?<y>c)', '[\${y}\${x}\$1]') AS r" );
+		$this->assertSame( 'a[cbb]', $this->last_result[0]->r );
+		$this->assertQuery( "SELECT REGEXP_REPLACE('abc', '(?<x1>b)', '[\${x1}]') AS r" );
+		$this->assertSame( 'a[b]c', $this->last_result[0]->r );
+		$this->assertQuery( "SELECT REGEXP_REPLACE('abc', '(?<B>b)', '[\${B}]') AS r" );
+		$this->assertSame( 'a[b]c', $this->last_result[0]->r );
+		$this->assertQuery( "SELECT REGEXP_REPLACE('abc', '(?<x>b)', '[\${x}1]') AS r" );
+		$this->assertSame( 'a[b1]c', $this->last_result[0]->r );
+		$this->assertQuery( "SELECT REGEXP_REPLACE('abc', '(?<x>b)', '\\\\\${x}') AS r" );
+		$this->assertSame( 'a${x}c', $this->last_result[0]->r );
+
+		// Unmatched named groups expand to an empty string.
+		$this->assertQuery( "SELECT REGEXP_REPLACE('ac', '(?<x>b)?c', '[\${x}]') AS r" );
+		$this->assertSame( 'a[]', $this->last_result[0]->r );
+		$this->assertQuery( "SELECT REGEXP_REPLACE('a', 'a(?<x>b)?', '[\${x}]') AS r" );
+		$this->assertSame( '[]', $this->last_result[0]->r );
+	}
+
+	public function testRegexpReplaceInvalidNamedGroupReference() {
+		$cases = array(
+			array( '(?<x>b)', '[${x]' ),
+			array( '(?<x>b)', '[${}]' ),
+			array( '(?<x>b)', '[${y}]' ),
+			array( '(?<x>b)', '[${ x}]' ),
+			array( '(?<x>b)', '[$x]' ),
+			array( '(?<ab>b)', '[${a}]' ),
+			array( '(?<B>b)', '[${b}]' ),
+			// ICU names in "${name}" exclude the digit 0.
+			array( '(?<x0>b)', '[${x0}]' ),
+		);
+		foreach ( $cases as $case ) {
+			list( $pattern, $replacement ) = $case;
+			$this->assertQueryError(
+				"SELECT REGEXP_REPLACE('abc', '$pattern', '$replacement')",
+				'A capture group has an invalid name.'
+			);
+		}
+	}
+
+	public function testRegexpReplaceBackslashDigitIsLiteral() {
+		// MySQL strips backslash before any character; "\2\1" becomes "21".
+		$this->assertQuery( "SELECT REGEXP_REPLACE('xyzabc', '(a)(b)(c)', '\\\\2\\\\1', 1, 1) AS r" );
+		$this->assertSame( 'xyz21', $this->last_result[0]->r );
+	}
+
+	public function testRegexpReplaceFullMatchBackref() {
+		// "$0" is the whole match.
+		$this->assertQuery( "SELECT REGEXP_REPLACE('abc', 'b', '[\$0]') AS r" );
+		$this->assertSame( 'a[b]c', $this->last_result[0]->r );
+	}
+
+	public function testRegexpReplaceBackslashZeroIsLiteral() {
+		// "\0" is literal "0", not the full match.
+		$this->assertQuery( "SELECT REGEXP_REPLACE('abc', 'b', '[\\\\0]') AS r" );
+		$this->assertSame( 'a[0]c', $this->last_result[0]->r );
+	}
+
+	public function testRegexpReplaceDollarDigitGreedyFallback() {
+		// "$10" with a single capture group is "$1" followed by literal "0".
+		$this->assertQuery( "SELECT REGEXP_REPLACE('abc', '(b)', '[\$10]') AS r" );
+		$this->assertSame( 'a[b0]c', $this->last_result[0]->r );
+	}
+
+	public function testRegexpReplaceDollarWithoutDigitErrors() {
+		$this->assertQueryError(
+			"SELECT REGEXP_REPLACE('abc', 'b', 'x\$y')",
+			'A capture group has an invalid name.'
+		);
+	}
+
+	public function testRegexpReplaceDollarOutOfBoundsErrors() {
+		$this->assertQueryError(
+			"SELECT REGEXP_REPLACE('abc', '(b)', '[\$9]')",
+			'Index out of bounds in regular expression search.'
+		);
+	}
+
+	public function testRegexpReplacePreservesNumericCaptureIndexes() {
+		$this->assertQuery( "SELECT REGEXP_REPLACE('a', '(?<x>a)(?<y>b)?', '[\$2]') AS r" );
+		$this->assertSame( '[]', $this->last_result[0]->r );
+		$this->assertQuery( "SELECT REGEXP_REPLACE('a', '(a)|(b)', '[\$2]') AS r" );
+		$this->assertSame( '[]', $this->last_result[0]->r );
+	}
+
+	public function testRegexpReplaceTrailingUnmatchedGroups() {
+		// Unmatched groups at the end of the pattern still count as groups.
+		$this->assertQuery( "SELECT REGEXP_REPLACE('a', 'a(b)?', '[\$1]') AS r" );
+		$this->assertSame( '[]', $this->last_result[0]->r );
+		$this->assertQuery( "SELECT REGEXP_REPLACE('aa', 'a(b)?', '[\$1]') AS r" );
+		$this->assertSame( '[][]', $this->last_result[0]->r );
+
+		// "$10" refers to the tenth group even when groups 2-10 did not match.
+		$pattern = '(a)(b)?(c)?(d)?(e)?(f)?(g)?(h)?(i)?(j)?';
+		$this->assertQuery( "SELECT REGEXP_REPLACE('ab', '$pattern', '[\$10]') AS r" );
+		$this->assertSame( '[]', $this->last_result[0]->r );
+		$this->assertQuery( "SELECT REGEXP_REPLACE('ab', '$pattern', '[\$11]') AS r" );
+		$this->assertSame( '[a1]', $this->last_result[0]->r );
+	}
+
+	public function testRegexpReplaceTrailingBackslashDropped() {
+		// Trailing lone backslash is dropped (matches MySQL).
+		$this->assertQuery( "SELECT REGEXP_REPLACE('a', 'a', 'x\\\\') AS r" );
+		$this->assertSame( 'x', $this->last_result[0]->r );
+	}
+
+	public function testRegexpReplaceBackslashLetterIsLiteral() {
+		// "\q" -> "q" (backslash stripped before any char, including letters).
+		$this->assertQuery( "SELECT REGEXP_REPLACE('abc', 'b', '[\\\\q]') AS r" );
+		$this->assertSame( 'a[q]c', $this->last_result[0]->r );
+	}
+
+	public function testRegexpReplaceOccurrenceLookbehind() {
+		// A lookbehind sees the text before the match, also when only one match is replaced.
+		$this->assertQuery( "SELECT REGEXP_REPLACE('abcabc', '(?<=a)b', 'X', 1, 1) AS r" );
+		$this->assertSame( 'aXcabc', $this->last_result[0]->r );
+		$this->assertQuery( "SELECT REGEXP_REPLACE('abcabc', '(?<=a)b', 'X', 1, 2) AS r" );
+		$this->assertSame( 'abcaXc', $this->last_result[0]->r );
+	}
+
+	public function testRegexpReplaceLookbehindAcrossPos() {
+		// The lookbehind sees bytes before pos because the full subject is kept.
+		$this->assertQuery( "SELECT REGEXP_REPLACE('ab', '(?<=a)b', 'X', 2) AS r" );
+		$this->assertSame( 'aX', $this->last_result[0]->r );
+	}
+
+	public function testRegexpReplaceOccurrenceZeroWidth() {
+		// Zero-width match at a word boundary.
+		$this->assertQuery( "SELECT REGEXP_REPLACE('abc def', '\\\\b', '|', 1, 1) AS r" );
+		$this->assertSame( '|abc def', $this->last_result[0]->r );
+		$this->assertQuery( "SELECT REGEXP_REPLACE('abc def', '\\\\b', '|', 1, 2) AS r" );
+		$this->assertSame( 'abc| def', $this->last_result[0]->r );
+	}
+
+	public function testRegexpReplaceOccurrenceLiteralEscapes() {
+		// \\ -> literal backslash in the replacement. SQL string literal tricks:
+		// PHP source "\\\\\\\\" is 4 backslashes, which SQL parses as 2 backslashes
+		// received by the function; the replacement grammar expander folds those
+		// to a single literal backslash.
+		$this->assertQuery( "SELECT REGEXP_REPLACE('a', 'a', '\\\\\\\\', 1, 1) AS r" );
+		$this->assertSame( '\\', $this->last_result[0]->r );
+	}
+
+	public function testRegexpReplaceEmptyReplacement() {
+		$this->assertQuery( "SELECT REGEXP_REPLACE('abc', 'b', '') AS r" );
+		$this->assertSame( 'ac', $this->last_result[0]->r );
+	}
+
+	public function testRegexpReplaceLeavesEmptySubjectUnchanged() {
+		$this->assertQuery( "SELECT REGEXP_REPLACE('', '\$', 'X') AS r" );
+		$this->assertSame( '', $this->last_result[0]->r );
+		$this->assertQuery( "SELECT REGEXP_REPLACE('', '\$', '\$x') AS r" );
+		$this->assertSame( '', $this->last_result[0]->r );
+	}
+
+	/**
+	 * @dataProvider regexpMatchEndAnchorCases
+	 */
+	public function testRegexpMatchEndAnchor( $sql, $expected ) {
+		// Like in ICU, "\G" matches only at the start of the subject and where the
+		// previous match ended. So it doesn't match at pos, or after an empty match.
+		$this->assertQuery( "SELECT $sql AS r" );
+		$this->assertSame( $expected, $this->last_result[0]->r );
+	}
+
+	public static function regexpMatchEndAnchorCases() {
+		return array(
+			'REGEXP_REPLACE, empty matches'     => array( "REGEXP_REPLACE('abc', '\\\\G', '-')", '-abc' ),
+			'REGEXP_REPLACE, after a match'     => array( "REGEXP_REPLACE('aab', '\\\\Ga', '-')", '--b' ),
+			'REGEXP_REPLACE, after empty match' => array( "REGEXP_REPLACE('000123', '\\\\G0*', 'x')", 'xx123' ),
+			'REGEXP_REPLACE, pos'               => array( "REGEXP_REPLACE('aab', '\\\\Ga', '-', 2)", 'aab' ),
+			'REGEXP_REPLACE, second occurrence' => array( "REGEXP_REPLACE('aab', '\\\\Ga', '-', 1, 2)", 'a-b' ),
+			'REGEXP_REPLACE, in a comment'      => array( "REGEXP_REPLACE('aa', '(?#\\\\G)a', 'x', 2)", 'ax' ),
+			'REGEXP_REPLACE, escaped backslash' => array( "REGEXP_REPLACE('a\\\\Gb', '\\\\\\\\G', '-', 2)", 'a-b' ),
+
+			'REGEXP_SUBSTR, after empty match'  => array( "REGEXP_SUBSTR('abc', '\\\\G', 1, 2)", null ),
+			'REGEXP_SUBSTR, pos'                => array( "REGEXP_SUBSTR('abc', '\\\\G.', 2)", null ),
+			'REGEXP_SUBSTR, in a comment'       => array( "REGEXP_SUBSTR('aa', '(?#\\\\G)a', 2)", 'a' ),
+			'REGEXP_SUBSTR, second occurrence'  => array( "REGEXP_SUBSTR('abc', '\\\\G.', 1, 2)", 'b' ),
+
+			// REGEXP_INSTR() searches the subject from pos on, as if it started there.
+			'REGEXP_INSTR, after empty match'   => array( "REGEXP_INSTR('abc', '\\\\G', 1, 2)", '0' ),
+			'REGEXP_INSTR, pos'                 => array( "REGEXP_INSTR('abc', '\\\\G.', 2)", '2' ),
+			'REGEXP_INSTR, second occurrence'   => array( "REGEXP_INSTR('abc', '\\\\G.', 2, 2)", '3' ),
+			'REGEXP_INSTR, in a comment'        => array( "REGEXP_INSTR('aa', '(?#\\\\G)a', 1, 2)", '2' ),
+		);
+	}
+
+	/**
+	 * @dataProvider regexpSubstrCases
+	 */
+	public function testRegexpSubstr( $sql, $expected ) {
+		$this->assertQuery( "SELECT $sql AS r" );
+		$this->assertSame( $expected, $this->last_result[0]->r );
+	}
+
+	public static function regexpSubstrCases() {
+		return array(
+			'basic match'            => array( "REGEXP_SUBSTR('abc123def', '[0-9]+')", '123' ),
+			'no match'               => array( "REGEXP_SUBSTR('abcdef', '[0-9]+')", null ),
+			'pos'                    => array( "REGEXP_SUBSTR('abc123def456', '[0-9]+', 5)", '23' ),
+			'pos with occurrence=2'  => array( "REGEXP_SUBSTR('abc123def456', '[0-9]+', 5, 2)", '456' ),
+			'occurrence'             => array( "REGEXP_SUBSTR('a1 b2 c3', '[a-z][0-9]', 1, 2)", 'b2' ),
+			'occurrence too high'    => array( "REGEXP_SUBSTR('a1 b2', '[a-z][0-9]', 1, 5)", null ),
+			'match_type c'           => array( "REGEXP_SUBSTR('ABC', 'abc', 1, 1, 'c')", null ),
+			'multibyte match'        => array( "REGEXP_SUBSTR('café', 'é')", 'é' ),
+			// MySQL allows pos = char_count + 1.
+			'pos one past end'       => array( "REGEXP_SUBSTR('abc', 'a', 4)", null ),
+			'zero-width at end'      => array( "REGEXP_SUBSTR('abc', '\$', 4)", '' ),
+			'null expr'              => array( 'REGEXP_SUBSTR(NULL, \'abc\')', null ),
+			'null pattern'           => array( "REGEXP_SUBSTR('abc', NULL)", null ),
+			'null pos'               => array( "REGEXP_SUBSTR('abc', 'a', NULL)", null ),
+			'null occurrence'        => array( "REGEXP_SUBSTR('abc', 'a', 1, NULL)", null ),
+			'null match_type'        => array( "REGEXP_SUBSTR('abc', 'a', 1, 1, NULL)", null ),
+			// A NULL match_type returns NULL before the pattern and pos are checked.
+			'null match_type first'  => array( "REGEXP_SUBSTR('abc', '(abc', 0, 1, NULL)", null ),
+			// A NULL occurrence returns NULL before pos is checked.
+			'null occurrence, pos 0' => array( "REGEXP_SUBSTR('abc', 'a', 0, NULL)", null ),
+		);
+	}
+
+	/**
+	 * @dataProvider regexpSubstrErrors
+	 */
+	public function testRegexpSubstrErrors( $sql, $message ) {
+		$this->assertQueryError( "SELECT $sql", $message );
+	}
+
+	public static function regexpSubstrErrors() {
+		// Like MySQL, check the pattern and pos before NULL arguments make the result NULL.
+		$pos_error = "Incorrect parameters in the call to native function 'regexp_substr'";
+		return array(
+			'invalid pattern'                  => array( "REGEXP_SUBSTR('abc', '(abc')", 'Invalid regular expression: (abc.' ),
+			'invalid pattern, pos zero'        => array( "REGEXP_SUBSTR('abc', '(', 0)", 'Invalid regular expression: (.' ),
+			'invalid pattern, NULL subject'    => array( "REGEXP_SUBSTR(NULL, '(')", 'Invalid regular expression: (.' ),
+			'invalid pattern, NULL occurrence' => array( "REGEXP_SUBSTR('abc', '(', 1, NULL)", 'Invalid regular expression: (.' ),
+			'empty pattern, NULL subject'      => array( "REGEXP_SUBSTR(NULL, '')", 'Illegal argument to a regular expression.' ),
+			'invalid match type'               => array( "REGEXP_SUBSTR('abc', 'a', 1, 1, 'x')", 'Incorrect arguments to regexp_substr' ),
+			'invalid match type, NULL subject' => array( "REGEXP_SUBSTR(NULL, 'a', 1, 1, 'x')", 'Incorrect arguments to regexp_substr' ),
+			'invalid match type, NULL pos'     => array( "REGEXP_SUBSTR('abc', 'a', NULL, 1, 'x')", 'Incorrect arguments to regexp_substr' ),
+			'pos zero'                         => array( "REGEXP_SUBSTR('abc', 'a', 0)", $pos_error ),
+			'pos negative'                     => array( "REGEXP_SUBSTR('abc', 'a', -1)", $pos_error ),
+			'pos zero, empty subject'          => array( "REGEXP_SUBSTR('', 'a', 0)", $pos_error ),
+			'pos zero, NULL subject'           => array( "REGEXP_SUBSTR(NULL, 'a', 0)", $pos_error ),
+			'pos zero, NULL pattern'           => array( "REGEXP_SUBSTR('abc', NULL, 0)", $pos_error ),
+			'pos two past end'                 => array( "REGEXP_SUBSTR('abc', 'a', 5)", 'Index out of bounds in regular expression search.' ),
+			'pos far past end'                 => array( "REGEXP_SUBSTR('abc', 'a', 10)", 'Index out of bounds in regular expression search.' ),
+			'extra argument'                   => array(
+				"REGEXP_SUBSTR('abc', 'a', 1, 1, 'c', 'extra')",
+				'SQLSTATE[HY000]: General error: 1 wrong number of arguments to function REGEXP_SUBSTR()',
+			),
+		);
+	}
+
+	public function testRegexpSubstrOccurrenceClampedToOne() {
+		// MySQL clamps occurrence <= 0 to 1.
+		$this->assertQuery( "SELECT REGEXP_SUBSTR('abcabc', 'b', 1, 0) AS r" );
+		$this->assertSame( 'b', $this->last_result[0]->r );
+		$this->assertQuery( "SELECT REGEXP_SUBSTR('abcabc', 'b', 1, -5) AS r" );
+		$this->assertSame( 'b', $this->last_result[0]->r );
+	}
+
+	public function testRegexpSubstrLookbehindAcrossPos() {
+		// The lookbehind sees bytes before pos because the full subject is kept.
+		$this->assertQuery( "SELECT REGEXP_SUBSTR('ab', '(?<=a)b', 2) AS r" );
+		$this->assertSame( 'b', $this->last_result[0]->r );
+	}
+
+	public function testRegexpSubstrNumericSubject() {
+		$this->assertQuery( "SELECT REGEXP_SUBSTR(123, '2') AS r" );
+		$this->assertSame( '2', $this->last_result[0]->r );
+	}
+
+	/**
+	 * @dataProvider regexpInstrCases
+	 */
+	public function testRegexpInstr( $sql, $expected ) {
+		$this->assertQuery( "SELECT $sql AS r" );
+		$this->assertSame( $expected, $this->last_result[0]->r );
+	}
+
+	public static function regexpInstrCases() {
+		return array(
+			'basic'                  => array( "REGEXP_INSTR('dog cat dog', 'dog')", '1' ),
+			'no match'               => array( "REGEXP_INSTR('abc', 'xyz')", '0' ),
+			'second match'           => array( "REGEXP_INSTR('dog cat dog', 'dog', 1, 2)", '9' ),
+			'pos skips first match'  => array( "REGEXP_INSTR('dog cat dog', 'dog', 5)", '9' ),
+			'return_option=1 (end)'  => array( "REGEXP_INSTR('dog cat dog', 'dog', 1, 1, 1)", '4' ),
+			'match_type c miss'      => array( "REGEXP_INSTR('DOG', 'dog', 1, 1, 0, 'c')", '0' ),
+			'multibyte position'     => array( "REGEXP_INSTR('café123', '[0-9]+')", '5' ),
+			'null expr'              => array( "REGEXP_INSTR(NULL, 'abc')", null ),
+			'null pattern'           => array( "REGEXP_INSTR('abc', NULL)", null ),
+			// A NULL match_type returns NULL before the pattern and pos are checked.
+			'null match_type first'  => array( "REGEXP_INSTR('abc', '(abc', 0, 1, 0, NULL)", null ),
+			// NULL arguments return NULL before pos is checked.
+			'null expr, pos 0'       => array( "REGEXP_INSTR(NULL, 'a', 0)", null ),
+			'null expr, pos -1'      => array( "REGEXP_INSTR(NULL, 'a', -1)", null ),
+			'null expr, pos 5'       => array( "REGEXP_INSTR(NULL, 'a', 5)", null ),
+			'null pattern, pos 0'    => array( "REGEXP_INSTR('abc', NULL, 0)", null ),
+			'null occurrence, pos 0' => array( "REGEXP_INSTR('abc', 'a', 0, NULL)", null ),
+		);
+	}
+
+	/**
+	 * @dataProvider regexpInstrErrors
+	 */
+	public function testRegexpInstrErrors( $sql, $message ) {
+		$this->assertQueryError( "SELECT $sql", $message );
+	}
+
+	public static function regexpInstrErrors() {
+		$return_option = 'Incorrect arguments to regexp_instr: return_option must be 1 or 0.';
+		return array(
+			'invalid pattern'                        => array( "REGEXP_INSTR('abc', '(abc')", 'Invalid regular expression: (abc.' ),
+			// Like MySQL, check the pattern before NULL arguments make the result NULL.
+			'invalid pattern, NULL subject'          => array( "REGEXP_INSTR(NULL, '(')", 'Invalid regular expression: (.' ),
+			'invalid pattern, NULL return_option'    => array( "REGEXP_INSTR('abc', '(', 1, 1, NULL)", 'Invalid regular expression: (.' ),
+			'empty pattern, NULL subject'            => array( "REGEXP_INSTR(NULL, '')", 'Illegal argument to a regular expression.' ),
+			'invalid match type'                     => array( "REGEXP_INSTR('abc', 'a', 1, 1, 0, 'x')", 'Incorrect arguments to regexp_instr' ),
+			'invalid match type, NULL subject'       => array( "REGEXP_INSTR(NULL, 'a', 1, 1, 0, 'x')", 'Incorrect arguments to regexp_instr' ),
+			'invalid match type, NULL return_option' => array( "REGEXP_INSTR('abc', 'a', 1, 1, NULL, 'x')", 'Incorrect arguments to regexp_instr' ),
+			'pos zero'                               => array( "REGEXP_INSTR('abc', 'a', 0)", 'Index out of bounds in regular expression search.' ),
+			// Unlike REGEXP_SUBSTR() and REGEXP_REPLACE(), pos can't be one past the end.
+			'pos one past end'                       => array( "REGEXP_INSTR('abc', 'a', 4)", 'Index out of bounds in regular expression search.' ),
+			'pos far past end'                       => array( "REGEXP_INSTR('abc', 'a', 10)", 'Index out of bounds in regular expression search.' ),
+			'invalid return_option'                  => array( "REGEXP_INSTR('abc', 'a', 1, 1, 2)", $return_option ),
+			'invalid return_option, NULL subject'    => array( "REGEXP_INSTR(NULL, 'a', 1, 1, 2)", $return_option ),
+			'invalid return_option, NULL match type' => array( "REGEXP_INSTR('abc', 'a', 1, 1, 2, NULL)", $return_option ),
+			'invalid return_option and match type'   => array( "REGEXP_INSTR('abc', 'a', 1, 1, 2, 'x')", $return_option ),
+			'extra argument'                         => array(
+				"REGEXP_INSTR('abc', 'a', 1, 1, 0, 'c', 'extra')",
+				'SQLSTATE[HY000]: General error: 1 wrong number of arguments to function REGEXP_INSTR()',
+			),
+		);
+	}
+
+	public function testRegexpInstrEmptySubjectSkipsPosCheck() {
+		// MySQL does not check pos for an empty subject and reports a match at pos.
+		$cases = array(
+			"'a', 2"  => '0',
+			"'^', 5"  => '5',
+			"'^', -3" => '-3',
+		);
+		foreach ( $cases as $args => $expected ) {
+			$this->assertQuery( "SELECT REGEXP_INSTR('', $args) AS r" );
+			$this->assertSame( $expected, $this->last_result[0]->r, $args );
+		}
+
+		$this->assertQueryError(
+			"SELECT REGEXP_INSTR('', '(', 2)",
+			'Invalid regular expression: (.'
+		);
+	}
+
+	public function testRegexpInstrOccurrenceClampedToOne() {
+		// MySQL clamps occurrence <= 0 to 1.
+		$this->assertQuery( "SELECT REGEXP_INSTR('abcabc', 'b', 1, 0) AS r" );
+		$this->assertSame( '2', $this->last_result[0]->r );
+		$this->assertQuery( "SELECT REGEXP_INSTR('abcabc', 'b', 1, -5) AS r" );
+		$this->assertSame( '2', $this->last_result[0]->r );
+	}
+
+	public function testRegexpInstrStraddlingMatch() {
+		// A match that starts before pos is not returned; the next match at or
+		// after pos is returned instead.
+		$this->assertQuery( "SELECT REGEXP_INSTR('abc123def', '[0-9]+', 5) AS r" );
+		$this->assertSame( '5', $this->last_result[0]->r );
+	}
+
+	public function testRegexpInstrMultibyteReturnOptionEnd() {
+		// Multibyte match ('é' is 2 bytes) with return_option=1 (one past end).
+		// 'aéb' char positions: a=1, é=2, b=3. 'é' matches at char 2, end char position = 3.
+		$this->assertQuery( "SELECT REGEXP_INSTR('aéb', 'é', 1, 1, 1) AS r" );
+		$this->assertSame( '3', $this->last_result[0]->r );
+	}
+
+	public function testRegexpInstrPatternIsRelativeToPos() {
+		$this->assertQuery( "SELECT REGEXP_INSTR('abc', '^b', 2) AS r" );
+		$this->assertSame( '2', $this->last_result[0]->r );
+		$this->assertQuery( "SELECT REGEXP_INSTR('ab', '(?<=a)b', 2) AS r" );
+		$this->assertSame( '0', $this->last_result[0]->r );
+	}
+
+	public function testRegexpInstrNumericSubject() {
+		$this->assertQuery( "SELECT REGEXP_INSTR(123, '2') AS r" );
+		$this->assertSame( '2', $this->last_result[0]->r );
+	}
+
+	public function testRegexpEmptyPatternRejected() {
+		// MySQL rejects the empty pattern with ERROR 3685.
+		$this->assertQueryError(
+			"SELECT REGEXP_LIKE('abc', '')",
+			'Illegal argument to a regular expression.'
+		);
+		$this->assertQueryError(
+			"SELECT REGEXP_REPLACE('abc', '', 'x')",
+			'Illegal argument to a regular expression.'
+		);
+		$this->assertQueryError(
+			"SELECT REGEXP_SUBSTR('abc', '')",
+			'Illegal argument to a regular expression.'
+		);
+		$this->assertQueryError(
+			"SELECT REGEXP_INSTR('abc', '')",
+			'Illegal argument to a regular expression.'
+		);
+	}
+
+	/**
+	 * @dataProvider regexpEmptyMatchSteppingCases
+	 */
+	public function testRegexpEmptyMatchStepping( $sql, $expected ) {
+		// Like in ICU, the search continues one character after an empty match, even
+		// when the pattern could match a non-empty string at the same position.
+		$this->assertQuery( "SELECT $sql AS r" );
+		$this->assertSame( $expected, $this->last_result[0]->r );
+	}
+
+	public static function regexpEmptyMatchSteppingCases() {
+		return array(
+			'lazy star'                 => array( "REGEXP_REPLACE('aaa', 'a*?', '[\$0]')", '[]a[]a[]a[]' ),
+			'lazy optional'             => array( "REGEXP_REPLACE('aaa', 'a??', '[\$0]')", '[]a[]a[]a[]' ),
+			'empty alternative first'   => array( "REGEXP_REPLACE('aaa', '|a', '[\$0]')", '[]a[]a[]a[]' ),
+			'boundary alternative'      => array( "REGEXP_REPLACE('ab', '\\\\b|a', '[\$0]')", '[]ab[]' ),
+			'anchor alternative'        => array( "REGEXP_REPLACE('abc', '^|b', '[\$0]')", '[]a[b]c' ),
+			'lookahead alternative'     => array( "REGEXP_REPLACE('ab', '(?=b)|a', '[\$0]')", '[a][]b' ),
+			'greedy, ends with empty'   => array( "REGEXP_REPLACE('aaa', 'a*', '[\$0]')", '[aaa][]' ),
+			'greedy, starts with empty' => array( "REGEXP_REPLACE('baaa', 'a*', '[\$0]')", '[]b[aaa][]' ),
+			'multibyte character'       => array( "REGEXP_REPLACE('éa', 'a*?', '[\$0]')", '[]é[]a[]' ),
+			'astral character'          => array( "REGEXP_REPLACE('a😀b', 'x*', '[\$0]')", '[]a[]😀[]b[]' ),
+			'replace second'            => array( "REGEXP_REPLACE('aaa', 'a*?', '[\$0]', 1, 2)", 'a[]aa' ),
+			'replace past the matches'  => array( "REGEXP_REPLACE('ab', '\\\\b|a', '[\$0]', 1, 3)", 'ab' ),
+			'substr, empty match'       => array( "REGEXP_SUBSTR('aaa', 'a*?', 1, 2)", '' ),
+			'substr, one past the end'  => array( "REGEXP_SUBSTR('aaa', 'a*?', 1, 4)", '' ),
+			'substr, after an empty'    => array( "REGEXP_SUBSTR('baaa', 'a*', 1, 2)", 'aaa' ),
+			'substr, no more matches'   => array( "REGEXP_SUBSTR('aaa', 'a*', 1, 3)", null ),
+			'instr, empty match'        => array( "REGEXP_INSTR('aaa', 'a*?', 1, 3)", '3' ),
+			'instr, boundary'           => array( "REGEXP_INSTR('ab', '\\\\b|a', 1, 2)", '3' ),
+			'instr, astral character'   => array( "REGEXP_INSTR('a😀b', 'x*', 1, 3)", '3' ),
+			'instr, no more matches'    => array( "REGEXP_INSTR('aaa', 'a*', 1, 3)", '0' ),
+		);
+	}
+
+	public function testRegexpAstralPlaneCharacter() {
+		// 4-byte UTF-8 encodes as one code point; char offsets should reflect that.
+		// "x😀y" has three characters (x at 1, 😀 at 2, y at 3).
+		$this->assertQuery( "SELECT REGEXP_SUBSTR('x😀y', '.', 2) AS r" );
+		$this->assertSame( '😀', $this->last_result[0]->r );
+		$this->assertQuery( "SELECT REGEXP_INSTR('😀z', 'z', 1, 1, 1) AS r" );
+		$this->assertSame( '3', $this->last_result[0]->r );
+	}
+
+	public function testRegexpEscapedKInLookbehind() {
+		// "\K" is a literal "K". In PCRE, it could move the start of a match in a lookbehind
+		// to before the search, so that the next search found the same match forever.
+		$this->assertQuery(
+			"SELECT
+				REGEXP_REPLACE('ab', '(?<=\\\\Ka)', 'X') AS replace_result,
+				REGEXP_REPLACE('Kab', '(?<=\\\\Ka)', 'X') AS replace_after_k,
+				REGEXP_SUBSTR('ab', '(?<=\\\\Ka)', 1, 2) AS substr_result,
+				REGEXP_INSTR('Kab', '(?<=\\\\Ka)') AS instr_result"
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'replace_result'  => 'ab',
+					'replace_after_k' => 'KaXb',
+					'substr_result'   => null,
+					'instr_result'    => '3',
+				),
+			),
+			$this->last_result
+		);
+	}
+
+	/**
+	 * @dataProvider regexpQuoteInCommentCases
+	 */
+	public function testRegexpEscapedKAfterQuoteInComment( $sql, $pattern ) {
+		// The escaper reads a "\Q" in a comment as quoted text, so a later "\K" reaches
+		// PCRE. A match that starts before the search is then an error, not an endless loop.
+		$this->assertQueryError(
+			'SELECT ' . sprintf( $sql, $this->engine->quote( $pattern ) ),
+			"Invalid regular expression: $pattern."
+		);
+	}
+
+	public static function regexpQuoteInCommentCases() {
+		$comment  = '(?#\Q)(?<=\Ka)';
+		$extended = "(?x)#\\Q\n(?<=\\Ka)";
+		return array(
+			'REGEXP_REPLACE, comment'          => array( "REGEXP_REPLACE('ab', %s, 'X')", $comment ),
+			'REGEXP_REPLACE, extended comment' => array( "REGEXP_REPLACE('ab', %s, 'X')", $extended ),
+			'REGEXP_SUBSTR, comment'           => array( "REGEXP_SUBSTR('ab', %s, 1, 2)", $comment ),
+			'REGEXP_SUBSTR, extended comment'  => array( "REGEXP_SUBSTR('ab', %s, 1, 2)", $extended ),
+			'REGEXP_INSTR, comment'            => array( "REGEXP_INSTR('ab', %s, 1, 2)", $comment ),
+			'REGEXP_INSTR, extended comment'   => array( "REGEXP_INSTR('ab', %s, 1, 2)", $extended ),
+		);
+	}
+
+	/**
 	 * @dataProvider regexpBigIntegerCases
 	 */
 	public function testRegexpBigIntegerOperands( $sql, $expected ) {
@@ -738,16 +1481,23 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 	public static function regexpBigIntegerCases() {
 		return array(
 			// The smallest values that don't fit in 32 bits.
-			'2^31, subject'       => array( "REGEXP_LIKE(2147483648, '^2147483648\$')", '1' ),
-			'-2^31 - 1, subject'  => array( "REGEXP_LIKE(-2147483649, '^-2147483649\$')", '1' ),
-			'largest BIGINT'      => array( "REGEXP_LIKE(9223372036854775807, '^9223372036854775807\$')", '1' ),
+			'2^31, subject'        => array( "REGEXP_LIKE(2147483648, '^2147483648\$')", '1' ),
+			'-2^31 - 1, subject'   => array( "REGEXP_LIKE(-2147483649, '^-2147483649\$')", '1' ),
+			'largest BIGINT'       => array( "REGEXP_LIKE(9223372036854775807, '^9223372036854775807\$')", '1' ),
 
-			'REGEXP_LIKE subject' => array( "REGEXP_LIKE(9999999999, '^9')", '1' ),
-			'REGEXP_LIKE pattern' => array( "REGEXP_LIKE('9999999999', 9999999999)", '1' ),
-			'operator subject'    => array( "9999999999 REGEXP '^9'", '1' ),
-			'operator pattern'    => array( "'9999999999' REGEXP 9999999999", '1' ),
-			'negated operator'    => array( "9999999999 NOT REGEXP '^9'", '0' ),
-			'REGEXP BINARY'       => array( "9999999999 REGEXP BINARY '^9'", '1' ),
+			'REGEXP_LIKE subject'  => array( "REGEXP_LIKE(9999999999, '^9')", '1' ),
+			'REGEXP_LIKE pattern'  => array( "REGEXP_LIKE('9999999999', 9999999999)", '1' ),
+			'REGEXP_SUBSTR'        => array( "REGEXP_SUBSTR(9999999999, '9+')", '9999999999' ),
+			'REGEXP_SUBSTR regex'  => array( "REGEXP_SUBSTR('9999999999', 9999999999)", '9999999999' ),
+			'REGEXP_INSTR'         => array( "REGEXP_INSTR(9999999999, '99', 1, 2)", '3' ),
+			'REGEXP_INSTR pattern' => array( "REGEXP_INSTR('x9999999999', 9999999999)", '2' ),
+			'REGEXP_REPLACE'       => array( "REGEXP_REPLACE(9999999999, '9', '1')", '1111111111' ),
+			'REGEXP_REPLACE regex' => array( "REGEXP_REPLACE('9999999999', 9999999999, 'x')", 'x' ),
+			'replacement'          => array( "REGEXP_REPLACE('a', 'a', 9999999999)", '9999999999' ),
+			'operator subject'     => array( "9999999999 REGEXP '^9'", '1' ),
+			'operator pattern'     => array( "'9999999999' REGEXP 9999999999", '1' ),
+			'negated operator'     => array( "9999999999 NOT REGEXP '^9'", '0' ),
+			'REGEXP BINARY'        => array( "9999999999 REGEXP BINARY '^9'", '1' ),
 		);
 	}
 
@@ -757,7 +1507,10 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$this->assertQuery(
 			"SELECT
 				phone REGEXP '^1' AS operator_result,
-				REGEXP_LIKE(phone, '^1') AS like_result
+				REGEXP_LIKE(phone, '^1') AS like_result,
+				REGEXP_REPLACE(phone, '^1', '') AS replace_result,
+				REGEXP_SUBSTR(phone, '^[0-9]{3}') AS substr_result,
+				REGEXP_INSTR(phone, '4') AS instr_result
 			FROM phones ORDER BY id"
 		);
 		$this->assertEquals(
@@ -765,14 +1518,23 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 				(object) array(
 					'operator_result' => '1',
 					'like_result'     => '1',
+					'replace_result'  => '5551234567',
+					'substr_result'   => '155',
+					'instr_result'    => '8',
 				),
 				(object) array(
 					'operator_result' => '0',
 					'like_result'     => '0',
+					'replace_result'  => '42',
+					'substr_result'   => null,
+					'instr_result'    => '1',
 				),
 				(object) array(
 					'operator_result' => null,
 					'like_result'     => null,
+					'replace_result'  => null,
+					'substr_result'   => null,
+					'instr_result'    => null,
 				),
 			),
 			$this->last_result
