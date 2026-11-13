@@ -108,6 +108,85 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'regexp_instr'   => array( 2, 3, 4, 5, 6 ),
 	);
 
+	/**
+	 * ICU escapes of a code point that PCRE lacks, or reads differently: "\uhhhh",
+	 * "\Uhhhhhhhh", and "\0ooo" up to "\0377". A surrogate pair of "\u" escapes is
+	 * one code point.
+	 */
+	private const REGEXP_CODE_POINT_ESCAPE = '\\\\u[dD][89abAB][0-9a-fA-F]{2}\\\\u[dD][c-fC-F][0-9a-fA-F]{2}|\\\\u[0-9a-fA-F]{4}|\\\\U[0-9a-fA-F]{8}|\\\\0(?:[0-3][0-7]{0,2}|[4-7][0-7]?)';
+
+	/**
+	 * Letters that ICU reads literally after a backslash, outside of a set. PCRE rejects
+	 * most of them, and reads some differently, like "\K", which moves the start of a
+	 * match, even to before the place where the search started.
+	 */
+	private const REGEXP_LITERAL_ESCAPES = 'gijlmoqyCEFIJKLMOTY';
+
+	/**
+	 * Letters that ICU reads literally after a backslash, in a set. PCRE rejects most of
+	 * them, and reads some differently, like "\b".
+	 */
+	private const REGEXP_LITERAL_SET_ESCAPES = 'bgijklmoqyzABCEFGIJKLMORTXYZ';
+
+	/**
+	 * ICU's word characters: alphabetic ones, marks, decimal digits, connector punctuation,
+	 * and the zero-width joiners. Alphabetic characters are letters, letter numbers, and
+	 * letter symbols, like "Ⓐ". PCRE's "\w" misses some marks, and has other numbers.
+	 */
+	private const REGEXP_WORD_CLASS = '\p{L}\p{Nl}\p{M}\p{Nd}\p{Pc}\x{200C}\x{200D}\x{24B6}-\x{24E9}\x{1F130}-\x{1F149}\x{1F150}-\x{1F169}\x{1F170}-\x{1F189}';
+
+	/**
+	 * General categories by their long names and aliases, as ICU matches them: in
+	 * lowercase, without spaces, hyphens, and underscores. PCRE has only short names.
+	 */
+	private const REGEXP_GENERAL_CATEGORIES = array(
+		'other'                => 'C',
+		'control'              => 'Cc',
+		'cntrl'                => 'Cc',
+		'format'               => 'Cf',
+		'unassigned'           => 'Cn',
+		'privateuse'           => 'Co',
+		'surrogate'            => 'Cs',
+		'letter'               => 'L',
+		'casedletter'          => 'L&',
+		'lowercaseletter'      => 'Ll',
+		'modifierletter'       => 'Lm',
+		'otherletter'          => 'Lo',
+		'titlecaseletter'      => 'Lt',
+		'uppercaseletter'      => 'Lu',
+		'mark'                 => 'M',
+		'combiningmark'        => 'M',
+		'spacingmark'          => 'Mc',
+		'enclosingmark'        => 'Me',
+		'nonspacingmark'       => 'Mn',
+		'number'               => 'N',
+		'decimalnumber'        => 'Nd',
+		'digit'                => 'Nd',
+		'letternumber'         => 'Nl',
+		'othernumber'          => 'No',
+		'punctuation'          => 'P',
+		'punct'                => 'P',
+		'connectorpunctuation' => 'Pc',
+		'dashpunctuation'      => 'Pd',
+		'closepunctuation'     => 'Pe',
+		'finalpunctuation'     => 'Pf',
+		'initialpunctuation'   => 'Pi',
+		'otherpunctuation'     => 'Po',
+		'openpunctuation'      => 'Ps',
+		'symbol'               => 'S',
+		'currencysymbol'       => 'Sc',
+		'modifiersymbol'       => 'Sk',
+		'mathsymbol'           => 'Sm',
+		'othersymbol'          => 'So',
+		'separator'            => 'Z',
+		'lineseparator'        => 'Zl',
+		'paragraphseparator'   => 'Zp',
+		'spaceseparator'       => 'Zs',
+	);
+
+	/** The POSIX classes of PCRE. */
+	private const REGEXP_POSIX_CLASSES = array( 'alnum', 'alpha', 'ascii', 'blank', 'cntrl', 'digit', 'graph', 'lower', 'print', 'punct', 'space', 'upper', 'word', 'xdigit' );
+
 	/** @var string[] Compiled PCRE patterns, keyed by byte mode, "\G" variant, match type, and pattern. */
 	private $regexp_cache = array();
 
@@ -1238,14 +1317,19 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * (UTF-8) modifier is applied unless byte-oriented matching is requested.
 	 * Case-insensitive is the default.
 	 *
-	 * MySQL uses ICU, which differs from PCRE in some syntax, like ICU-only escapes
-	 * and nested sets. The known failures of the REGEXP test suites list these
-	 * cases. Other known differences:
+	 * MySQL uses ICU, which differs from PCRE in some syntax, like `\N{...}`, Unicode
+	 * blocks, and Java properties. The known failures of the REGEXP test suites list
+	 * these cases. Other known differences:
 	 *
 	 * - Text matching ignores case unless the `c` flag is passed, as the column
 	 *   collation isn't known here.
 	 * - PCRE doesn't match "ß" with "ss" when ignoring case, `$` also matches
 	 *   between CR and LF, and `(?P<name>...)` is valid.
+	 * - Inline case flags don't reach `[:upper:]` and `[:lower:]`, or `\p{Lu}` and
+	 *   `\p{Ll}` on PCRE 10.44 and older. They keep their case in `(?i)[[:upper:]]`
+	 *   with the `c` flag, and in a whole pattern with `(?-i)`.
+	 * - ICU attaches a combining mark to the character before it, so a mark after a
+	 *   space doesn't start a word for `\b`. Here, it does.
 	 * - `\G` in a lookbehind doesn't always match where it does in ICU.
 	 * - Data that isn't valid UTF-8 is matched byte by byte and case-sensitively,
 	 *   like MySQL binary strings. Other binary values match as text, so case
@@ -1301,9 +1385,9 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		}
 
 		/*
-		 * PHP 7 can read an unknown escape as literal text. For "\y", that matches ICU,
-		 * but "\u0041" matches "u0041", where ICU matches "A". The "X" modifier makes
-		 * all of them errors, like in PHP 8.
+		 * PHP 7 can read an unknown escape as literal text. ICU rejects the ones that are
+		 * left after the translation, like "\u004", which has too few digits. The "X"
+		 * modifier makes them errors, like in PHP 8.
 		 */
 		$modifiers = $binary_mode ? 'X' : 'uX';
 		if ( ! $case_sensitive ) {
@@ -1328,7 +1412,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		} else {
 			$newline = '(*ANY)';
 		}
-		$compiled = '/' . $newline . $this->regexp_escape_pattern( $pattern, $without_g ) . '/' . $modifiers;
+		$compiled = '/' . $newline . $this->regexp_translate_pattern( $pattern, ! $case_sensitive, $binary_mode, $without_g ) . '/' . $modifiers;
 
 		/*
 		 * Compile the pattern by matching it against an empty string. Only a compile
@@ -1353,68 +1437,352 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	}
 
 	/**
-	 * Escape pattern delimiters and NUL bytes that are not already escaped, read
-	 * "\K" as "K", and, if asked, make "\G" never match.
+	 * Translate a MySQL regex pattern to PCRE syntax.
 	 *
-	 * PHP before 8.2 rejects NUL bytes in patterns, so they become "\x00".
+	 * Splits the pattern into quoted text, sets, escapes, POSIX classes, and other
+	 * characters, so that a translation applies only to a whole token.
 	 *
-	 * @param string $pattern   The regex pattern.
-	 * @param bool   $without_g Optional. Whether "\G" never matches.
+	 * @param string $pattern          The regex pattern.
+	 * @param bool   $case_insensitive Whether the pattern ignores case by default.
+	 * @param bool   $binary_mode      Whether the pattern matches bytes instead of UTF-8 characters.
+	 * @param bool   $without_g        Whether "\G" never matches.
 	 *
+	 * @throws Exception If the pattern can't be split, or it has an invalid set.
 	 * @return string Pattern safe to wrap in slash delimiters.
 	 */
-	private function regexp_escape_pattern( $pattern, $without_g = false ) {
-		$special = array(
-			'/'  => '\\/',
-			"\0" => '\\x00',
-		);
+	private function regexp_translate_pattern( $pattern, $case_insensitive, $binary_mode, $without_g ) {
+		$tokens = array(
+			// The delimiter, and NUL bytes, which PHP before 8.2 rejects in patterns.
+			'/'          => '\\/',
+			"\0"         => '\\x00',
+			"\\\0"       => '\\x00',
 
-		/*
-		 * ICU reads "\K" as "K". In PCRE, "\K" moves the start of the match, even to
-		 * before the place where the search started, like in "(?<=\Ka)".
-		 */
-		$escapes = $special + array( 'K' => 'K' );
+			// PCRE's [:punct:] also holds ASCII symbols like "+", where ICU's doesn't.
+			'[:punct:]'  => '\\p{P}',
+			'[:^punct:]' => '\\P{P}',
+		);
 		if ( $without_g ) {
 			// A position can't be both a word boundary and not one, so "\b\B" never
 			// matches. Unlike "(?!)", it has no ")" to end a "(?#...)" comment.
-			$escapes['G'] = '\\b\\B';
+			$tokens['\\G'] = '\\b\\B';
 		}
 
-		$escaped = '';
-		$quoted  = false;
-		$length  = strlen( $pattern );
-		for ( $i = 0; $i < $length; ++$i ) {
-			$character = $pattern[ $i ];
-			if ( $quoted ) {
-				if ( '\\' === $character && $i + 1 < $length && 'E' === $pattern[ $i + 1 ] ) {
-					$escaped .= '\\E';
-					$quoted   = false;
-					++$i;
-				} elseif ( isset( $special[ $character ] ) ) {
-					$escaped .= '\\E' . $special[ $character ] . '\\Q';
-				} else {
-					$escaped .= $character;
+		// Word boundaries follow ICU's word characters. Bytes keep PCRE's ASCII ones.
+		if ( ! $binary_mode ) {
+			$word    = self::REGEXP_WORD_CLASS;
+			$tokens += array(
+				'\\w' => "[$word]",
+				'\\W' => "[^$word]",
+				'\\b' => "(?:(?<=[$word])(?![$word])|(?<![$word])(?=[$word]))",
+				'\\B' => "(?:(?<=[$word])(?=[$word])|(?<![$word])(?![$word]))",
+			);
+		}
+
+		/*
+		 * With the "u" modifier, PCRE reads [:upper:] and [:lower:] case-sensitively
+		 * even when the pattern ignores case, where ICU matches both cases. PCRE 10.44
+		 * and older read \p{Lu} and \p{Ll} the same way. \p{L&} doesn't follow inline
+		 * flags, so a pattern with "(?-i)" keeps PCRE's reading.
+		 */
+		if ( $case_insensitive && ! preg_match( '/\(\?[a-zA-Z]*-[a-zA-Z]*i/', $pattern ) ) {
+			$tokens += array(
+				'[:upper:]'  => '\\p{L&}',
+				'[:^upper:]' => '\\P{L&}',
+				'[:lower:]'  => '\\p{L&}',
+				'[:^lower:]' => '\\P{L&}',
+				'\\p{Lu}'    => '\\p{L&}',
+				'\\P{Lu}'    => '\\P{L&}',
+				'\\p{Ll}'    => '\\p{L&}',
+				'\\P{Ll}'    => '\\P{L&}',
+			);
+		}
+
+		/*
+		 * A set, with its nested sets, is one token, as ICU's sets differ from PCRE's.
+		 * ICU reads a POSIX class outside of a set, as in "[:alpha:]", as a set.
+		 *
+		 * A property name stops at a backslash, so that a long run of "\p{" doesn't
+		 * scan the rest of the pattern each time.
+		 */
+		$translated = preg_replace_callback(
+			'/\\\\Q.*?(?:\\\\E|\z)|(\[(?!:)\^?\]?(?:\\\\Q.*?(?:\\\\E|\z)|\\\\.|\[:\^?\w+:\]|(?1)|[^\\\\\[\]])*\])|\[:\^?\w+:\]|' . self::REGEXP_CODE_POINT_ESCAPE . '|\\\\[pP]\{[^}\\\\]*\}|\\\\.|[\/\0]/s',
+			function ( $parts ) use ( $pattern, $tokens ) {
+				$token = $parts[0];
+				if ( isset( $parts[1] ) ) {
+					return $this->regexp_translate_set( $token, $pattern, $tokens );
 				}
+				if ( '[' === $token[0] ) {
+					return '[' . $this->regexp_translate_property( $token, $tokens ) . ']';
+				}
+				return $this->regexp_translate_token( $token, $tokens );
+			},
+			$pattern
+		);
+
+		// Long quoted text can hit PCRE's backtrack limit. Without this check, the
+		// pattern would become empty, and it would match everything.
+		if ( null === $translated ) {
+			$this->regexp_fail( $pattern );
+		}
+		return $translated;
+	}
+
+	/**
+	 * Translate an ICU set, like "[a-z--[aeiou]]", to PCRE.
+	 *
+	 * ICU sets can nest, and they have operations that PCRE classes lack. "--" and "&&"
+	 * subtract or intersect the items up to the next of them. A single "-" or "&" between
+	 * two sets subtracts or intersects only the next set. Elsewhere, "-" and "&" are
+	 * literal, unless "-" makes a range. A set without operations stays a PCRE class,
+	 * and the others become lookaheads, like "(?:(?![aeiou])[a-z])".
+	 *
+	 * @param string   $set     The set, with its brackets.
+	 * @param string   $pattern The regex pattern, for error messages.
+	 * @param string[] $tokens  Translations of tokens.
+	 *
+	 * @throws Exception If ICU rejects the set.
+	 * @return string The PCRE equivalent, which matches one character.
+	 */
+	private function regexp_translate_set( $set, $pattern, $tokens ) {
+		// An escape with its argument is one token, and so is a character, also when the
+		// set isn't valid UTF-8.
+		preg_match_all(
+			'/\\\\Q.*?(?:\\\\E|\z)|' . self::REGEXP_CODE_POINT_ESCAPE . '|\\\\(?:[pP](?:\{[^}\\\\]*\}|\w)|x(?:\{[^}\\\\]*\}|[0-9a-fA-F]{1,2})|N\{[^}\\\\]*\}|c.|.)|\[:\^?\w+:\]|\[\^?|&&|--|[\xC0-\xFF][\x80-\xBF]*|./s',
+			$set,
+			$parts
+		);
+		$position = 0;
+		return $this->regexp_set_fragment( $this->regexp_parse_set( $parts[0], $position, $pattern, $tokens ) );
+	}
+
+	/**
+	 * Parse an ICU set from its tokens.
+	 *
+	 * @param string[] $parts    The tokens of the set.
+	 * @param int      $position The position of the set's "[" or "[^", moved past its "]".
+	 * @param string   $pattern  The regex pattern, for error messages.
+	 * @param string[] $tokens   Translations of tokens.
+	 *
+	 * @throws Exception If ICU rejects the set.
+	 * @return array The set, as array( PCRE class body or fragment, whether it's a class body ).
+	 */
+	private function regexp_parse_set( array $parts, &$position, $pattern, $tokens ) {
+		// An escape is translated, and another character is escaped if PCRE needs it.
+		$literal = function ( $part ) use ( $tokens ) {
+			return '\\' === $part[0] ? $this->regexp_translate_token( $part, $tokens, true ) : ( $tokens[ $part ] ?? preg_quote( $part ) );
+		};
+
+		$negated  = '[^' === $parts[ $position++ ];
+		$result   = null;
+		$operator = null;
+		$terms    = array();
+		$types    = array();
+		for ( $first = true; ; $first = false ) {
+			$part = $parts[ $position++ ] ?? null;
+			$next = $parts[ $position ] ?? '';
+			$last = count( $terms ) - 1;
+
+			// ICU reads "]" right after "[" or "[^" literally.
+			if ( null === $part || ( ']' === $part && ! $first ) ) {
+				if ( null === $part || ! $terms ) {
+					throw new Exception( "Invalid regular expression: $pattern." );
+				}
+				break;
+			}
+			if ( '--' === $part || '&&' === $part ) {
+				if ( ! $terms ) {
+					throw new Exception( "Invalid regular expression: $pattern." );
+				}
+				$right    = $this->regexp_set_union( $terms );
+				$result   = null === $result ? $right : $this->regexp_set_operation( $result, $operator, $right );
+				$operator = $part;
+				$terms    = array();
+				$types    = array();
 				continue;
 			}
-			if ( '\\' === $character && $i + 1 < $length ) {
-				$next     = $pattern[ $i + 1 ];
-				$escaped .= isset( $escapes[ $next ] ) ? $escapes[ $next ] : $character . $next;
-				$quoted   = 'Q' === $next;
-				++$i;
-			} elseif ( isset( $special[ $character ] ) ) {
-				$escaped .= $special[ $character ];
+
+			// A single "-" or "&" between two sets subtracts or intersects only the next one.
+			if ( ( '-' === $part || '&' === $part ) && $last >= 0 && 'set' === $types[ $last ] && '[' === substr( $next, 0, 1 ) ) {
+				if ( '[:' === substr( $next, 0, 2 ) ) {
+					$right = array( $this->regexp_translate_property( $next, $tokens ), true );
+					++$position;
+				} else {
+					$right = $this->regexp_parse_set( $parts, $position, $pattern, $tokens );
+				}
+				$terms[ $last ] = $this->regexp_set_operation( $terms[ $last ], '-' === $part ? '--' : '&&', $right );
+				continue;
+			}
+
+			// A "-" between two characters makes a range. Another class can't end a range.
+			if ( '-' === $part && $last >= 0 && 'literal' === $types[ $last ] && ! in_array( $next, array( '', ']', '--', '&&' ), true ) && '[' !== $next[0] ) {
+				if ( preg_match( '/^\\\\[pPdDsSwWhHvV]/', $next ) ) {
+					throw new Exception( "Invalid regular expression: $pattern." );
+				}
+				$terms[ $last ] = array( $terms[ $last ][0] . '-' . $literal( $next ), true );
+				$types[ $last ] = 'range';
+				++$position;
+				continue;
+			}
+
+			if ( '[' === $part[0] && '[:' !== substr( $part, 0, 2 ) ) {
+				--$position;
+				$terms[] = $this->regexp_parse_set( $parts, $position, $pattern, $tokens );
+				$types[] = 'set';
+			} elseif ( preg_match( '/^(?:\[:|\\\\[pP])/', $part ) ) {
+				$terms[] = array( $this->regexp_translate_property( $part, $tokens ), true );
+				$types[] = 'set';
+			} elseif ( preg_match( '/^\\\\[dDsSwWhHvV]$/', $part ) ) {
+				// A translated class, like "[\p{L}...]", joins the set, and a negated one is an alternative.
+				$class   = $tokens[ $part ] ?? $part;
+				$terms[] = '[^' === substr( $class, 0, 2 ) ? array( $class, false ) : array( trim( $class, '[]' ), true );
+				$types[] = 'escape';
 			} else {
-				$escaped .= $character;
+				$terms[] = array( $literal( $part ), true );
+				$types[] = 'literal';
 			}
 		}
 
-		// Close quoted text that runs to the end, so that a trailing backslash
-		// can't escape the delimiter.
-		if ( $quoted ) {
-			$escaped .= '\\E';
+		$right = $this->regexp_set_union( $terms );
+		$set   = null === $result ? $right : $this->regexp_set_operation( $result, $operator, $right );
+		if ( ! $negated ) {
+			return $set;
 		}
-		return $escaped;
+		return array( $set[1] ? '[^' . $set[0] . ']' : '(?:(?!' . $set[0] . ')[\\s\\S])', false );
+	}
+
+	/**
+	 * Join the terms of a set into one class, or into alternatives if a term isn't a class.
+	 *
+	 * @param array[] $terms The terms, as returned by regexp_parse_set().
+	 *
+	 * @return array The union, as array( PCRE class body or fragment, whether it's a class body ).
+	 */
+	private function regexp_set_union( array $terms ) {
+		$body         = '';
+		$alternatives = array();
+		foreach ( $terms as $term ) {
+			if ( $term[1] ) {
+				$body .= $term[0];
+			} else {
+				$alternatives[] = $term[0];
+			}
+		}
+		if ( ! $alternatives ) {
+			return array( $body, true );
+		}
+		if ( '' !== $body ) {
+			array_unshift( $alternatives, "[$body]" );
+		}
+		return array( '(?:' . implode( '|', $alternatives ) . ')', false );
+	}
+
+	/**
+	 * Subtract or intersect two sets.
+	 *
+	 * @param array  $left     The left set, as returned by regexp_parse_set().
+	 * @param string $operator "--" or "&&".
+	 * @param array  $right    The right set.
+	 *
+	 * @return array The result, as a PCRE fragment.
+	 */
+	private function regexp_set_operation( array $left, $operator, array $right ) {
+		$assertion = '--' === $operator ? '(?!' : '(?=';
+		return array( '(?:' . $assertion . $this->regexp_set_fragment( $right ) . ')' . $this->regexp_set_fragment( $left ) . ')', false );
+	}
+
+	/**
+	 * Get the PCRE fragment of a set.
+	 *
+	 * @param array $set The set, as returned by regexp_parse_set().
+	 *
+	 * @return string The PCRE fragment, which matches one character.
+	 */
+	private function regexp_set_fragment( array $set ) {
+		return $set[1] ? "[{$set[0]}]" : $set[0];
+	}
+
+	/**
+	 * Translate a token of a pattern.
+	 *
+	 * @param string   $token  The token.
+	 * @param string[] $tokens Translations of tokens.
+	 * @param bool     $in_set Whether the token is in a set.
+	 *
+	 * @return string The PCRE equivalent.
+	 */
+	private function regexp_translate_token( $token, $tokens, $in_set = false ) {
+		if ( '\\Q' === substr( $token, 0, 2 ) ) {
+			// Quoting can't hold the delimiter or NUL bytes, so they are escaped between
+			// two quotes. Quoted text that runs to the end gets an "\E", so that a trailing
+			// backslash can't escape the delimiter.
+			$quoted = strtr(
+				$token,
+				array(
+					'/'  => '\\E\\/\\Q',
+					"\0" => '\\E\\x00\\Q',
+				)
+			);
+			return '\\E' === substr( $token, -2 ) ? $quoted : $quoted . '\\E';
+		}
+		$letters = $in_set ? self::REGEXP_LITERAL_SET_ESCAPES : self::REGEXP_LITERAL_ESCAPES;
+		if ( 2 === strlen( $token ) && '\\' === $token[0] && false !== strpos( $letters, $token[1] ) ) {
+			return $token[1];
+		}
+		if ( preg_match( '/^\\\\[pP]\{/', $token ) ) {
+			return $this->regexp_translate_property( $token, $tokens );
+		}
+		if ( isset( $tokens[ $token ] ) ) {
+			return $tokens[ $token ];
+		}
+		if ( ! preg_match( '/^(?:' . self::REGEXP_CODE_POINT_ESCAPE . ')$/', $token ) ) {
+			return $token;
+		}
+		if ( '0' === $token[1] ) {
+			$code = octdec( substr( $token, 2 ) );
+		} elseif ( 12 === strlen( $token ) ) {
+			// A surrogate pair of "\u" escapes.
+			$code = 0x10000 + ( ( hexdec( substr( $token, 2, 4 ) ) - 0xD800 ) << 10 ) + hexdec( substr( $token, 8, 4 ) ) - 0xDC00;
+		} else {
+			$code = hexdec( substr( $token, 2 ) );
+		}
+		return sprintf( '\\x{%X}', $code );
+	}
+
+	/**
+	 * Translate a property, like "\p{Lowercase_Letter}" or "[:Lu:]", to PCRE.
+	 *
+	 * ICU takes the long names of general categories, ignores case, spaces, hyphens, and
+	 * underscores in names, and takes a "gc=" prefix, and an "Is" prefix, like Java. It
+	 * takes any property in the POSIX syntax. Other names, like scripts, go to PCRE.
+	 *
+	 * @param string   $token  The property, like "\p{...}", "\P{...}", or "[:...:]".
+	 * @param string[] $tokens Translations of tokens.
+	 *
+	 * @return string The PCRE equivalent, for a set.
+	 */
+	private function regexp_translate_property( $token, $tokens ) {
+		if ( ! preg_match( '/^(?:\\\\([pP])\{(.*)\}|\[:(\^?)(.*):\])$/s', $token, $parts ) ) {
+			return $token;
+		}
+		$negated = 'P' === $parts[1] || '^' === ( $parts[3] ?? '' );
+		$name    = '' === $parts[1] ? $parts[4] : $parts[2];
+		$loose   = preg_replace( '/^(?:is|gc=|generalcategory=)(?=.)/', '', strtolower( str_replace( array( ' ', '-', '_' ), '', $name ) ) );
+
+		if ( '[' === $token[0] && in_array( $loose, self::REGEXP_POSIX_CLASSES, true ) ) {
+			$class = '[:' . ( $negated ? '^' : '' ) . $loose . ':]';
+		} else {
+			if ( isset( self::REGEXP_GENERAL_CATEGORIES[ $loose ] ) ) {
+				$name = self::REGEXP_GENERAL_CATEGORIES[ $loose ];
+			} elseif ( in_array( ucfirst( $loose ), self::REGEXP_GENERAL_CATEGORIES, true ) ) {
+				$name = ucfirst( $loose );
+			} else {
+				$name = preg_replace( '/^is(?=.)/i', '', $name );
+			}
+			$class = ( $negated ? '\\P{' : '\\p{' ) . $name . '}';
+		}
+
+		// The translations of [:upper:] and similar classes apply to their other names too.
+		return $tokens[ $class ] ?? $class;
 	}
 
 	/**
