@@ -37,11 +37,13 @@ function sqlite_plugin_filter_debug_data( $info ) {
 			'private' => true,
 		);
 
+		$database_size = sqlite_plugin_get_database_size( DB_PATH );
+
 		$info['wp-database']['fields']['database_size'] = array(
 			'label' => __( 'Database size', 'sqlite-database-integration' ),
-			'value' => ':memory:' === DB_PATH
+			'value' => null === $database_size
 				? __( 'Not available', 'sqlite-database-integration' )
-				: size_format( filesize( DB_PATH ) ),
+				: size_format( $database_size, 1 ),
 		);
 
 		unset( $info['wp-database']['fields']['extension'] );
@@ -75,8 +77,41 @@ function sqlite_plugin_filter_site_status_tests( $tests ) {
 		unset( $tests['direct']['utf8mb4_support'] );
 		unset( $tests['direct']['sql_server'] );
 		unset( $tests['direct']['persistent_object_cache'] ); // Throws an error because DB_NAME is not defined.
+
+		// Local development sites are not served publicly.
+		if (
+			'local' !== wp_get_environment_type()
+			&& current_user_can( sqlite_plugin_get_manage_capability() )
+			&& 'public' === sqlite_plugin_get_database_location_status()
+		) {
+			$tests['direct']['sqlite_database_location'] = array(
+				'label'     => __( 'SQLite database location', 'sqlite-database-integration' ),
+				'test'      => 'sqlite_plugin_test_database_location',
+				'skip_cron' => true,
+			);
+		}
 	}
 
 	return $tests;
 }
 add_filter( 'site_status_tests', 'sqlite_plugin_filter_site_status_tests' );
+
+/**
+ * Recommend private storage when the database is in a potentially public folder.
+ *
+ * @access private
+ * @return array Site Health result.
+ */
+function sqlite_plugin_test_database_location() {
+	return array(
+		'label'       => __( 'Review the SQLite database location', 'sqlite-database-integration' ),
+		'status'      => 'recommended',
+		'badge'       => array(
+			'label' => __( 'Security', 'sqlite-database-integration' ),
+			'color' => 'blue',
+		),
+		'description' => wp_kses_post( wpautop( sqlite_plugin_get_database_location_warning() ) ),
+		'actions'     => '',
+		'test'        => 'sqlite_database_location',
+	);
+}

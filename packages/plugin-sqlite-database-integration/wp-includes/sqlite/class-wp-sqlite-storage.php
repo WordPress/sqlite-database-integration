@@ -316,6 +316,44 @@ class WP_SQLite_Storage {
 	}
 
 	/**
+	 * Check whether PHP can create and write the database files.
+	 *
+	 * No files are created, so permissions may still change before initialization.
+	 * An initialized secret path can keep a read-only root, so a recorded database
+	 * path is trusted without loading it.
+	 *
+	 * @return bool Whether the storage is writable.
+	 */
+	public function is_writable(): bool {
+		// An in-memory database has no files.
+		if ( ':memory:' === $this->database_path ) {
+			return true;
+		}
+
+		if ( null === $this->database_path ) {
+			if ( @is_file( $this->database_path_file ) ) {
+				return true;
+			}
+		} elseif ( @file_exists( $this->database_path ) && ! @is_writable( $this->database_path ) ) {
+			return false;
+		}
+
+		// Like ensure_protected_directory(), find the existing directory to create missing ones in.
+		$directory = $this->database_root;
+		if ( ! @is_dir( $directory ) ) {
+			for ( $directory = rtrim( $directory, '/\\' ); ! @is_dir( $directory ); $directory = dirname( $directory ) ) {
+				// Another file is in the way, or no ancestor directory exists.
+				if ( false !== @lstat( $directory ) || dirname( $directory ) === $directory ) {
+					return false;
+				}
+			}
+		}
+
+		// Database files and storage locks are created in this directory.
+		return @is_writable( $directory );
+	}
+
+	/**
 	 * Create a storage manager. Use with_secret_path() or with_explicit_path().
 	 */
 	private function __construct() {
