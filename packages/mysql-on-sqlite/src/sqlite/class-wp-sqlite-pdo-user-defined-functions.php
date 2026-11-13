@@ -108,6 +108,15 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'regexp_instr'   => array( 2, 3, 4, 5, 6 ),
 	);
 
+	/**
+	 * ICU escapes of a code point that PCRE lacks or reads differently: "\uhhhh",
+	 * "\Uhhhhhhhh", "\0ooo" up to "\0377", and "\cX". A surrogate pair of "\u" escapes
+	 * is one code point. ICU's "\cX" keeps the low 5 bits of X, where PCRE flips a bit.
+	 * "\xh" and "\xhh" are here too, as a translation can put a hex digit after them,
+	 * like in "[\x4[5]]".
+	 */
+	private const REGEXP_CODE_POINT_ESCAPE = '\\\\u[dD][89abAB][0-9a-fA-F]{2}\\\\u[dD][c-fC-F][0-9a-fA-F]{2}|\\\\u[0-9a-fA-F]{4}|\\\\U[0-9a-fA-F]{8}|\\\\0(?:[0-3][0-7]{0,2}|[4-7][0-7]?)|\\\\x[0-9a-fA-F]{1,2}|\\\\c(?:[\xC0-\xFF][\x80-\xBF]*+|[\s\S])';
+
 	/** @var string[] Compiled PCRE patterns, keyed by byte mode, "\G" variant, match type, and pattern. */
 	private $regexp_cache = array();
 
@@ -1310,8 +1319,8 @@ class WP_SQLite_PDO_User_Defined_Functions {
 
 		/*
 		 * PHP 7 can read an unknown escape as literal text. For "\y", that matches ICU,
-		 * but "\u0041" matches "u0041", where ICU matches "A". The "X" modifier makes
-		 * all of them errors, like in PHP 8.
+		 * but ICU rejects "\u004", which has too few digits. The "X" modifier makes all
+		 * of them errors, like in PHP 8.
 		 */
 		$modifiers = $binary_mode ? 'X' : 'uX';
 		if ( ! $case_sensitive ) {
@@ -1421,15 +1430,13 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		 * set otherwise. ICU reads a POSIX class outside of a set, as in "[:alpha:]", as
 		 * a set. The set's loops and its leading "^" and "]" are possessive, so that a
 		 * long set doesn't exhaust PCRE's stack, and the "]" of "[]" or "[^]" can't end
-		 * the set.
+		 * the set. In a set, a control escape, like "\c]", takes the next character.
 		 *
 		 * A property name stops at a backslash, so that a long run of "\p{" doesn't
-		 * scan the rest of the pattern each time. A control escape, like "\c[", takes
-		 * the next character, unless it is the delimiter or a NUL byte, which need
-		 * escaping.
+		 * scan the rest of the pattern each time.
 		 */
 		$translated = preg_replace_callback(
-			'/\\\\Q.*?(?:\\\\E|\z)|\[:\^?[^:]*:\]|(\[\^?+\]?+(?:\\\\Q.*?(?:\\\\E|\z)|\\\\c[^\/\0]|\\\\.|\[:\^?[^:]*:\]|(?1)|[^\\\\\[\]])*+\])|\\\\[pP]\{[^}\\\\]*\}|\\\\c[^\/\0]|\\\\.|[\/\0]/s',
+			'/\\\\Q.*?(?:\\\\E|\z)|\[:\^?[^:]*:\]|(\[\^?+\]?+(?:\\\\Q.*?(?:\\\\E|\z)|\\\\c.|\\\\.|\[:\^?[^:]*:\]|(?1)|[^\\\\\[\]])*+\])|' . self::REGEXP_CODE_POINT_ESCAPE . '|\\\\[pP]\{[^}\\\\]*\}|\\\\.|[\/\0]/s',
 			function ( $parts ) use ( $pattern, $tokens ) {
 				$token = $parts[0];
 				if ( isset( $parts[1] ) ) {
@@ -1473,7 +1480,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		// An escape with its argument is one token, and so is a character, also when the
 		// set isn't valid UTF-8.
 		preg_match_all(
-			'/\\\\Q.*?(?:\\\\E|\z)|\\\\(?:[pP](?:\{[^}\\\\]*\}|\w)|x(?:\{[^}\\\\]*\}|[0-9a-fA-F]{1,2})|N\{[^}\\\\]*\}|c[^\/\0]|.)|\[:\^?[^:]*:\]|\[\^?|&&|--|[\xC0-\xFF][\x80-\xBF]*|./s',
+			'/\\\\Q.*?(?:\\\\E|\z)|' . self::REGEXP_CODE_POINT_ESCAPE . '|\\\\(?:[pP](?:\{[^}\\\\]*\}|\w)|[xN]\{[^}\\\\]*\}|.)|\[:\^?[^:]*:\]|\[\^?|&&|--|[\xC0-\xFF][\x80-\xBF]*|./s',
 			$set,
 			$parts
 		);
@@ -1671,7 +1678,25 @@ class WP_SQLite_PDO_User_Defined_Functions {
 			);
 			return '\\E' === substr( $token, -2 ) ? $quoted : $quoted . '\\E';
 		}
-		return $tokens[ $token ] ?? $token;
+		if ( isset( $tokens[ $token ] ) ) {
+			return $tokens[ $token ];
+		}
+		if ( ! preg_match( '/^(?:' . self::REGEXP_CODE_POINT_ESCAPE . ')$/', $token ) ) {
+			return $token;
+		}
+		if ( 'c' === $token[1] ) {
+			// ICU keeps the low 5 bits of X, and UTF-8 keeps the low 6 bits of a code point
+			// in its last byte.
+			$code = ord( substr( $token, -1 ) ) & 0x1F;
+		} elseif ( '0' === $token[1] ) {
+			$code = octdec( substr( $token, 2 ) );
+		} elseif ( 12 === strlen( $token ) ) {
+			// A surrogate pair of "\u" escapes.
+			$code = 0x10000 + ( ( hexdec( substr( $token, 2, 4 ) ) - 0xD800 ) << 10 ) + hexdec( substr( $token, 8, 4 ) ) - 0xDC00;
+		} else {
+			$code = hexdec( substr( $token, 2 ) );
+		}
+		return sprintf( '\\x{%X}', $code );
 	}
 
 	/**
