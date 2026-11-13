@@ -1328,7 +1328,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		} else {
 			$newline = '(*ANY)';
 		}
-		$compiled = '/' . $newline . $this->regexp_escape_pattern( $pattern, $without_g ) . '/' . $modifiers;
+		$compiled = '/' . $newline . $this->regexp_translate_pattern( $pattern, $without_g ) . '/' . $modifiers;
 
 		/*
 		 * Compile the pattern by matching it against an empty string. Only a compile
@@ -1353,68 +1353,75 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	}
 
 	/**
-	 * Escape pattern delimiters and NUL bytes that are not already escaped, read
-	 * "\K" as "K", and, if asked, make "\G" never match.
+	 * Translate a MySQL regex pattern to PCRE syntax.
 	 *
-	 * PHP before 8.2 rejects NUL bytes in patterns, so they become "\x00".
+	 * Splits the pattern into quoted text, escapes, and other characters, so that a
+	 * translation applies only to a whole token.
 	 *
 	 * @param string $pattern   The regex pattern.
-	 * @param bool   $without_g Optional. Whether "\G" never matches.
+	 * @param bool   $without_g Whether "\G" never matches.
 	 *
+	 * @throws Exception If the pattern can't be split.
 	 * @return string Pattern safe to wrap in slash delimiters.
 	 */
-	private function regexp_escape_pattern( $pattern, $without_g = false ) {
-		$special = array(
-			'/'  => '\\/',
-			"\0" => '\\x00',
-		);
+	private function regexp_translate_pattern( $pattern, $without_g ) {
+		$tokens = array(
+			// The delimiter, and NUL bytes, which PHP before 8.2 rejects in patterns.
+			'/'    => '\\/',
+			"\0"   => '\\x00',
+			"\\\0" => '\\x00',
 
-		/*
-		 * ICU reads "\K" as "K". In PCRE, "\K" moves the start of the match, even to
-		 * before the place where the search started, like in "(?<=\Ka)".
-		 */
-		$escapes = $special + array( 'K' => 'K' );
+			/*
+			 * ICU reads "\K" as "K". In PCRE, "\K" moves the start of the match, even to
+			 * before the place where the search started, like in "(?<=\Ka)".
+			 */
+			'\\K'  => 'K',
+		);
 		if ( $without_g ) {
 			// A position can't be both a word boundary and not one, so "\b\B" never
 			// matches. Unlike "(?!)", it has no ")" to end a "(?#...)" comment.
-			$escapes['G'] = '\\b\\B';
+			$tokens['\\G'] = '\\b\\B';
 		}
 
-		$escaped = '';
-		$quoted  = false;
-		$length  = strlen( $pattern );
-		for ( $i = 0; $i < $length; ++$i ) {
-			$character = $pattern[ $i ];
-			if ( $quoted ) {
-				if ( '\\' === $character && $i + 1 < $length && 'E' === $pattern[ $i + 1 ] ) {
-					$escaped .= '\\E';
-					$quoted   = false;
-					++$i;
-				} elseif ( isset( $special[ $character ] ) ) {
-					$escaped .= '\\E' . $special[ $character ] . '\\Q';
-				} else {
-					$escaped .= $character;
-				}
-				continue;
-			}
-			if ( '\\' === $character && $i + 1 < $length ) {
-				$next     = $pattern[ $i + 1 ];
-				$escaped .= isset( $escapes[ $next ] ) ? $escapes[ $next ] : $character . $next;
-				$quoted   = 'Q' === $next;
-				++$i;
-			} elseif ( isset( $special[ $character ] ) ) {
-				$escaped .= $special[ $character ];
-			} else {
-				$escaped .= $character;
-			}
-		}
+		$translated = preg_replace_callback(
+			'/\\\\Q.*?(?:\\\\E|\z)|\\\\.|[\/\0]/s',
+			function ( $parts ) use ( $tokens ) {
+				return $this->regexp_translate_token( $parts[0], $tokens );
+			},
+			$pattern
+		);
 
-		// Close quoted text that runs to the end, so that a trailing backslash
-		// can't escape the delimiter.
-		if ( $quoted ) {
-			$escaped .= '\\E';
+		// Long quoted text can hit PCRE's backtrack limit. Without this check, the
+		// pattern would become empty, and it would match everything.
+		if ( null === $translated ) {
+			$this->regexp_fail( $pattern );
 		}
-		return $escaped;
+		return $translated;
+	}
+
+	/**
+	 * Translate a token of a pattern.
+	 *
+	 * @param string   $token  The token.
+	 * @param string[] $tokens Translations of tokens.
+	 *
+	 * @return string The PCRE equivalent.
+	 */
+	private function regexp_translate_token( $token, $tokens ) {
+		if ( '\\Q' === substr( $token, 0, 2 ) ) {
+			// Quoting can't hold the delimiter or NUL bytes, so they are escaped between
+			// two quotes. Quoted text that runs to the end gets an "\E", so that a trailing
+			// backslash can't escape the delimiter.
+			$quoted = strtr(
+				$token,
+				array(
+					'/'  => '\\E\\/\\Q',
+					"\0" => '\\E\\x00\\Q',
+				)
+			);
+			return '\\E' === substr( $token, -2 ) ? $quoted : $quoted . '\\E';
+		}
+		return $tokens[ $token ] ?? $token;
 	}
 
 	/**
