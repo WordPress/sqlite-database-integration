@@ -129,6 +129,14 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 */
 	private const REGEXP_LITERAL_SET_ESCAPES = 'bgijklmoqyzABCEFGIJKLMORTXYZ';
 
+	/**
+	 * ICU's word characters: alphabetic ones, marks, decimal digits, connector punctuation,
+	 * and the zero-width joiners. Alphabetic characters are letters, letter numbers, and
+	 * letters in circles or squares, like "Ⓐ". PCRE's "\w" misses some marks, and it
+	 * matches other numbers, like "²".
+	 */
+	private const REGEXP_WORD_CLASS = '\p{L}\p{Nl}\p{M}\p{Nd}\p{Pc}\x{200C}\x{200D}\x{24B6}-\x{24E9}\x{1F130}-\x{1F149}\x{1F150}-\x{1F169}\x{1F170}-\x{1F189}';
+
 	/** @var string[] Compiled PCRE patterns, keyed by byte mode, "\G" variant, match type, and pattern. */
 	private $regexp_cache = array();
 
@@ -1275,6 +1283,8 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * - When ignoring case, ICU applies it to a set after the set's operations, so
 	 *   `[A-Za-z--aeiou]` matches "a", as "A" stays in the set. Here, the operation
 	 *   removes both cases. Operands in brackets, like `[a-z--[aeiou]]`, match ICU.
+	 * - ICU attaches a combining mark to the character before it, so a mark after a
+	 *   space doesn't start a word for `\b`. Here, it does.
 	 * - `\G` in a lookbehind doesn't always match where it does in ICU.
 	 * - Data that isn't valid UTF-8 is matched byte by byte and case-sensitively,
 	 *   like MySQL binary strings. Other binary values match as text, so case
@@ -1285,6 +1295,8 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 *   `2.6` means 2 (MySQL: 3), and `'2e1'` means 20 (MySQL: 2).
 	 * - A repeated group, like `(a|b)*`, can exceed PCRE's limits on a subject of
 	 *   about 50,000 characters, or 2,000 on PHP 7.2.
+	 * - `\w` and `\b` become long classes, so a repeated group like
+	 *   `(?:\b\w+\b\W*){1,100}` can be too large to compile.
 	 *
 	 * @param string $pattern     The MySQL regex pattern.
 	 * @param string $match_type  MySQL match_type flag string.
@@ -1356,7 +1368,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		} else {
 			$newline = '(*ANY)';
 		}
-		$compiled = '/' . $newline . $this->regexp_translate_pattern( $pattern, ! $case_sensitive, $without_g ) . '/' . $modifiers;
+		$compiled = '/' . $newline . $this->regexp_translate_pattern( $pattern, ! $case_sensitive, $binary_mode, $without_g ) . '/' . $modifiers;
 
 		/*
 		 * Compile the pattern by matching it against an empty string. Only a compile
@@ -1388,12 +1400,14 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 *
 	 * @param string $pattern          The regex pattern.
 	 * @param bool   $case_insensitive Whether the pattern ignores case by default.
+	 * @param bool   $binary_mode      Whether the pattern matches bytes instead of UTF-8 characters.
 	 * @param bool   $without_g        Whether "\G" never matches.
 	 *
-	 * @throws Exception If the pattern can't be split, or it has an invalid set.
+	 * @throws Exception If the pattern can't be split, or it has an invalid set or a
+	 *                   repeated word boundary.
 	 * @return string Pattern safe to wrap in slash delimiters.
 	 */
-	private function regexp_translate_pattern( $pattern, $case_insensitive, $without_g ) {
+	private function regexp_translate_pattern( $pattern, $case_insensitive, $binary_mode, $without_g ) {
 		$tokens = array(
 			// The delimiter, and NUL bytes, which PHP before 8.2 rejects in patterns.
 			'/'          => '\\/',
@@ -1408,6 +1422,17 @@ class WP_SQLite_PDO_User_Defined_Functions {
 			// A position can't be both a word boundary and not one, so "\b\B" never
 			// matches. Unlike "(?!)", it has no ")" to end a "(?#...)" comment.
 			$tokens['\\G'] = '\\b\\B';
+		}
+
+		// "\w" and "\b" use ICU's word characters, except on bytes.
+		if ( ! $binary_mode ) {
+			$word    = self::REGEXP_WORD_CLASS;
+			$tokens += array(
+				'\\w' => "[$word]",
+				'\\W' => "[^$word]",
+				'\\b' => "(?:(?<=[$word])(?![$word])|(?<![$word])(?=[$word]))",
+				'\\B' => "(?:(?<=[$word])(?=[$word])|(?<![$word])(?![$word]))",
+			);
 		}
 
 		/*
@@ -1438,10 +1463,11 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		 * the set. In a set, a control escape, like "\c]", takes the next character.
 		 *
 		 * A property name stops at a backslash, so that a long run of "\p{" doesn't
-		 * scan the rest of the pattern each time.
+		 * scan the rest of the pattern each time. A "\b" or "\B" with a quantifier or
+		 * "{" after it is one token, so that it is an error, like in ICU.
 		 */
 		$translated = preg_replace_callback(
-			'/\\\\Q.*?(?:\\\\E|\z)|\[:\^?[^:]*:\]|(\[\^?+\]?+(?:\\\\Q.*?(?:\\\\E|\z)|\\\\c.|\\\\.|\[:\^?[^:]*:\]|(?1)|[^\\\\\[\]])*+\])|' . self::REGEXP_CODE_POINT_ESCAPE . '|\\\\[pP]\{[^}\\\\]*\}|\\\\.|[\/\0]/s',
+			'/\\\\Q.*?(?:\\\\E|\z)|\[:\^?[^:]*:\]|(\[\^?+\]?+(?:\\\\Q.*?(?:\\\\E|\z)|\\\\c.|\\\\.|\[:\^?[^:]*:\]|(?1)|[^\\\\\[\]])*+\])|' . self::REGEXP_CODE_POINT_ESCAPE . '|\\\\[pP]\{[^}\\\\]*\}|\\\\[bB][*+?{]|\\\\.|[\/\0]/s',
 			function ( $parts ) use ( $pattern, $tokens ) {
 				$token = $parts[0];
 				if ( isset( $parts[1] ) ) {
@@ -1449,6 +1475,9 @@ class WP_SQLite_PDO_User_Defined_Functions {
 				}
 				if ( '[' === $token[0] ) {
 					return '[' . ( $tokens[ $token ] ?? $token ) . ']';
+				}
+				if ( isset( $token[2] ) && ( 'b' === $token[1] || 'B' === $token[1] ) ) {
+					throw new Exception( "Invalid regular expression: $pattern." );
 				}
 				return $this->regexp_translate_token( $token, $tokens );
 			},
@@ -1594,7 +1623,9 @@ class WP_SQLite_PDO_User_Defined_Functions {
 				$terms[] = array( $tokens[ $part ] ?? $part, true );
 				$type    = 'set';
 			} elseif ( preg_match( '/^\\\\[dDsSwWhHvV]$/', $part ) ) {
-				$terms[] = array( $part, true );
+				// A translated class, like "[\p{L}...]", joins the set, and a negated one is an alternative.
+				$class   = $tokens[ $part ] ?? $part;
+				$terms[] = '[^' === substr( $class, 0, 2 ) ? array( $class, false ) : array( trim( $class, '[]' ), true );
 				$type    = 'escape';
 			} else {
 				$terms[] = array( $literal( $part ), true );

@@ -576,19 +576,6 @@ class WP_MySQL_On_SQLite_Regexp_Like_Tests extends WP_MySQL_On_SQLite_Regexp_Tes
 			);
 		}
 
-		// Before PCRE2 10.43, \w didn't match combining marks, like the vowel signs of "नमस्ते", which ICU's \w does.
-		if ( version_compare( $pcre_version, '10.43', '<' ) ) {
-			array_push(
-				$failures,
-				'mysql-server-suite:1533',
-				'mysql-server-suite:1534',
-				'mysql-server-suite:1701',
-				'mysql-server-suite:1702',
-				'mysql-server-suite:7923',
-				'mysql-server-suite:7924'
-			);
-		}
-
 		return $failures;
 	}
 }

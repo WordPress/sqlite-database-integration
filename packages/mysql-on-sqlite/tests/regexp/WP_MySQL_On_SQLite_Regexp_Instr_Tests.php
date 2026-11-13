@@ -14,8 +14,6 @@ class WP_MySQL_On_SQLite_Regexp_Instr_Tests extends WP_MySQL_On_SQLite_Regexp_Te
 
 		// Cases that fail in every environment.
 		$failures = array(
-			'mysql-server-suite:7923',
-			'mysql-server-suite:7924',
 			'mysql-server-suite:12325',
 			'mysql-server-suite:12326',
 			'mysql-server-suite:12327',
@@ -330,12 +328,6 @@ class WP_MySQL_On_SQLite_Regexp_Instr_Tests extends WP_MySQL_On_SQLite_Regexp_Te
 			'icu-regextst:1262',
 			'icu-regextst:1263',
 			'icu-regextst:1264',
-			'icu-regextst:1267',
-			'icu-regextst:1268',
-			'icu-regextst:1269',
-			'icu-regextst:1270',
-			'icu-regextst:1271',
-			'icu-regextst:1272',
 			'icu-regextst:1301',
 			'icu-regextst:1302',
 			'icu-regextst:1330',
@@ -598,27 +590,6 @@ class WP_MySQL_On_SQLite_Regexp_Instr_Tests extends WP_MySQL_On_SQLite_Regexp_Te
 				'icu-regextst:1481',
 				'icu-regextst:1504',
 				'icu-regextst:1505'
-			);
-		}
-
-		// Before PCRE2 10.43, \w didn't match combining marks, like the vowel signs of "नमस्ते", which ICU's \w does.
-		if ( version_compare( $pcre_version, '10.43', '<' ) ) {
-			array_push(
-				$failures,
-				'mysql-server-suite:1533',
-				'mysql-server-suite:1534',
-				'mysql-server-suite:1553',
-				'mysql-server-suite:1554',
-				'mysql-server-suite:1557',
-				'mysql-server-suite:1558',
-				'mysql-server-suite:1701',
-				'mysql-server-suite:1702',
-				'mysql-server-suite:1721',
-				'mysql-server-suite:1722',
-				'mysql-server-suite:1725',
-				'mysql-server-suite:1726',
-				'mysql-server-suite:7919',
-				'mysql-server-suite:7920'
 			);
 		}
 
