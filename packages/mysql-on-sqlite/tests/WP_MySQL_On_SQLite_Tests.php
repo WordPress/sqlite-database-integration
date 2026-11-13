@@ -827,6 +827,30 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		);
 	}
 
+	public function testRegexpQuotedTextInExtendedMode() {
+		// Quoted spaces, tabs, and "#" stay literal in extended mode.
+		$this->assertQuery(
+			"SELECT
+				REGEXP_LIKE('a b', '^(?x)\\\\Qa b\\\\E\$') AS space,
+				REGEXP_LIKE('ab', '^(?x)\\\\Qa b\\\\E\$') AS no_space,
+				REGEXP_LIKE('a\tb', '^(?x)\\\\Qa\tb\\\\E\$') AS tab,
+				REGEXP_LIKE('a#b', '^(?x)\\\\Qa#b\\\\E\$') AS hash,
+				REGEXP_LIKE('a', '^(?x)\\\\Qa#b\\\\E') AS comment"
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'space'    => '1',
+					'no_space' => '0',
+					'tab'      => '1',
+					'hash'     => '1',
+					'comment'  => '0',
+				),
+			),
+			$this->last_result
+		);
+	}
+
 	public function testRegexpLikeNumericOperands() {
 		$this->assertQuery( 'SELECT REGEXP_LIKE(123, 2) AS r' );
 		$this->assertSame( '1', $this->last_result[0]->r );
@@ -1449,8 +1473,9 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 	 * @dataProvider regexpQuoteInCommentCases
 	 */
 	public function testRegexpEscapedKAfterQuoteInComment( $sql, $pattern ) {
-		// The escaper reads a "\Q" in a comment as quoted text, so a later "\K" reaches
-		// PCRE. A match that starts before the search is then an error, not an endless loop.
+		// The translation reads a "\Q" in a comment as quoted text, so a later "\K"
+		// reaches PCRE. A match that starts before the search is then an error, not an
+		// endless loop.
 		$this->assertQueryError(
 			'SELECT ' . sprintf( $sql, $this->engine->quote( $pattern ) ),
 			"Invalid regular expression: $pattern."
