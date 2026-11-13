@@ -453,6 +453,8 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			'REGEXP_REPLACE, pos one past end' => array( "X'C485FF'", "REGEXP_REPLACE(b, '\$', 'x', 4)", "\xC4\x85\xFFx" ),
 			'REGEXP_REPLACE, occurrence'       => array( "X'C485FF'", "REGEXP_REPLACE(b, '(.)', '[\$1]', 2, 1)", "\xC4[\x85]\xFF" ),
 			'REGEXP_REPLACE, empty matches'    => array( "X'C485FF'", "REGEXP_REPLACE(b, 'x*', '-')", "-\xC4-\x85-\xFF-" ),
+			'REGEXP_REPLACE, word characters'  => array( "X'61812D62'", "REGEXP_REPLACE(b, '\\\\w', 'x')", "x\x81-x" ),
+			'REGEXP_REPLACE, word boundaries'  => array( "X'61812D62'", "REGEXP_REPLACE(b, '\\\\b', '|')", "|a|\x81-|b|" ),
 
 			'REGEXP_SUBSTR, any byte'          => array( "X'61FF62'", "REGEXP_SUBSTR(b, 'a.b')", "a\xFFb" ),
 			'REGEXP_SUBSTR, other case'        => array( "X'61FF41'", "REGEXP_SUBSTR(b, 'a.a')", null ),
@@ -1597,6 +1599,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 	 * @dataProvider regexpSetCases
 	 * @dataProvider regexpCodePointEscapeCases
 	 * @dataProvider regexpLiteralEscapeCases
+	 * @dataProvider regexpWordCases
 	 */
 	public function testRegexpIcuSyntax( $pattern, $subject, $expected ) {
 		$this->assertQuery(
@@ -1711,6 +1714,26 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			'"\\X" in a set'          => array( '[\\X]', 'aX', 'a<X>' ),
 			'"\\b" outside of a set'  => array( '\\bb', 'ab b', 'ab <b>' ),
 			'"\\z" outside of a set'  => array( 'a\\z', 'aa', 'a<a>' ),
+		);
+	}
+
+	public static function regexpWordCases() {
+		return array(
+			'"\\w" and marks'              => array( '\\w+', 'नमस्ते สวัสดี தமிழ்', '<नमस्ते> <สวัสดี> <தமிழ்>' ),
+			'"\\b" and marks'              => array( '\\bहिन्दी\\b', 'हिन्दी है', '<हिन्दी> है' ),
+			'"\\b" and a combining accent' => array( "\\bcafe\u{301}\\b", "a cafe\u{301} b", "a <cafe\u{301}> b" ),
+			'"\\w" and other numbers'      => array( '\\w', 'x²Ⅻ', '<x>²<Ⅻ>' ),
+			'"\\w" and letter symbols'     => array( '\\w', 'Ⓐ🄰', '<Ⓐ><🄰>' ),
+			'"\\w" and joiners'            => array( '\\w+', "ab\u{200C}cd\u{200D}ef", "<ab\u{200C}cd\u{200D}ef>" ),
+			'"\\w" and connectors'         => array( '\\w', '_‿', '<_><‿>' ),
+			'"\\W"'                        => array( '\\W+', "ab\u{200C}cd ²", "ab\u{200C}cd< ²>" ),
+			'"\\b"'                        => array( '\\b', 'ab cd', '<>ab<> <>cd<>' ),
+			'"\\B"'                        => array( '\\B', 'ab cd', 'a<>b c<>d' ),
+			'"\\w" in a set'               => array( '[\\w]+', 'ab²', '<ab>²' ),
+			'"\\W" in a set'               => array( '[\\W]+', 'ab²', 'ab<²>' ),
+			'"\\W" in a negated set'       => array( '[^\\W]+', 'ab² c', '<ab>² <c>' ),
+			'"\\w" in an intersection'     => array( '[\\w&&[^a]]+', 'ab²c', 'a<b>²<c>' ),
+			'"\\d"'                        => array( '\\d+', '١٢٣ ²', '<١٢٣> ²' ),
 		);
 	}
 

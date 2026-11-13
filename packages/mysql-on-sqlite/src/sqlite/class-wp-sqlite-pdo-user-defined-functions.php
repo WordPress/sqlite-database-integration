@@ -128,6 +128,13 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 */
 	private const REGEXP_LITERAL_SET_ESCAPES = 'bgijklmoqyzABCEFGIJKLMORTXYZ';
 
+	/**
+	 * ICU's word characters: alphabetic ones, marks, decimal digits, connector punctuation,
+	 * and the zero-width joiners. Alphabetic characters are letters, letter numbers, and
+	 * letter symbols, like "Ⓐ". PCRE's "\w" misses some marks, and has other numbers.
+	 */
+	private const REGEXP_WORD_CLASS = '\p{L}\p{Nl}\p{M}\p{Nd}\p{Pc}\x{200C}\x{200D}\x{24B6}-\x{24E9}\x{1F130}-\x{1F149}\x{1F150}-\x{1F169}\x{1F170}-\x{1F189}';
+
 	/** @var string[] Compiled PCRE patterns, keyed by byte mode, "\G" variant, match type, and pattern. */
 	private $regexp_cache = array();
 
@@ -1269,6 +1276,8 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * - Inline case flags don't reach `[:upper:]` and `[:lower:]`, or `\p{Lu}` and
 	 *   `\p{Ll}` on PCRE 10.44 and older. They keep their case in `(?i)[[:upper:]]`
 	 *   with the `c` flag, and in a whole pattern with `(?-i)`.
+	 * - ICU attaches a combining mark to the character before it, so a mark after a
+	 *   space doesn't start a word for `\b`. Here, it does.
 	 * - `\G` in a lookbehind doesn't always match where it does in ICU.
 	 * - Data that isn't valid UTF-8 is matched byte by byte and case-sensitively,
 	 *   like MySQL binary strings. Other binary values match as text, so case
@@ -1351,7 +1360,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		} else {
 			$newline = '(*ANY)';
 		}
-		$compiled = '/' . $newline . $this->regexp_translate_pattern( $pattern, ! $case_sensitive, $without_g ) . '/' . $modifiers;
+		$compiled = '/' . $newline . $this->regexp_translate_pattern( $pattern, ! $case_sensitive, $binary_mode, $without_g ) . '/' . $modifiers;
 
 		/*
 		 * Compile the pattern by matching it against an empty string. Only a compile
@@ -1383,12 +1392,13 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 *
 	 * @param string $pattern          The regex pattern.
 	 * @param bool   $case_insensitive Whether the pattern ignores case by default.
+	 * @param bool   $binary_mode      Whether the pattern matches bytes instead of UTF-8 characters.
 	 * @param bool   $without_g        Whether "\G" never matches.
 	 *
 	 * @throws Exception If the pattern can't be split, or it has an invalid set.
 	 * @return string Pattern safe to wrap in slash delimiters.
 	 */
-	private function regexp_translate_pattern( $pattern, $case_insensitive, $without_g ) {
+	private function regexp_translate_pattern( $pattern, $case_insensitive, $binary_mode, $without_g ) {
 		$tokens = array(
 			// The delimiter, and NUL bytes, which PHP before 8.2 rejects in patterns.
 			'/'          => '\\/',
@@ -1403,6 +1413,17 @@ class WP_SQLite_PDO_User_Defined_Functions {
 			// A position can't be both a word boundary and not one, so "\b\B" never
 			// matches. Unlike "(?!)", it has no ")" to end a "(?#...)" comment.
 			$tokens['\\G'] = '\\b\\B';
+		}
+
+		// Word boundaries follow ICU's word characters. Bytes keep PCRE's ASCII ones.
+		if ( ! $binary_mode ) {
+			$word    = self::REGEXP_WORD_CLASS;
+			$tokens += array(
+				'\\w' => "[$word]",
+				'\\W' => "[^$word]",
+				'\\b' => "(?:(?<=[$word])(?![$word])|(?<![$word])(?=[$word]))",
+				'\\B' => "(?:(?<=[$word])(?=[$word])|(?<![$word])(?![$word]))",
+			);
 		}
 
 		/*
@@ -1559,7 +1580,9 @@ class WP_SQLite_PDO_User_Defined_Functions {
 				$terms[] = array( $tokens[ $part ] ?? $part, true );
 				$types[] = 'set';
 			} elseif ( preg_match( '/^\\\\[dDsSwWhHvV]$/', $part ) ) {
-				$terms[] = array( $part, true );
+				// A translated class, like "[\p{L}...]", joins the set, and a negated one is an alternative.
+				$class   = $tokens[ $part ] ?? $part;
+				$terms[] = '[^' === substr( $class, 0, 2 ) ? array( $class, false ) : array( trim( $class, '[]' ), true );
 				$types[] = 'escape';
 			} else {
 				$terms[] = array( $literal( $part ), true );
