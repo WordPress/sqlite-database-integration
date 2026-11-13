@@ -1371,15 +1371,19 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	private function regexp_translate_pattern( $pattern, $case_insensitive, $without_g ) {
 		$tokens = array(
 			// The delimiter, and NUL bytes, which PHP before 8.2 rejects in patterns.
-			'/'    => '\\/',
-			"\0"   => '\\x00',
-			"\\\0" => '\\x00',
+			'/'          => '\\/',
+			"\0"         => '\\x00',
+			"\\\0"       => '\\x00',
+
+			// PCRE's [:punct:] also holds ASCII symbols like "+", where ICU's doesn't.
+			'[:punct:]'  => '\\p{P}',
+			'[:^punct:]' => '\\P{P}',
 
 			/*
 			 * ICU reads "\K" as "K". In PCRE, "\K" moves the start of the match, even to
 			 * before the place where the search started, like in "(?<=\Ka)".
 			 */
-			'\\K'  => 'K',
+			'\\K'        => 'K',
 		);
 		if ( $without_g ) {
 			// A position can't be both a word boundary and not one, so "\b\B" never

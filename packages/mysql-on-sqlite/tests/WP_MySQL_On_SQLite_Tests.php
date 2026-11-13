@@ -1628,6 +1628,44 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		);
 	}
 
+	/**
+	 * @dataProvider regexpPosixPunctCases
+	 */
+	public function testRegexpPosixPunct( $sql, $expected ) {
+		$this->assertQuery( "SELECT $sql AS r" );
+		$this->assertSame( $expected, $this->last_result[0]->r );
+	}
+
+	public static function regexpPosixPunctCases() {
+		return array(
+			// ICU's class holds Unicode punctuation only, without ASCII symbols.
+			'ASCII punctuation'      => array( "REGEXP_LIKE('.', '[[:punct:]]')", '1' ),
+			'plus'                   => array( "REGEXP_LIKE('+', '[[:punct:]]')", '0' ),
+			'dollar'                 => array( "REGEXP_LIKE('\$', '[[:punct:]]')", '0' ),
+			'equals'                 => array( "REGEXP_LIKE('=', '[[:punct:]]')", '0' ),
+			'tilde'                  => array( "REGEXP_LIKE('~', '[[:punct:]]')", '0' ),
+			'non-ASCII punctuation'  => array( "REGEXP_LIKE('«', '[[:punct:]]')", '1' ),
+			'non-ASCII symbol'       => array( "REGEXP_LIKE('€', '[[:punct:]]')", '0' ),
+			'c flag'                 => array( "REGEXP_LIKE('+', '[[:punct:]]', 'c')", '0' ),
+			'negated class'          => array( "REGEXP_LIKE('.', '[[:^punct:]]')", '0' ),
+			'negated class, symbol'  => array( "REGEXP_LIKE('+', '[[:^punct:]]')", '1' ),
+			'with other set members' => array( "REGEXP_LIKE('+', '^[[:punct:]+]\$')", '1' ),
+			'outside of a set'       => array( "REGEXP_LIKE('.', '[:punct:]')", '1' ),
+			'REGEXP_REPLACE'         => array( "REGEXP_REPLACE('a+b.c\$d,e=f!g', '[[:punct:]]', '')", 'a+bc$de=fg' ),
+			'operator, punctuation'  => array( "'.' REGEXP '[[:punct:]]'", '1' ),
+			'operator, symbol'       => array( "'+' REGEXP '[[:punct:]]'", '0' ),
+			'quoted class'           => array( "REGEXP_LIKE('.', '\\\\Q[:punct:]\\\\E')", '0' ),
+		);
+	}
+
+	public function testRegexpPosixPunctOnBinaryData() {
+		// Bytes that are not valid UTF-8 are read as Latin-1, where 0xAB is "«".
+		$this->assertQuery( 'CREATE TABLE blobs (id INT PRIMARY KEY, b BLOB)' );
+		$this->assertQuery( "INSERT INTO blobs VALUES (1, X'2BFF'), (2, X'2EFF'), (3, X'AB')" );
+		$this->assertQuery( "SELECT b REGEXP '[[:punct:]]' AS r FROM blobs ORDER BY id" );
+		$this->assertSame( array( '0', '1', '1' ), array_column( $this->last_result, 'r' ) );
+	}
+
 	public function testInsertDateNow() {
 		$this->assertQuery(
 			"INSERT INTO _dates (option_name, option_value) VALUES ('first', now());"
