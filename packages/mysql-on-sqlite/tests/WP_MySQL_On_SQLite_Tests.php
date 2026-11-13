@@ -383,6 +383,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			'invalid pattern' => array( "REGEXP_LIKE('abc', '(abc')", 'Invalid regular expression: (abc.' ),
 			'short escape'    => array( "REGEXP_LIKE('u004', '\\\\u004')", 'Invalid regular expression: \\u004.' ),
 			'bad property'    => array( "REGEXP_LIKE('a', '\\\\p{Foo}')", 'Invalid regular expression: \\p{Foo}.' ),
+			'property with /' => array( "REGEXP_LIKE('a', '\\\\p{a/i}')", 'Invalid regular expression: \\p{a/i}.' ),
 			'"\\b+"'          => array( "REGEXP_LIKE('b', '\\\\b+')", 'Invalid regular expression: \\b+.' ),
 			'"\\B*"'          => array( "REGEXP_LIKE('b', '\\\\B*')", 'Invalid regular expression: \\B*.' ),
 			'"\\b{2}"'        => array( "REGEXP_LIKE('b', '\\\\b{2}')", 'Invalid regular expression: \\b{2}.' ),
@@ -563,6 +564,26 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$this->assertSame( '1', $this->last_result[0]->r );
 		$this->assertQuery( "SELECT 'abc' REGEXP 'xyz' AS r" );
 		$this->assertSame( '0', $this->last_result[0]->r );
+	}
+
+	/**
+	 * @dataProvider regexpLegacyWordBoundaryCases
+	 */
+	public function testRegexpLegacyWordBoundaries( $sql, $expected ) {
+		$this->assertQuery( "SELECT $sql AS r" );
+		$this->assertSame( $expected, $this->last_result[0]->r );
+	}
+
+	public static function regexpLegacyWordBoundaryCases() {
+		// MySQL 8 rejects MySQL 5.7's word boundaries, but they keep working.
+		return array(
+			'start and end of a word' => array( "'ab cd' REGEXP '[[:<:]]cd[[:>:]]'", '1' ),
+			'inside of a word'        => array( "'abcd' REGEXP '[[:<:]]cd'", '0' ),
+			'before a word character' => array( "'cde' REGEXP 'cd[[:>:]]'", '0' ),
+			'ignoring case'           => array( "'AB CD' REGEXP '[[:<:]]cd[[:>:]]'", '1' ),
+			'REGEXP BINARY'           => array( "'ab cd' REGEXP BINARY '[[:<:]]cd'", '1' ),
+			'REGEXP_LIKE'             => array( "REGEXP_LIKE('ab cd', '[[:<:]]cd')", '1' ),
+		);
 	}
 
 	public function testRegexpLegacyOperatorNullPropagation() {
@@ -1605,6 +1626,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 	 * @dataProvider regexpCodePointEscapeCases
 	 * @dataProvider regexpLiteralEscapeCases
 	 * @dataProvider regexpWordCases
+	 * @dataProvider regexpPropertyCases
 	 */
 	public function testRegexpIcuSyntax( $pattern, $subject, $expected ) {
 		$this->assertQuery(
@@ -1773,8 +1795,48 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			'"\\w" in a set'               => array( '[\\w]+', 'ab²', '<ab>²' ),
 			'"\\W" in a set'               => array( '[\\W]+', 'ab²', 'ab<²>' ),
 			'"\\W" in a negated set'       => array( '[^\\W]+', 'ab² c', '<ab>² <c>' ),
+			'"[:word:]"'                   => array( '[[:word:]]+', 'नमस्ते ²', '<नमस्ते> ²' ),
+			'"[:^word:]"'                  => array( '[[:^word:]]+', "ab\u{200C}cd ²", "ab\u{200C}cd< ²>" ),
+			'"[:word:]" outside of a set'  => array( '[:word:]+', 'a²', '<a>²' ),
+			'"\\p{word}"'                  => array( '\\p{word}+', 'a² b', '<a>² <b>' ),
+			'"\\P{Word}"'                  => array( '\\P{Word}+', 'a² b', 'a<² >b' ),
 			'"\\w" in an intersection'     => array( '[\\w&&[^a]]+', 'ab²c', 'a<b>²<c>' ),
 			'"\\d"'                        => array( '\\d+', '١٢٣ ²', '<١٢٣> ²' ),
+		);
+	}
+
+	public static function regexpPropertyCases() {
+		return array(
+			'long name'                => array( '\\p{Lowercase_Letter}+', 'aBc', '<a>B<c>' ),
+			'long name with spaces'    => array( '\\p{lowercase letter}+', 'aBc', '<a>B<c>' ),
+			'long name in capitals'    => array( '\\p{LOWERCASELETTER}+', 'aBc', '<a>B<c>' ),
+			'long name with hyphens'   => array( '\\p{lowercase-letter}+', 'aBc', '<a>B<c>' ),
+			'negated long name'        => array( '\\P{Uppercase_Letter}+', 'aBc', '<a>B<c>' ),
+			'short name in lowercase'  => array( '\\p{lu}+', 'aBc', 'a<B>c' ),
+			'"Is" prefix'              => array( '\\p{IsLetter}+', 'a1b', '<a>1<b>' ),
+			'"Is" and a short name'    => array( '\\p{IsLu}+', 'aBc', 'a<B>c' ),
+			'"gc=" prefix'             => array( '\\p{gc=Lu}+', 'aBc', 'a<B>c' ),
+			'"General_Category="'      => array( '\\p{General_Category=Lu}+', 'aBc', 'a<B>c' ),
+			'alias "punct"'            => array( '\\p{punct}+', 'a.,b+', 'a<.,>b+' ),
+			'alias "digit"'            => array( '\\p{IsDigit}+', 'a12²', 'a<12>²' ),
+			'cased letters'            => array( '\\p{Cased_Letter}+', 'aB1', '<aB>1' ),
+			'short name "LC"'          => array( '\\p{LC}+', 'aB1', '<aB>1' ),
+			'"gc=" and "LC"'           => array( '\\p{gc=LC}+', 'aB1', '<aB>1' ),
+			'"LC" in POSIX syntax'     => array( '[:LC:]+', 'aB1', '<aB>1' ),
+			'property in POSIX syntax' => array( '[:Lu:]+', 'aBc', 'a<B>c' ),
+			'long name in POSIX'       => array( '[:Punctuation:]+', 'a.b', 'a<.>b' ),
+			'negated POSIX property'   => array( '[:^Lu:]+', 'aBc', '<a>B<c>' ),
+			'POSIX class as "\\p"'     => array( '\\p{alnum}+', 'a1-', '<a1>-' ),
+			'POSIX "xdigit" as "\\p"'  => array( '\\p{xdigit}+', 'fg', '<f>g' ),
+			'POSIX class as "\\P"'     => array( '\\P{alpha}+', 'a1b', 'a<1>b' ),
+			'"Is" and "Uppercase"'     => array( '\\p{IsUppercase}+', 'aBc', 'a<B>c' ),
+			'POSIX property in a set'  => array( '[[:Lu:]x]+', 'aBxc', 'a<Bx>c' ),
+			'POSIX class in capitals'  => array( '[:Alpha:]+', 'a1b', '<a>1<b>' ),
+			'POSIX syntax with spaces' => array( '[:Uppercase Letter:]+', 'aBc', 'a<B>c' ),
+			'POSIX syntax with "gc="'  => array( '[[:gc=Lu:]]+', 'aBc', 'a<B>c' ),
+			'negated POSIX with "gc="' => array( '[[:^gc=Lu:]]+', 'aBc', '<a>B<c>' ),
+			'script'                   => array( '\\p{Greek}+', 'aαβ', 'a<αβ>' ),
+			'"Is" and a script'        => array( '\\p{IsGreek}+', 'aαβ', 'a<αβ>' ),
 		);
 	}
 
@@ -1863,6 +1925,13 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			'\\p{Lu} in a set'         => array( "REGEXP_LIKE('a', '[\\\\p{Lu}]')", '1' ),
 			'\\p{Lu} in a negated set' => array( "REGEXP_LIKE('a', '[^\\\\p{Lu}]')", '0' ),
 			'\\p{Lu}, intersection'    => array( "REGEXP_LIKE('a', '^[\\\\p{Lu}&&[a-c]]\$')", '1' ),
+			'long name, lowercase'     => array( "REGEXP_LIKE('a', '\\\\p{Uppercase_Letter}')", '1' ),
+			'capitals, lowercase'      => array( "REGEXP_LIKE('a', '[[:Upper:]]')", '1' ),
+			'\\p{Upper}, lowercase'    => array( "REGEXP_LIKE('a', '\\\\p{Upper}')", '1' ),
+			'\\p{Lower}, uppercase'    => array( "REGEXP_LIKE('A', '\\\\p{Lower}')", '1' ),
+			'\\p{Uppercase}'           => array( "REGEXP_LIKE('a', '\\\\p{Uppercase}')", '1' ),
+			'[:Uppercase:]'            => array( "REGEXP_LIKE('a', '[[:Uppercase:]]')", '1' ),
+			'\\p{Upper}, c flag'       => array( "REGEXP_LIKE('a', '\\\\p{Upper}', 'c')", '0' ),
 			'\\p{Lu}, REGEXP_REPLACE'  => array( "REGEXP_REPLACE('aB1', '\\\\p{Lu}', 'x')", 'xx1' ),
 			'\\p{Ll}, operator'        => array( "'A' REGEXP '\\\\p{Ll}'", '1' ),
 			'\\p{Lu}, c flag'          => array( "REGEXP_LIKE('a', '\\\\p{Lu}', 'c')", '0' ),
@@ -1913,6 +1982,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			'negated class, symbol'  => array( "REGEXP_LIKE('+', '[[:^punct:]]')", '1' ),
 			'with other set members' => array( "REGEXP_LIKE('+', '^[[:punct:]+]\$')", '1' ),
 			'outside of a set'       => array( "REGEXP_LIKE('.', '[:punct:]')", '1' ),
+			'capitals, symbol'       => array( "REGEXP_LIKE('+', '[[:PUNCT:]]')", '0' ),
 			'REGEXP_REPLACE'         => array( "REGEXP_REPLACE('a+b.c\$d,e=f!g', '[[:punct:]]', '')", 'a+bc$de=fg' ),
 			'operator, punctuation'  => array( "'.' REGEXP '[[:punct:]]'", '1' ),
 			'operator, symbol'       => array( "'+' REGEXP '[[:punct:]]'", '0' ),
