@@ -1238,9 +1238,9 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * (UTF-8) modifier is applied unless byte-oriented matching is requested.
 	 * Case-insensitive is the default.
 	 *
-	 * MySQL uses ICU, which differs from PCRE in some syntax, like ICU-only escapes
-	 * and nested sets. The known failures of the REGEXP test suites list these
-	 * cases. Other known differences:
+	 * MySQL uses ICU, which differs from PCRE in some syntax, like ICU-only escapes.
+	 * The known failures of the REGEXP test suites list these cases. Other known
+	 * differences:
 	 *
 	 * - Text matching ignores case unless the `c` flag is passed, as the column
 	 *   collation isn't known here.
@@ -1358,14 +1358,14 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	/**
 	 * Translate a MySQL regex pattern to PCRE syntax.
 	 *
-	 * Splits the pattern into quoted text, escapes, POSIX classes, and other characters,
-	 * so that a translation applies only to a whole token.
+	 * Splits the pattern into quoted text, sets, escapes, POSIX classes, and other
+	 * characters, so that a translation applies only to a whole token.
 	 *
 	 * @param string $pattern          The regex pattern.
 	 * @param bool   $case_insensitive Whether the pattern ignores case by default.
 	 * @param bool   $without_g        Whether "\G" never matches.
 	 *
-	 * @throws Exception If the pattern can't be split.
+	 * @throws Exception If the pattern can't be split, or it has an invalid set.
 	 * @return string Pattern safe to wrap in slash delimiters.
 	 */
 	private function regexp_translate_pattern( $pattern, $case_insensitive, $without_g ) {
@@ -1410,12 +1410,24 @@ class WP_SQLite_PDO_User_Defined_Functions {
 			);
 		}
 
-		// A property name stops at a backslash, so that a long run of "\p{" doesn't
-		// scan the rest of the pattern each time.
+		/*
+		 * A set, with its nested sets, is one token, as ICU's sets differ from PCRE's.
+		 * ICU reads a POSIX class outside of a set, as in "[:alpha:]", as a set.
+		 *
+		 * A property name stops at a backslash, so that a long run of "\p{" doesn't
+		 * scan the rest of the pattern each time.
+		 */
 		$translated = preg_replace_callback(
-			'/\\\\Q.*?(?:\\\\E|\z)|\[:\^?\w+:\]|\\\\[pP]\{[^}\\\\]*\}|\\\\.|[\/\0]/s',
-			function ( $parts ) use ( $tokens ) {
-				return $this->regexp_translate_token( $parts[0], $tokens );
+			'/\\\\Q.*?(?:\\\\E|\z)|(\[(?!:)\^?\]?(?:\\\\Q.*?(?:\\\\E|\z)|\\\\.|\[:\^?\w+:\]|(?1)|[^\\\\\[\]])*\])|\[:\^?\w+:\]|\\\\[pP]\{[^}\\\\]*\}|\\\\.|[\/\0]/s',
+			function ( $parts ) use ( $pattern, $tokens ) {
+				$token = $parts[0];
+				if ( isset( $parts[1] ) ) {
+					return $this->regexp_translate_set( $token, $pattern, $tokens );
+				}
+				if ( '[' === $token[0] ) {
+					return '[' . ( $tokens[ $token ] ?? $token ) . ']';
+				}
+				return $this->regexp_translate_token( $token, $tokens );
 			},
 			$pattern
 		);
@@ -1426,6 +1438,178 @@ class WP_SQLite_PDO_User_Defined_Functions {
 			$this->regexp_fail( $pattern );
 		}
 		return $translated;
+	}
+
+	/**
+	 * Translate an ICU set, like "[a-z--[aeiou]]", to PCRE.
+	 *
+	 * ICU sets can nest, and they have operations that PCRE classes lack. "--" and "&&"
+	 * subtract or intersect the items up to the next of them. A single "-" or "&" between
+	 * two sets subtracts or intersects only the next set. Elsewhere, "-" and "&" are
+	 * literal, unless "-" makes a range. A set without operations stays a PCRE class,
+	 * and the others become lookaheads, like "(?:(?![aeiou])[a-z])".
+	 *
+	 * @param string   $set     The set, with its brackets.
+	 * @param string   $pattern The regex pattern, for error messages.
+	 * @param string[] $tokens  Translations of tokens.
+	 *
+	 * @throws Exception If ICU rejects the set.
+	 * @return string The PCRE equivalent, which matches one character.
+	 */
+	private function regexp_translate_set( $set, $pattern, $tokens ) {
+		// An escape with its argument is one token, and so is a character, also when the
+		// set isn't valid UTF-8.
+		preg_match_all(
+			'/\\\\Q.*?(?:\\\\E|\z)|\\\\(?:[pP](?:\{[^}\\\\]*\}|\w)|x(?:\{[^}\\\\]*\}|[0-9a-fA-F]{1,2})|N\{[^}\\\\]*\}|c.|.)|\[:\^?\w+:\]|\[\^?|&&|--|[\xC0-\xFF][\x80-\xBF]*|./s',
+			$set,
+			$parts
+		);
+		$position = 0;
+		return $this->regexp_set_fragment( $this->regexp_parse_set( $parts[0], $position, $pattern, $tokens ) );
+	}
+
+	/**
+	 * Parse an ICU set from its tokens.
+	 *
+	 * @param string[] $parts    The tokens of the set.
+	 * @param int      $position The position of the set's "[" or "[^", moved past its "]".
+	 * @param string   $pattern  The regex pattern, for error messages.
+	 * @param string[] $tokens   Translations of tokens.
+	 *
+	 * @throws Exception If ICU rejects the set.
+	 * @return array The set, as array( PCRE class body or fragment, whether it's a class body ).
+	 */
+	private function regexp_parse_set( array $parts, &$position, $pattern, $tokens ) {
+		// An escape is translated, and another character is escaped if PCRE needs it.
+		$literal = function ( $part ) use ( $tokens ) {
+			return '\\' === $part[0] ? $this->regexp_translate_token( $part, $tokens ) : ( $tokens[ $part ] ?? preg_quote( $part ) );
+		};
+
+		$negated  = '[^' === $parts[ $position++ ];
+		$result   = null;
+		$operator = null;
+		$terms    = array();
+		$types    = array();
+		for ( $first = true; ; $first = false ) {
+			$part = $parts[ $position++ ] ?? null;
+			$next = $parts[ $position ] ?? '';
+			$last = count( $terms ) - 1;
+
+			// ICU reads "]" right after "[" or "[^" literally.
+			if ( null === $part || ( ']' === $part && ! $first ) ) {
+				if ( null === $part || ! $terms ) {
+					throw new Exception( "Invalid regular expression: $pattern." );
+				}
+				break;
+			}
+			if ( '--' === $part || '&&' === $part ) {
+				if ( ! $terms ) {
+					throw new Exception( "Invalid regular expression: $pattern." );
+				}
+				$right    = $this->regexp_set_union( $terms );
+				$result   = null === $result ? $right : $this->regexp_set_operation( $result, $operator, $right );
+				$operator = $part;
+				$terms    = array();
+				$types    = array();
+				continue;
+			}
+
+			// A single "-" or "&" between two sets subtracts or intersects only the next one.
+			if ( ( '-' === $part || '&' === $part ) && $last >= 0 && 'set' === $types[ $last ] && '[' === substr( $next, 0, 1 ) ) {
+				if ( '[:' === substr( $next, 0, 2 ) ) {
+					$right = array( $tokens[ $next ] ?? $next, true );
+					++$position;
+				} else {
+					$right = $this->regexp_parse_set( $parts, $position, $pattern, $tokens );
+				}
+				$terms[ $last ] = $this->regexp_set_operation( $terms[ $last ], '-' === $part ? '--' : '&&', $right );
+				continue;
+			}
+
+			// A "-" between two characters makes a range. Another class can't end a range.
+			if ( '-' === $part && $last >= 0 && 'literal' === $types[ $last ] && ! in_array( $next, array( '', ']', '--', '&&' ), true ) && '[' !== $next[0] ) {
+				if ( preg_match( '/^\\\\[pPdDsSwWhHvV]/', $next ) ) {
+					throw new Exception( "Invalid regular expression: $pattern." );
+				}
+				$terms[ $last ] = array( $terms[ $last ][0] . '-' . $literal( $next ), true );
+				$types[ $last ] = 'range';
+				++$position;
+				continue;
+			}
+
+			if ( '[' === $part[0] && '[:' !== substr( $part, 0, 2 ) ) {
+				--$position;
+				$terms[] = $this->regexp_parse_set( $parts, $position, $pattern, $tokens );
+				$types[] = 'set';
+			} elseif ( preg_match( '/^(?:\[:|\\\\[pP])/', $part ) ) {
+				$terms[] = array( $tokens[ $part ] ?? $part, true );
+				$types[] = 'set';
+			} elseif ( preg_match( '/^\\\\[dDsSwWhHvV]$/', $part ) ) {
+				$terms[] = array( $part, true );
+				$types[] = 'escape';
+			} else {
+				$terms[] = array( $literal( $part ), true );
+				$types[] = 'literal';
+			}
+		}
+
+		$right = $this->regexp_set_union( $terms );
+		$set   = null === $result ? $right : $this->regexp_set_operation( $result, $operator, $right );
+		if ( ! $negated ) {
+			return $set;
+		}
+		return array( $set[1] ? '[^' . $set[0] . ']' : '(?:(?!' . $set[0] . ')[\\s\\S])', false );
+	}
+
+	/**
+	 * Join the terms of a set into one class, or into alternatives if a term isn't a class.
+	 *
+	 * @param array[] $terms The terms, as returned by regexp_parse_set().
+	 *
+	 * @return array The union, as array( PCRE class body or fragment, whether it's a class body ).
+	 */
+	private function regexp_set_union( array $terms ) {
+		$body         = '';
+		$alternatives = array();
+		foreach ( $terms as $term ) {
+			if ( $term[1] ) {
+				$body .= $term[0];
+			} else {
+				$alternatives[] = $term[0];
+			}
+		}
+		if ( ! $alternatives ) {
+			return array( $body, true );
+		}
+		if ( '' !== $body ) {
+			array_unshift( $alternatives, "[$body]" );
+		}
+		return array( '(?:' . implode( '|', $alternatives ) . ')', false );
+	}
+
+	/**
+	 * Subtract or intersect two sets.
+	 *
+	 * @param array  $left     The left set, as returned by regexp_parse_set().
+	 * @param string $operator "--" or "&&".
+	 * @param array  $right    The right set.
+	 *
+	 * @return array The result, as a PCRE fragment.
+	 */
+	private function regexp_set_operation( array $left, $operator, array $right ) {
+		$assertion = '--' === $operator ? '(?!' : '(?=';
+		return array( '(?:' . $assertion . $this->regexp_set_fragment( $right ) . ')' . $this->regexp_set_fragment( $left ) . ')', false );
+	}
+
+	/**
+	 * Get the PCRE fragment of a set.
+	 *
+	 * @param array $set The set, as returned by regexp_parse_set().
+	 *
+	 * @return string The PCRE fragment, which matches one character.
+	 */
+	private function regexp_set_fragment( array $set ) {
+		return $set[1] ? "[{$set[0]}]" : $set[0];
 	}
 
 	/**

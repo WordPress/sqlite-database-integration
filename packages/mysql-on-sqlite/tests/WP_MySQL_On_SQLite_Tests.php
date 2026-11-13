@@ -589,7 +589,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 
 	public function testRegexpNulBytePattern() {
 		// A pattern starting with a NUL byte is an ordinary case-insensitive pattern.
-		// NUL bytes also match in quoted text and after a backslash.
+		// NUL bytes also match in quoted text, after a backslash, and in sets.
 		$this->assertQuery( 'CREATE TABLE nul_patterns (id INT PRIMARY KEY, s TEXT, p TEXT)' );
 		$this->assertQuery(
 			"INSERT INTO nul_patterns VALUES
@@ -597,7 +597,9 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 				(2, 'aBc', X'0062'),
 				(3, 'abc', 'B'),
 				(4, X'61002F62', CONCAT('\\\\Qa', X'00', '/b\\\\E')),
-				(5, X'610062', CONCAT('a\\\\', X'00', 'B'))"
+				(5, X'610062', CONCAT('a\\\\', X'00', 'B')),
+				(6, X'610062', CONCAT('[', X'00', ']')),
+				(7, X'610062', CONCAT('[\\\\Q', X'00', '\\\\E]'))"
 		);
 		$this->assertQuery(
 			'SELECT
@@ -644,6 +646,20 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 					'binary_matched' => '0',
 					'like_matched'   => '1',
 					'position'       => '1',
+				),
+				(object) array(
+					'matched'        => '1',
+					'not_matched'    => '0',
+					'binary_matched' => '1',
+					'like_matched'   => '1',
+					'position'       => '2',
+				),
+				(object) array(
+					'matched'        => '1',
+					'not_matched'    => '0',
+					'binary_matched' => '1',
+					'like_matched'   => '1',
+					'position'       => '2',
 				),
 			),
 			$this->last_result
@@ -1566,6 +1582,110 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 	}
 
 	/**
+	 * @dataProvider regexpSetCases
+	 */
+	public function testRegexpIcuSyntax( $pattern, $subject, $expected ) {
+		$this->assertQuery(
+			sprintf(
+				"SELECT REGEXP_REPLACE(%s, %s, '<\$0>', 1, 0, 'c') AS r",
+				$this->engine->quote( $subject ),
+				$this->engine->quote( $pattern )
+			)
+		);
+		$this->assertSame( $expected, $this->last_result[0]->r );
+	}
+
+	public static function regexpSetCases() {
+		return array(
+			// Nested sets are unions.
+			'nested set'                       => array( '[a[b]]', 'abc', '<a><b>c' ),
+			'nested range'                     => array( '[a-c[b]]', 'abcd', '<a><b><c>d' ),
+			'nested negated set'               => array( '[a[^b]]', 'abc', '<a>b<c>' ),
+			'negated union'                    => array( '[^a[^b]]', 'abc', 'a<b>c' ),
+			'"]" first'                        => array( '[]a]', ']ab', '<]><a>b' ),
+			'"]" first, negated'               => array( '[^]a]', ']ab', ']a<b>' ),
+
+			// "--" and "&&" apply to the items up to the next of them, from left to right.
+			'difference'                       => array( '[a-z--[b]--[c]]', 'abcd-', '<a>bc<d>-' ),
+			'difference of characters'         => array( '[a-z--b--c]', 'abcd-', '<a>bc<d>-' ),
+			'difference of all items'          => array( '[[a-c]--[b]x]', 'abcx', '<a>b<c>x' ),
+			'intersection'                     => array( '[\w&&[a-c]]', 'abd-', '<a><b>d-' ),
+			'intersection of all items'        => array( '[[a-c]&&[b]x]', 'abcx', 'a<b>cx' ),
+			'intersection, then difference'    => array( '[a-z&&[a-m]--c]', 'abcdn-', '<a><b>c<d>n-' ),
+			'difference, then intersection'    => array( '[[a-z]--[b]&&[a-c]]', 'abcd-', '<a>b<c>d-' ),
+			'negated intersection'             => array( '[^[a-c]&&[b-d]]', 'abcd', '<a>bc<d>' ),
+			'empty intersection'               => array( '[a&&b]', 'ab', 'ab' ),
+			'class escapes'                    => array( '[\w--\d]', 'a1_', '<a>1<_>' ),
+			'POSIX classes'                    => array( '[[:alpha:]&&[:upper:]]', 'aBc', 'a<B>c' ),
+			'literal "&" after "&&"'           => array( '[&abcd&&&ac]', 'bac&&cad', 'b<a><c><&><&><c><a>d' ),
+			'literal "-" after "--"'           => array( '[-abcd---]', 'abc--', '<a><b><c>--' ),
+
+			// A single "-" or "&" between two sets applies only to the next set.
+			'single "-" between sets'          => array( '[[a-m]-[f-w]p]', 'depfgwxyz', '<d><e><p>fgwxyz' ),
+			'single "-", chained'              => array( '[[a-z]-[aeiou]-[xyz]]', 'abex-', 'a<b>ex-' ),
+			'single "-" in an operand'         => array( '[a-z--[b]-[c]]', 'abcd-', '<a>b<c><d>-' ),
+			'single "-" after a property'      => array( '[\p{L}-[:digit:]]', 'a-5', '<a>-5' ),
+			'single "-" after a POSIX class'   => array( '[[:digit:]-[:alpha:]]', '0-z', '<0>-z' ),
+			'single "&" between sets'          => array( '[[a-m]&[e-s]w]', 'efmwadnst', '<e><f><m><w>adnst' ),
+			'single "&" after a property'      => array( '[\p{L}&[a]]', 'ab&', '<a>b&' ),
+
+			// Elsewhere, "-" and "&" are literal, unless "-" makes a range.
+			'"-" after a class escape'         => array( '[\w-[0-9]]', 'a-5_', '<a><-><5><_>' ),
+			'"-" before a property'            => array( '[\p{L}-\p{N}]', 'a-5', '<a><-><5>' ),
+			'"-" after a set, before a letter' => array( '[[a]-b]', 'ab-', '<a><b><->' ),
+			'"-" after a letter, before a set' => array( '[ab-[c]]', 'abc-', '<a><b><c><->' ),
+			'"-" after a letter, before POSIX' => array( '[a-[:digit:]]', 'za-9', 'z<a><-><9>' ),
+			'"-" after a POSIX class'          => array( '[[:digit:]-z]', '0-z=', '<0><-><z>=' ),
+			'"-" after a range'                => array( '[a-c-e]', 'abcde-', '<a><b><c>d<e><->' ),
+			'"-" first and last'               => array( '[-a]', 'a-b', '<a><->b' ),
+			'"-" after "^"'                    => array( '[^-a]', '-ab', '-a<b>' ),
+			'"&" between a set and a letter'   => array( '[[a]&b]', 'ab&', '<a><b><&>' ),
+			'"&" between a letter and a set'   => array( '[abcd&[ac]]', 'bd&x', '<b><d><&>x' ),
+			'"&" before a class escape'        => array( '[[a-c]&\w]', 'abd-&', '<a><b><d>-<&>' ),
+			'"&" last'                         => array( '[a-z&]', 'a&', '<a><&>' ),
+			'escaped bracket'                  => array( '[\[a]', '[a', '<[><a>' ),
+			'escaped hyphen'                   => array( '[a\-z]', 'a-zb', '<a><-><z>b' ),
+			'hex range'                        => array( '[\x{41}-\x{43}]', 'ABCD', '<A><B><C>D' ),
+			'quoted bracket'                   => array( '[\Qa]\E]', ']a', '<]><a>' ),
+			'slash'                            => array( '[/a]', '/ab', '</><a>b' ),
+			'quoted slash'                     => array( '[\Q/\E]', 'a/', 'a</>' ),
+			'slash in a difference'            => array( '[[/a]--[a]]', '/a', '</>a' ),
+
+			// A POSIX class outside of a set is a set.
+			'POSIX class outside of a set'     => array( '[:alpha:]+', 'ab1', '<ab>1' ),
+			'negated POSIX class'              => array( '[:^alpha:]', 'a1', 'a<1>' ),
+			'POSIX class after a letter'       => array( 'x[:alpha:]', 'xa', '<xa>' ),
+
+			// Sets in lookbehinds.
+			'negated union in a lookbehind'    => array( '(?<![^[^a]a])', 'abc', '<>a<>b<>c<>' ),
+			'empty set in a lookbehind'        => array( '(?<![a&&m]c)', 'abc', '<>a<>b<>c<>' ),
+		);
+	}
+
+	/**
+	 * @dataProvider regexpInvalidSetCases
+	 */
+	public function testRegexpInvalidSets( $pattern ) {
+		$this->assertQueryError(
+			sprintf( "SELECT REGEXP_LIKE('a', %s)", $this->engine->quote( $pattern ) ),
+			"Invalid regular expression: $pattern."
+		);
+	}
+
+	public static function regexpInvalidSetCases() {
+		return array(
+			'empty set'                  => array( '[]' ),
+			'empty negated set'          => array( '[^]' ),
+			'"--" first'                 => array( '[--]' ),
+			'"&&" first'                 => array( '[&&a]' ),
+			'"--" last'                  => array( '[a--]' ),
+			'"&&" last'                  => array( '[a-z&&]' ),
+			'"--" first in a nested set' => array( '[abc[--def]]' ),
+			'range to a class escape'    => array( '[a-\w]' ),
+		);
+	}
+
+	/**
 	 * @dataProvider regexpPosixCaseClassCases
 	 */
 	public function testRegexpPosixCaseClasses( $sql, $expected ) {
@@ -1586,6 +1706,8 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			'negated set'              => array( "REGEXP_LIKE('a', '[^[:upper:]]')", '0' ),
 			'with other set members'   => array( "REGEXP_LIKE('a', '^[[:upper:]0-9]\$')", '1' ),
 			'outside of a set'         => array( "REGEXP_LIKE('a', '[:upper:]')", '1' ),
+			'set difference'           => array( "REGEXP_LIKE('a', '^[[:upper:]--[b]]\$')", '1' ),
+			'set difference, removed'  => array( "REGEXP_LIKE('b', '^[[:upper:]--[b]]\$')", '0' ),
 			'REGEXP_REPLACE'           => array( "REGEXP_REPLACE('abC', '[[:lower:]]', 'x')", 'xxx' ),
 			'REGEXP_SUBSTR'            => array( "REGEXP_SUBSTR('abc1', '[[:upper:]]+')", 'abc' ),
 			'REGEXP_INSTR'             => array( "REGEXP_INSTR('1a', '[[:upper:]]')", '2' ),
@@ -1601,6 +1723,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			'\\P{Lu}, digit'           => array( "REGEXP_LIKE('1', '\\\\P{Lu}')", '1' ),
 			'\\p{Lu} in a set'         => array( "REGEXP_LIKE('a', '[\\\\p{Lu}]')", '1' ),
 			'\\p{Lu} in a negated set' => array( "REGEXP_LIKE('a', '[^\\\\p{Lu}]')", '0' ),
+			'\\p{Lu}, intersection'    => array( "REGEXP_LIKE('a', '^[\\\\p{Lu}&&[a-c]]\$')", '1' ),
 			'\\p{Lu}, REGEXP_REPLACE'  => array( "REGEXP_REPLACE('aB1', '\\\\p{Lu}', 'x')", 'xx1' ),
 			'\\p{Ll}, operator'        => array( "'A' REGEXP '\\\\p{Ll}'", '1' ),
 			'\\p{Lu}, c flag'          => array( "REGEXP_LIKE('a', '\\\\p{Lu}', 'c')", '0' ),
