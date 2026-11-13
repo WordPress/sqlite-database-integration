@@ -382,7 +382,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		return array(
 			'invalid pattern' => array( "REGEXP_LIKE('abc', '(abc')", 'Invalid regular expression: (abc.' ),
 			'unknown escape'  => array( "REGEXP_LIKE('y', '\\\\y')", 'Invalid regular expression: \\y.' ),
-			'ICU escape'      => array( "REGEXP_LIKE('A', '\\\\u0041')", 'Invalid regular expression: \\u0041.' ),
+			'short escape'    => array( "REGEXP_LIKE('u004', '\\\\u004')", 'Invalid regular expression: \\u004.' ),
 			'bad property'    => array( "REGEXP_LIKE('a', '\\\\p{Foo}')", 'Invalid regular expression: \\p{Foo}.' ),
 			'operator escape' => array( "'y' REGEXP '\\\\y'", 'Invalid regular expression: \\y.' ),
 			'binary escape'   => array( "X'FF' REGEXP '\\\\y'", 'Invalid regular expression: \\y.' ),
@@ -1583,6 +1583,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 
 	/**
 	 * @dataProvider regexpSetCases
+	 * @dataProvider regexpCodePointEscapeCases
 	 */
 	public function testRegexpIcuSyntax( $pattern, $subject, $expected ) {
 		$this->assertQuery(
@@ -1659,6 +1660,28 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			// Sets in lookbehinds.
 			'negated union in a lookbehind'    => array( '(?<![^[^a]a])', 'abc', '<>a<>b<>c<>' ),
 			'empty set in a lookbehind'        => array( '(?<![a&&m]c)', 'abc', '<>a<>b<>c<>' ),
+		);
+	}
+
+	public static function regexpCodePointEscapeCases() {
+		return array(
+			'"\\u"'                     => array( '\\u0041', 'ABA', '<A>B<A>' ),
+			'"\\u" in a set'            => array( '[\\u0041c]+', 'AcAcdef', '<AcAc>def' ),
+			'"\\u" range'               => array( '[\\u0041-\\u0043]', 'ABCD', '<A><B><C>D' ),
+			'"\\u", 2 bytes'            => array( 'caf\\u00e9', 'café', '<café>' ),
+			'"\\U"'                     => array( '\\U00010400', '𐐀', '<𐐀>' ),
+			'"\\U" range'               => array( '[\\u0000-\\U0010ffff]+', 'a😀', '<a😀>' ),
+			'negated "\\U" range'       => array( '[^\\u0000-\\U0010ffff]', 'a😀', 'a😀' ),
+			'surrogate pair'            => array( '\\ud800\\udc00', 'a𐀀', 'a<𐀀>' ),
+			'surrogate pair, uppercase' => array( '\\uD800\\uDC00', 'a𐀀', 'a<𐀀>' ),
+			'escaped backslash'         => array( '\\\\\\u0041', 'A', 'A' ),
+			'quoted'                    => array( '\\Q\\u0041\\E', 'u0041', 'u0041' ),
+			'octal'                     => array( '\\0101', 'ABA', '<A>B<A>' ),
+			'octal, 1 and 2 digits'     => array( '\\0154\\01442', 'ld2', '<ld2>' ),
+			'octal up to 0377'          => array( '\\0376', 'þ', '<þ>' ),
+			'octal past 0377'           => array( '\\0400', ' 0', '< 0>' ),
+			'octal NUL'                 => array( '\\00', 'a', 'a' ),
+			'octal range'               => array( '[\\0101-\\0103]', 'ABCD', '<A><B><C>D' ),
 		);
 	}
 

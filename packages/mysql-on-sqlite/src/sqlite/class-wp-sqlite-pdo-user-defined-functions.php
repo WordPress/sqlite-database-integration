@@ -108,6 +108,13 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'regexp_instr'   => array( 2, 3, 4, 5, 6 ),
 	);
 
+	/**
+	 * ICU escapes of a code point that PCRE lacks, or reads differently: "\uhhhh",
+	 * "\Uhhhhhhhh", and "\0ooo" up to "\0377". A surrogate pair of "\u" escapes is
+	 * one code point.
+	 */
+	private const REGEXP_CODE_POINT_ESCAPE = '\\\\u[dD][89abAB][0-9a-fA-F]{2}\\\\u[dD][c-fC-F][0-9a-fA-F]{2}|\\\\u[0-9a-fA-F]{4}|\\\\U[0-9a-fA-F]{8}|\\\\0(?:[0-3][0-7]{0,2}|[4-7][0-7]?)';
+
 	/** @var string[] Compiled PCRE patterns, keyed by byte mode, "\G" variant, match type, and pattern. */
 	private $regexp_cache = array();
 
@@ -1305,8 +1312,8 @@ class WP_SQLite_PDO_User_Defined_Functions {
 
 		/*
 		 * PHP 7 can read an unknown escape as literal text. For "\y", that matches ICU,
-		 * but "\u0041" matches "u0041", where ICU matches "A". The "X" modifier makes
-		 * all of them errors, like in PHP 8.
+		 * but ICU rejects "\u004", which has too few digits. The "X" modifier makes all
+		 * of them errors, like in PHP 8.
 		 */
 		$modifiers = $binary_mode ? 'X' : 'uX';
 		if ( ! $case_sensitive ) {
@@ -1418,7 +1425,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		 * scan the rest of the pattern each time.
 		 */
 		$translated = preg_replace_callback(
-			'/\\\\Q.*?(?:\\\\E|\z)|(\[(?!:)\^?\]?(?:\\\\Q.*?(?:\\\\E|\z)|\\\\.|\[:\^?\w+:\]|(?1)|[^\\\\\[\]])*\])|\[:\^?\w+:\]|\\\\[pP]\{[^}\\\\]*\}|\\\\.|[\/\0]/s',
+			'/\\\\Q.*?(?:\\\\E|\z)|(\[(?!:)\^?\]?(?:\\\\Q.*?(?:\\\\E|\z)|\\\\.|\[:\^?\w+:\]|(?1)|[^\\\\\[\]])*\])|\[:\^?\w+:\]|' . self::REGEXP_CODE_POINT_ESCAPE . '|\\\\[pP]\{[^}\\\\]*\}|\\\\.|[\/\0]/s',
 			function ( $parts ) use ( $pattern, $tokens ) {
 				$token = $parts[0];
 				if ( isset( $parts[1] ) ) {
@@ -1460,7 +1467,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		// An escape with its argument is one token, and so is a character, also when the
 		// set isn't valid UTF-8.
 		preg_match_all(
-			'/\\\\Q.*?(?:\\\\E|\z)|\\\\(?:[pP](?:\{[^}\\\\]*\}|\w)|x(?:\{[^}\\\\]*\}|[0-9a-fA-F]{1,2})|N\{[^}\\\\]*\}|c.|.)|\[:\^?\w+:\]|\[\^?|&&|--|[\xC0-\xFF][\x80-\xBF]*|./s',
+			'/\\\\Q.*?(?:\\\\E|\z)|' . self::REGEXP_CODE_POINT_ESCAPE . '|\\\\(?:[pP](?:\{[^}\\\\]*\}|\w)|x(?:\{[^}\\\\]*\}|[0-9a-fA-F]{1,2})|N\{[^}\\\\]*\}|c.|.)|\[:\^?\w+:\]|\[\^?|&&|--|[\xC0-\xFF][\x80-\xBF]*|./s',
 			$set,
 			$parts
 		);
@@ -1634,7 +1641,21 @@ class WP_SQLite_PDO_User_Defined_Functions {
 			);
 			return '\\E' === substr( $token, -2 ) ? $quoted : $quoted . '\\E';
 		}
-		return $tokens[ $token ] ?? $token;
+		if ( isset( $tokens[ $token ] ) ) {
+			return $tokens[ $token ];
+		}
+		if ( ! preg_match( '/^(?:' . self::REGEXP_CODE_POINT_ESCAPE . ')$/', $token ) ) {
+			return $token;
+		}
+		if ( '0' === $token[1] ) {
+			$code = octdec( substr( $token, 2 ) );
+		} elseif ( 12 === strlen( $token ) ) {
+			// A surrogate pair of "\u" escapes.
+			$code = 0x10000 + ( ( hexdec( substr( $token, 2, 4 ) ) - 0xD800 ) << 10 ) + hexdec( substr( $token, 8, 4 ) ) - 0xDC00;
+		} else {
+			$code = hexdec( substr( $token, 2 ) );
+		}
+		return sprintf( '\\x{%X}', $code );
 	}
 
 	/**
