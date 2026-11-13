@@ -943,7 +943,12 @@ class WP_SQLite_Information_Schema_Builder {
 			throw $e;
 		}
 
-		$index_data = $this->extract_column_statistics_data( $table_name, $column_name, $node, true );
+		$index_data = $this->extract_column_statistics_data(
+			$table_name,
+			$column_name,
+			$node,
+			'YES' === $column_data['is_nullable']
+		);
 		if ( null !== $index_data ) {
 			$this->insert_values(
 				$this->get_table_name( $table_is_temporary, 'statistics' ),
@@ -961,6 +966,21 @@ class WP_SQLite_Information_Schema_Builder {
 				$this->get_table_name( $table_is_temporary, 'table_constraints' ),
 				$constraint_data
 			);
+		}
+
+		if ( null !== $index_data ) {
+			$key_column_usage_data = $this->extract_key_column_usage_data(
+				$node,
+				$table_name,
+				$index_data['index_name'],
+				$column_name
+			);
+			foreach ( $key_column_usage_data as $key_column_usage_item ) {
+				$this->insert_values(
+					$this->get_table_name( $table_is_temporary, 'key_column_usage' ),
+					$key_column_usage_item
+				);
+			}
 		}
 	}
 
@@ -1723,7 +1743,7 @@ class WP_SQLite_Information_Schema_Builder {
 		bool $nullable
 	): ?array {
 		// Handle inline PRIMARY KEY and UNIQUE constraints.
-		$has_inline_primary_key = null !== $node->get_first_descendant_token( WP_MySQL_Lexer::KEY_SYMBOL );
+		$has_inline_primary_key = $this->has_inline_primary_key( $node );
 		$has_inline_unique_key  = null !== $node->get_first_descendant_token( WP_MySQL_Lexer::UNIQUE_SYMBOL );
 		if ( $has_inline_primary_key || $has_inline_unique_key ) {
 			$index_name = $has_inline_primary_key ? 'PRIMARY' : $column_name;
@@ -1997,17 +2017,20 @@ class WP_SQLite_Information_Schema_Builder {
 	}
 
 	/**
-	 * Extract key column usage data from the "tableConstraintDef" AST node.
+	 * Extract key column usage data from the "tableConstraintDef", "columnDefinition",
+	 * or "fieldDefinition" AST node.
 	 *
-	 * @param  WP_Parser_Node $node        The "tableConstraintDef" AST node.
+	 * @param  WP_Parser_Node $node        The "tableConstraintDef", "columnDefinition", or "fieldDefinition" AST node.
 	 * @param  string         $table_name  The table name.
 	 * @param  string         $index_name  The index name, when the constraint uses an index.
+	 * @param  string         $column_name The column name, required for the "fieldDefinition" AST node.
 	 * @return array                       The key column usage data as stored in information schema.
 	 */
 	private function extract_key_column_usage_data(
 		WP_Parser_Node $node,
 		string $table_name,
-		?string $index_name = null
+		?string $index_name = null,
+		?string $column_name = null
 	): array {
 		$is_primary = $node->get_first_descendant_token( WP_MySQL_Lexer::PRIMARY_SYMBOL );
 		$is_unique  = $node->get_first_descendant_token( WP_MySQL_Lexer::UNIQUE_SYMBOL );
@@ -2036,30 +2059,32 @@ class WP_SQLite_Information_Schema_Builder {
 		// Constraint name.
 		$name = $index_name ?? $this->get_table_constraint_name( $node, $table_name );
 
-		// Key parts.
-		if ( 'columnDefinition' === $node->rule_name ) {
-			$identifiers = $node
+		// Key column names.
+		if ( 'fieldDefinition' === $node->rule_name ) {
+			// The "fieldDefinition" node doesn't include the column name.
+			$key_column_names = array( $column_name );
+		} elseif ( 'columnDefinition' === $node->rule_name ) {
+			$identifiers      = $node
 				->get_first_descendant_node( 'fieldIdentifier' )
 				->get_descendant_nodes( 'identifier' );
-			$key_parts   = array( end( $identifiers ) );
+			$key_column_names = array( $this->get_value( end( $identifiers ) ) );
 		} else {
-			$key_parts = array();
+			$key_column_names = array();
 			foreach ( $node->get_descendant_nodes( 'keyPart' ) as $key_part ) {
-				$key_parts[] = $key_part->get_first_child_node( 'identifier' );
+				$key_column_names[] = $this->get_value( $key_part->get_first_child_node( 'identifier' ) );
 			}
 		}
 
 		$rows = array();
-		foreach ( $key_parts as $i => $key_part ) {
-			$column_name = $this->get_value( $key_part );
-			$position    = $i + 1;
+		foreach ( $key_column_names as $i => $key_column_name ) {
+			$position = $i + 1;
 
 			$rows[] = array(
 				'constraint_schema'             => self::SAVED_DATABASE_NAME,
 				'constraint_name'               => $name,
 				'table_schema'                  => self::SAVED_DATABASE_NAME,
 				'table_name'                    => $table_name,
-				'column_name'                   => $column_name,
+				'column_name'                   => $key_column_name,
 				'ordinal_position'              => $position,
 				'position_in_unique_constraint' => $references ? $position : null,
 				'referenced_table_schema'       => $referenced_table_schema,
@@ -2479,7 +2504,10 @@ class WP_SQLite_Information_Schema_Builder {
 
 		foreach ( $node->get_descendant_nodes( 'columnAttribute' ) as $attr ) {
 			// PRIMARY KEY columns are always NOT NULL.
-			if ( $attr->has_child_token( WP_MySQL_Lexer::KEY_SYMBOL ) ) {
+			if (
+				$attr->has_child_token( WP_MySQL_Lexer::KEY_SYMBOL )
+				&& ! $attr->has_child_token( WP_MySQL_Lexer::UNIQUE_SYMBOL )
+			) {
 				return 'NO';
 			}
 
@@ -2502,9 +2530,7 @@ class WP_SQLite_Information_Schema_Builder {
 	 */
 	private function get_column_key( WP_Parser_Node $node ): string {
 		// 1. PRI: Column is a primary key or its any component.
-		if (
-			null !== $node->get_first_descendant_token( WP_MySQL_Lexer::KEY_SYMBOL )
-		) {
+		if ( $this->has_inline_primary_key( $node ) ) {
 			return 'PRI';
 		}
 
@@ -2525,6 +2551,32 @@ class WP_SQLite_Information_Schema_Builder {
 		}
 
 		return '';
+	}
+
+	/**
+	 * Check if the "columnDefinition" or "fieldDefinition" AST node declares a primary key.
+	 *
+	 * In a column definition, both "PRIMARY KEY" and "KEY" declare a primary key,
+	 * while "UNIQUE KEY" declares a unique key. Therefore, the presence of a "KEY"
+	 * token alone is not sufficient, and each column attribute must be checked.
+	 *
+	 * @param  WP_Parser_Node $node The "columnDefinition" or "fieldDefinition" AST node.
+	 * @return bool                 Whether the column definition declares a primary key.
+	 */
+	private function has_inline_primary_key( WP_Parser_Node $node ): bool {
+		$attributes = array_merge(
+			$node->get_descendant_nodes( 'columnAttribute' ),
+			$node->get_descendant_nodes( 'gcolAttribute' )
+		);
+		foreach ( $attributes as $attr ) {
+			if (
+				$attr->has_child_token( WP_MySQL_Lexer::KEY_SYMBOL )
+				&& ! $attr->has_child_token( WP_MySQL_Lexer::UNIQUE_SYMBOL )
+			) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/**
