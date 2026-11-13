@@ -661,7 +661,14 @@ class MySQL_Session {
 
 		// Rows.
 		foreach ( $rows as $row ) {
-			$packets .= MySQL_Protocol::build_row_packet( $this->packet_id++, $columns, $row );
+			$next_packet_id  = $this->packet_id;
+			$packets        .= MySQL_Protocol::build_row_packet(
+				$this->packet_id,
+				$columns,
+				$row,
+				$next_packet_id
+			);
+			$this->packet_id = $next_packet_id;
 		}
 
 		// OK or EOF packet, based on the CLIENT_DEPRECATE_EOF capability.
