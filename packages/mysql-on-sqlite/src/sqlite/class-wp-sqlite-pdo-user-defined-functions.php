@@ -135,6 +135,58 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 */
 	private const REGEXP_WORD_CLASS = '\p{L}\p{Nl}\p{M}\p{Nd}\p{Pc}\x{200C}\x{200D}\x{24B6}-\x{24E9}\x{1F130}-\x{1F149}\x{1F150}-\x{1F169}\x{1F170}-\x{1F189}';
 
+	/**
+	 * General categories by their long names and aliases, as ICU matches them: in
+	 * lowercase, without spaces, hyphens, and underscores. PCRE has only short names.
+	 */
+	private const REGEXP_GENERAL_CATEGORIES = array(
+		'other'                => 'C',
+		'control'              => 'Cc',
+		'cntrl'                => 'Cc',
+		'format'               => 'Cf',
+		'unassigned'           => 'Cn',
+		'privateuse'           => 'Co',
+		'surrogate'            => 'Cs',
+		'letter'               => 'L',
+		'casedletter'          => 'L&',
+		'lowercaseletter'      => 'Ll',
+		'modifierletter'       => 'Lm',
+		'otherletter'          => 'Lo',
+		'titlecaseletter'      => 'Lt',
+		'uppercaseletter'      => 'Lu',
+		'mark'                 => 'M',
+		'combiningmark'        => 'M',
+		'spacingmark'          => 'Mc',
+		'enclosingmark'        => 'Me',
+		'nonspacingmark'       => 'Mn',
+		'number'               => 'N',
+		'decimalnumber'        => 'Nd',
+		'digit'                => 'Nd',
+		'letternumber'         => 'Nl',
+		'othernumber'          => 'No',
+		'punctuation'          => 'P',
+		'punct'                => 'P',
+		'connectorpunctuation' => 'Pc',
+		'dashpunctuation'      => 'Pd',
+		'closepunctuation'     => 'Pe',
+		'finalpunctuation'     => 'Pf',
+		'initialpunctuation'   => 'Pi',
+		'otherpunctuation'     => 'Po',
+		'openpunctuation'      => 'Ps',
+		'symbol'               => 'S',
+		'currencysymbol'       => 'Sc',
+		'modifiersymbol'       => 'Sk',
+		'mathsymbol'           => 'Sm',
+		'othersymbol'          => 'So',
+		'separator'            => 'Z',
+		'lineseparator'        => 'Zl',
+		'paragraphseparator'   => 'Zp',
+		'spaceseparator'       => 'Zs',
+	);
+
+	/** The POSIX classes of PCRE. */
+	private const REGEXP_POSIX_CLASSES = array( 'alnum', 'alpha', 'ascii', 'blank', 'cntrl', 'digit', 'graph', 'lower', 'print', 'punct', 'space', 'upper', 'word', 'xdigit' );
+
 	/** @var string[] Compiled PCRE patterns, keyed by byte mode, "\G" variant, match type, and pattern. */
 	private $regexp_cache = array();
 
@@ -1265,9 +1317,9 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * (UTF-8) modifier is applied unless byte-oriented matching is requested.
 	 * Case-insensitive is the default.
 	 *
-	 * MySQL uses ICU, which differs from PCRE in some syntax, like `\N{...}` and
-	 * property names. The known failures of the REGEXP test suites list these cases.
-	 * Other known differences:
+	 * MySQL uses ICU, which differs from PCRE in some syntax, like `\N{...}`, Unicode
+	 * blocks, and Java properties. The known failures of the REGEXP test suites list
+	 * these cases. Other known differences:
 	 *
 	 * - Text matching ignores case unless the `c` flag is passed, as the column
 	 *   collation isn't known here.
@@ -1460,7 +1512,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 					return $this->regexp_translate_set( $token, $pattern, $tokens );
 				}
 				if ( '[' === $token[0] ) {
-					return '[' . ( $tokens[ $token ] ?? $token ) . ']';
+					return '[' . $this->regexp_translate_property( $token, $tokens ) . ']';
 				}
 				return $this->regexp_translate_token( $token, $tokens );
 			},
@@ -1552,7 +1604,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 			// A single "-" or "&" between two sets subtracts or intersects only the next one.
 			if ( ( '-' === $part || '&' === $part ) && $last >= 0 && 'set' === $types[ $last ] && '[' === substr( $next, 0, 1 ) ) {
 				if ( '[:' === substr( $next, 0, 2 ) ) {
-					$right = array( $tokens[ $next ] ?? $next, true );
+					$right = array( $this->regexp_translate_property( $next, $tokens ), true );
 					++$position;
 				} else {
 					$right = $this->regexp_parse_set( $parts, $position, $pattern, $tokens );
@@ -1577,7 +1629,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 				$terms[] = $this->regexp_parse_set( $parts, $position, $pattern, $tokens );
 				$types[] = 'set';
 			} elseif ( preg_match( '/^(?:\[:|\\\\[pP])/', $part ) ) {
-				$terms[] = array( $tokens[ $part ] ?? $part, true );
+				$terms[] = array( $this->regexp_translate_property( $part, $tokens ), true );
 				$types[] = 'set';
 			} elseif ( preg_match( '/^\\\\[dDsSwWhHvV]$/', $part ) ) {
 				// A translated class, like "[\p{L}...]", joins the set, and a negated one is an alternative.
@@ -1676,6 +1728,9 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		if ( 2 === strlen( $token ) && '\\' === $token[0] && false !== strpos( $letters, $token[1] ) ) {
 			return $token[1];
 		}
+		if ( preg_match( '/^\\\\[pP]\{/', $token ) ) {
+			return $this->regexp_translate_property( $token, $tokens );
+		}
 		if ( isset( $tokens[ $token ] ) ) {
 			return $tokens[ $token ];
 		}
@@ -1691,6 +1746,43 @@ class WP_SQLite_PDO_User_Defined_Functions {
 			$code = hexdec( substr( $token, 2 ) );
 		}
 		return sprintf( '\\x{%X}', $code );
+	}
+
+	/**
+	 * Translate a property, like "\p{Lowercase_Letter}" or "[:Lu:]", to PCRE.
+	 *
+	 * ICU takes the long names of general categories, ignores case, spaces, hyphens, and
+	 * underscores in names, and takes a "gc=" prefix, and an "Is" prefix, like Java. It
+	 * takes any property in the POSIX syntax. Other names, like scripts, go to PCRE.
+	 *
+	 * @param string   $token  The property, like "\p{...}", "\P{...}", or "[:...:]".
+	 * @param string[] $tokens Translations of tokens.
+	 *
+	 * @return string The PCRE equivalent, for a set.
+	 */
+	private function regexp_translate_property( $token, $tokens ) {
+		if ( ! preg_match( '/^(?:\\\\([pP])\{(.*)\}|\[:(\^?)(.*):\])$/s', $token, $parts ) ) {
+			return $token;
+		}
+		$negated = 'P' === $parts[1] || '^' === ( $parts[3] ?? '' );
+		$name    = '' === $parts[1] ? $parts[4] : $parts[2];
+		$loose   = preg_replace( '/^(?:is|gc=|generalcategory=)(?=.)/', '', strtolower( str_replace( array( ' ', '-', '_' ), '', $name ) ) );
+
+		if ( '[' === $token[0] && in_array( $loose, self::REGEXP_POSIX_CLASSES, true ) ) {
+			$class = '[:' . ( $negated ? '^' : '' ) . $loose . ':]';
+		} else {
+			if ( isset( self::REGEXP_GENERAL_CATEGORIES[ $loose ] ) ) {
+				$name = self::REGEXP_GENERAL_CATEGORIES[ $loose ];
+			} elseif ( in_array( ucfirst( $loose ), self::REGEXP_GENERAL_CATEGORIES, true ) ) {
+				$name = ucfirst( $loose );
+			} else {
+				$name = preg_replace( '/^is(?=.)/i', '', $name );
+			}
+			$class = ( $negated ? '\\P{' : '\\p{' ) . $name . '}';
+		}
+
+		// The translations of [:upper:] and similar classes apply to their other names too.
+		return $tokens[ $class ] ?? $class;
 	}
 
 	/**

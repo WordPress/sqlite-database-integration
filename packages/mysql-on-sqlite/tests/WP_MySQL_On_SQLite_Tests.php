@@ -383,6 +383,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			'invalid pattern' => array( "REGEXP_LIKE('abc', '(abc')", 'Invalid regular expression: (abc.' ),
 			'short escape'    => array( "REGEXP_LIKE('u004', '\\\\u004')", 'Invalid regular expression: \\u004.' ),
 			'bad property'    => array( "REGEXP_LIKE('a', '\\\\p{Foo}')", 'Invalid regular expression: \\p{Foo}.' ),
+			'property with /' => array( "REGEXP_LIKE('a', '\\\\p{a/i}')", 'Invalid regular expression: \\p{a/i}.' ),
 			'extra argument'  => array(
 				"REGEXP_LIKE('abc', 'abc', 'c', 'extra')",
 				'SQLSTATE[HY000]: General error: 1 wrong number of arguments to function REGEXP_LIKE()',
@@ -1600,6 +1601,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 	 * @dataProvider regexpCodePointEscapeCases
 	 * @dataProvider regexpLiteralEscapeCases
 	 * @dataProvider regexpWordCases
+	 * @dataProvider regexpPropertyCases
 	 */
 	public function testRegexpIcuSyntax( $pattern, $subject, $expected ) {
 		$this->assertQuery(
@@ -1737,6 +1739,31 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		);
 	}
 
+	public static function regexpPropertyCases() {
+		return array(
+			'long name'                => array( '\\p{Lowercase_Letter}+', 'aBc', '<a>B<c>' ),
+			'long name with spaces'    => array( '\\p{lowercase letter}+', 'aBc', '<a>B<c>' ),
+			'long name in capitals'    => array( '\\p{LOWERCASELETTER}+', 'aBc', '<a>B<c>' ),
+			'long name with hyphens'   => array( '\\p{lowercase-letter}+', 'aBc', '<a>B<c>' ),
+			'negated long name'        => array( '\\P{Uppercase_Letter}+', 'aBc', '<a>B<c>' ),
+			'short name in lowercase'  => array( '\\p{lu}+', 'aBc', 'a<B>c' ),
+			'"Is" prefix'              => array( '\\p{IsLetter}+', 'a1b', '<a>1<b>' ),
+			'"Is" and a short name'    => array( '\\p{IsLu}+', 'aBc', 'a<B>c' ),
+			'"gc=" prefix'             => array( '\\p{gc=Lu}+', 'aBc', 'a<B>c' ),
+			'"General_Category="'      => array( '\\p{General_Category=Lu}+', 'aBc', 'a<B>c' ),
+			'alias "punct"'            => array( '\\p{punct}+', 'a.,b+', 'a<.,>b+' ),
+			'alias "digit"'            => array( '\\p{IsDigit}+', 'a12²', 'a<12>²' ),
+			'cased letters'            => array( '\\p{Cased_Letter}+', 'aB1', '<aB>1' ),
+			'property in POSIX syntax' => array( '[:Lu:]+', 'aBc', 'a<B>c' ),
+			'long name in POSIX'       => array( '[:Punctuation:]+', 'a.b', 'a<.>b' ),
+			'negated POSIX property'   => array( '[:^Lu:]+', 'aBc', '<a>B<c>' ),
+			'POSIX property in a set'  => array( '[[:Lu:]x]+', 'aBxc', 'a<Bx>c' ),
+			'POSIX class in capitals'  => array( '[:Alpha:]+', 'a1b', '<a>1<b>' ),
+			'script'                   => array( '\\p{Greek}+', 'aαβ', 'a<αβ>' ),
+			'"Is" and a script'        => array( '\\p{IsGreek}+', 'aαβ', 'a<αβ>' ),
+		);
+	}
+
 	/**
 	 * @dataProvider regexpInvalidSetCases
 	 */
@@ -1799,6 +1826,8 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			'\\p{Lu} in a set'         => array( "REGEXP_LIKE('a', '[\\\\p{Lu}]')", '1' ),
 			'\\p{Lu} in a negated set' => array( "REGEXP_LIKE('a', '[^\\\\p{Lu}]')", '0' ),
 			'\\p{Lu}, intersection'    => array( "REGEXP_LIKE('a', '^[\\\\p{Lu}&&[a-c]]\$')", '1' ),
+			'long name, lowercase'     => array( "REGEXP_LIKE('a', '\\\\p{Uppercase_Letter}')", '1' ),
+			'capitals, lowercase'      => array( "REGEXP_LIKE('a', '[[:Upper:]]')", '1' ),
 			'\\p{Lu}, REGEXP_REPLACE'  => array( "REGEXP_REPLACE('aB1', '\\\\p{Lu}', 'x')", 'xx1' ),
 			'\\p{Ll}, operator'        => array( "'A' REGEXP '\\\\p{Ll}'", '1' ),
 			'\\p{Lu}, c flag'          => array( "REGEXP_LIKE('a', '\\\\p{Lu}', 'c')", '0' ),
@@ -1849,6 +1878,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			'negated class, symbol'  => array( "REGEXP_LIKE('+', '[[:^punct:]]')", '1' ),
 			'with other set members' => array( "REGEXP_LIKE('+', '^[[:punct:]+]\$')", '1' ),
 			'outside of a set'       => array( "REGEXP_LIKE('.', '[:punct:]')", '1' ),
+			'capitals, symbol'       => array( "REGEXP_LIKE('+', '[[:PUNCT:]]')", '0' ),
 			'REGEXP_REPLACE'         => array( "REGEXP_REPLACE('a+b.c\$d,e=f!g', '[[:punct:]]', '')", 'a+bc$de=fg' ),
 			'operator, punctuation'  => array( "'.' REGEXP '[[:punct:]]'", '1' ),
 			'operator, symbol'       => array( "'+' REGEXP '[[:punct:]]'", '0' ),
