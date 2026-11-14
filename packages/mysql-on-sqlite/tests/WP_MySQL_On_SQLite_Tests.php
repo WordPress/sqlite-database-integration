@@ -383,6 +383,8 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			'invalid pattern' => array( "REGEXP_LIKE('abc', '(abc')", 'Invalid regular expression: (abc.' ),
 			'short escape'    => array( "REGEXP_LIKE('u004', '\\\\u004')", 'Invalid regular expression: \\u004.' ),
 			'bad property'    => array( "REGEXP_LIKE('a', '\\\\p{Foo}')", 'Invalid regular expression: \\p{Foo}.' ),
+			'open comment'    => array( "REGEXP_LIKE('a', 'a(?#')", 'Invalid regular expression: a(?#.' ),
+			'comment quote'   => array( "REGEXP_LIKE('a', '(?#\\\\Q)a')", 'Invalid regular expression: (?#\\Q)a.' ),
 			'property with /' => array( "REGEXP_LIKE('a', '\\\\p{a/i}')", 'Invalid regular expression: \\p{a/i}.' ),
 			'"\\b+"'          => array( "REGEXP_LIKE('b', '\\\\b+')", 'Invalid regular expression: \\b+.' ),
 			'"\\B*"'          => array( "REGEXP_LIKE('b', '\\\\B*')", 'Invalid regular expression: \\B*.' ),
@@ -1528,9 +1530,10 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 	 * @dataProvider regexpQuoteInCommentCases
 	 */
 	public function testRegexpEscapedKAfterQuoteInComment( $sql, $pattern ) {
-		// The translation reads a "\Q" in a comment as quoted text, so a later "\K"
-		// reaches PCRE. A match that starts before the search is then an error, not an
-		// endless loop.
+		// The translation reads a "\Q" in an extended comment as quoted text, so a later
+		// "\K" reaches PCRE. A match that starts before the search is then an error, not an
+		// endless loop. In a "(?#...)" comment, "\Q" quotes the ")", like in ICU, so the
+		// comment has no end, which is an error too.
 		$this->assertQueryError(
 			'SELECT ' . sprintf( $sql, $this->engine->quote( $pattern ) ),
 			"Invalid regular expression: $pattern."
@@ -1627,6 +1630,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 	 * @dataProvider regexpLiteralEscapeCases
 	 * @dataProvider regexpWordCases
 	 * @dataProvider regexpPropertyCases
+	 * @dataProvider regexpCommentCases
 	 */
 	public function testRegexpIcuSyntax( $pattern, $subject, $expected ) {
 		$this->assertQuery(
@@ -1837,6 +1841,18 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			'negated POSIX with "gc="' => array( '[[:^gc=Lu:]]+', 'aBc', '<a>B<c>' ),
 			'script'                   => array( '\\p{Greek}+', 'aαβ', 'a<αβ>' ),
 			'"Is" and a script'        => array( '\\p{IsGreek}+', 'aαβ', 'a<αβ>' ),
+		);
+	}
+
+	public static function regexpCommentCases() {
+		return array(
+			'escape in a comment'     => array( 'a(?#\b)b', 'ab', '<ab>' ),
+			'set in a comment'        => array( '(?#[a--])a', 'a', '<a>' ),
+			'quoted ")" in a comment' => array( '(?#\Q)a\E)b', 'ab', 'a<b>' ),
+			'slash in a comment'      => array( '(?#/)a', 'a', '<a>' ),
+			'comment before a digit'  => array( '(a)\1(?#)0', 'aa0', '<aa0>' ),
+			'comment in a set'        => array( '[(?#)]+', '#)a', '<#)>a' ),
+			'"\\\\Q" in a comment'    => array( '(?#\\\\Q)a', 'a', '<a>' ),
 		);
 	}
 

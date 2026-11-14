@@ -1342,6 +1342,9 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * - `\G` in a lookbehind doesn't always match where it does in ICU.
 	 * - MySQL 5.7's word boundaries, `[[:<:]]` and `[[:>:]]`, work, where MySQL 8
 	 *   rejects them.
+	 * - A `#` comment of the `x` flag is translated like the rest of the pattern, so
+	 *   an invalid set or a repeated `\b` in it is an error, and a `\Q` in it quotes
+	 *   the text after it.
 	 * - Data that isn't valid UTF-8 is matched byte by byte and case-sensitively,
 	 *   like MySQL binary strings. Other binary values match as text, so case
 	 *   sensitivity, and whether positions count bytes, can differ between rows.
@@ -1451,16 +1454,16 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	/**
 	 * Translate a MySQL regex pattern to PCRE syntax.
 	 *
-	 * Splits the pattern into quoted text, sets, escapes, POSIX classes, and other
-	 * characters, so that a translation applies only to a whole token.
+	 * Splits the pattern into quoted text, comments, sets, escapes, POSIX classes, and
+	 * other characters, so that a translation applies only to a whole token.
 	 *
 	 * @param string $pattern          The regex pattern.
 	 * @param bool   $case_insensitive Whether the pattern ignores case by default.
 	 * @param bool   $binary_mode      Whether the pattern matches bytes instead of UTF-8 characters.
 	 * @param bool   $without_g        Whether "\G" never matches.
 	 *
-	 * @throws Exception If the pattern can't be split, or it has an invalid set or a
-	 *                   repeated word boundary.
+	 * @throws Exception If the pattern can't be split, or it has an invalid set, a
+	 *                   comment without an end, or a repeated word boundary.
 	 * @return string Pattern safe to wrap in slash delimiters.
 	 */
 	private function regexp_translate_pattern( $pattern, $case_insensitive, $binary_mode, $without_g ) {
@@ -1480,8 +1483,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 			'[[:>:]]'    => '[[:>:]]',
 		);
 		if ( $without_g ) {
-			// A position can't be both a word boundary and not one, so "\b\B" never
-			// matches. Unlike "(?!)", it has no ")" to end a "(?#...)" comment.
+			// "\b\B" never matches, as no position is both a word boundary and not one.
 			$tokens['\\G'] = '\\b\\B';
 		}
 
@@ -1518,6 +1520,10 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		}
 
 		/*
+		 * A "(?#...)" comment is one token, so that no translation changes it. Like in
+		 * ICU, a "\Q" in it quotes the text up to "\E", which can hold its ")", but "\\Q"
+		 * is an escaped backslash and a "Q".
+		 *
 		 * A set, with its nested sets, is one token, as ICU's sets differ from PCRE's.
 		 * Like ICU, "[:" starts a POSIX class if the next ":" is followed by "]", and a
 		 * set otherwise. ICU reads a POSIX class outside of a set, as in "[:alpha:]", as
@@ -1530,11 +1536,18 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		 * "{" after it is one token, so that it is an error, like in ICU.
 		 */
 		$translated = preg_replace_callback(
-			'/\\\\Q.*?(?:\\\\E|\z)|\[:\^?[^:]*:\]|(\[\^?+\]?+(?:\\\\Q.*?(?:\\\\E|\z)|\\\\c.|\\\\.|\[:\^?[^:]*:\]|(?1)|[^\\\\\[\]])*+\])|' . self::REGEXP_CODE_POINT_ESCAPE . '|\\\\[pP]\{[^}\\\\]*\}|\\\\[bB][*+?{]|\\\\.|[\/\0]/s',
+			'/\\\\Q.*?(?:\\\\E|\z)|\(\?#(?:\\\\Q.*?(?:\\\\E|\z)|\\\\[^)]|[^)])*+\)|\(\?#|\[:\^?[^:]*:\]|(\[\^?+\]?+(?:\\\\Q.*?(?:\\\\E|\z)|\\\\c.|\\\\.|\[:\^?[^:]*:\]|(?1)|[^\\\\\[\]])*+\])|' . self::REGEXP_CODE_POINT_ESCAPE . '|\\\\[pP]\{[^}\\\\]*\}|\\\\[bB][*+?{]|\\\\.|[\/\0]/s',
 			function ( $parts ) use ( $pattern, $tokens ) {
 				$token = $parts[0];
 				if ( isset( $parts[1] ) ) {
 					return $tokens[ $token ] ?? $this->regexp_translate_set( $token, $pattern, $tokens );
+				}
+				if ( '(?#' === $token ) {
+					// The comment has no end, as its ")" is missing or quoted.
+					throw new Exception( "Invalid regular expression: $pattern." );
+				}
+				if ( '(' === $token[0] ) {
+					return '(?#)';
 				}
 				if ( '[' === $token[0] ) {
 					return $this->regexp_set_fragment( $this->regexp_translate_property( $token, $tokens ) );
@@ -1996,7 +2009,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 			/*
 			 * Only PCRE's "\K" can start a match before the search, and then the next
 			 * search would find the same match forever. The translation reads "\K" as
-			 * "K", except after a "\Q" in a comment.
+			 * "K", except after a "\Q" in an extended comment.
 			 */
 			if ( $match[0][1] < $offset ) {
 				throw new Exception( 'Invalid regular expression: ' . $pattern . '.' );
