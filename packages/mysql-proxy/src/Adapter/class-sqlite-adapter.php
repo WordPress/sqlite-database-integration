@@ -28,7 +28,7 @@ class SQLite_Adapter implements Adapter {
 		$rows           = array();
 
 		try {
-			$statement      = $this->sqlite_driver->query( $query, PDO::FETCH_OBJ );
+			$statement      = $this->sqlite_driver->query( $query, PDO::FETCH_NUM );
 			$last_insert_id = (int) $this->sqlite_driver->lastInsertId();
 			if ( $statement->columnCount() > 0 ) {
 				$rows = $statement->fetchAll();
