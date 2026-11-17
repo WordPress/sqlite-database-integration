@@ -41,6 +41,24 @@ class WP_MySQL_Token extends WP_Parser_Token {
 	}
 
 	/**
+	 * Get the byte offset in the input where the token begins.
+	 *
+	 * @return int The byte offset of the token's first byte in the input.
+	 */
+	public function get_start(): int {
+		return $this->start;
+	}
+
+	/**
+	 * Get the byte length of the token in the input.
+	 *
+	 * @return int The byte length of the token in the input.
+	 */
+	public function get_length(): int {
+		return $this->length;
+	}
+
+	/**
 	 * Get the name of the token.
 	 *
 	 * This method is intended to be used only for testing and debugging purposes,
