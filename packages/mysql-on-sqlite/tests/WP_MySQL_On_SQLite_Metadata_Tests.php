@@ -2015,99 +2015,15 @@ class WP_MySQL_On_SQLite_Metadata_Tests extends TestCase {
 
 		// INFORMATION_SCHEMA.TABLE_CONSTRAINTS
 		$result = $this->assertQuery( "SELECT * FROM information_schema.table_constraints WHERE table_name = 't2'" );
-		$this->assertEquals(
-			array(
-				(object) array(
-					'CONSTRAINT_CATALOG' => 'def',
-					'CONSTRAINT_SCHEMA'  => 'wp',
-					'CONSTRAINT_NAME'    => 't2_ibfk_1',
-					'TABLE_SCHEMA'       => 'wp',
-					'TABLE_NAME'         => 't2',
-					'CONSTRAINT_TYPE'    => 'FOREIGN KEY',
-					'ENFORCED'           => 'YES',
-				),
-				(object) array(
-					'CONSTRAINT_CATALOG' => 'def',
-					'CONSTRAINT_SCHEMA'  => 'wp',
-					'CONSTRAINT_NAME'    => 't2_ibfk_2',
-					'TABLE_SCHEMA'       => 'wp',
-					'TABLE_NAME'         => 't2',
-					'CONSTRAINT_TYPE'    => 'FOREIGN KEY',
-					'ENFORCED'           => 'YES',
-				),
-			),
-			$result
-		);
+		$this->assertEquals( array(), $result );
 
 		// INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS
 		$result = $this->assertQuery( "SELECT * FROM information_schema.referential_constraints WHERE table_name = 't2'" );
-		$this->assertEquals(
-			array(
-				(object) array(
-					'CONSTRAINT_CATALOG'        => 'def',
-					'CONSTRAINT_SCHEMA'         => 'wp',
-					'CONSTRAINT_NAME'           => 't2_ibfk_1',
-					'UNIQUE_CONSTRAINT_CATALOG' => 'def',
-					'UNIQUE_CONSTRAINT_SCHEMA'  => 'wp',
-					'UNIQUE_CONSTRAINT_NAME'    => null,
-					'MATCH_OPTION'              => 'NONE',
-					'UPDATE_RULE'               => 'NO ACTION',
-					'DELETE_RULE'               => 'NO ACTION',
-					'TABLE_NAME'                => 't2',
-					'REFERENCED_TABLE_NAME'     => 't1',
-				),
-				(object) array(
-					'CONSTRAINT_CATALOG'        => 'def',
-					'CONSTRAINT_SCHEMA'         => 'wp',
-					'CONSTRAINT_NAME'           => 't2_ibfk_2',
-					'UNIQUE_CONSTRAINT_CATALOG' => 'def',
-					'UNIQUE_CONSTRAINT_SCHEMA'  => 'wp',
-					'UNIQUE_CONSTRAINT_NAME'    => null,
-					'MATCH_OPTION'              => 'NONE',
-					'UPDATE_RULE'               => 'NO ACTION',
-					'DELETE_RULE'               => 'CASCADE',
-					'TABLE_NAME'                => 't2',
-					'REFERENCED_TABLE_NAME'     => 't1',
-				),
-			),
-			$result
-		);
+		$this->assertEquals( array(), $result );
 
 		// INFORMATION_SCHEMA.KEY_COLUMN_USAGE
 		$result = $this->assertQuery( "SELECT * FROM information_schema.key_column_usage WHERE table_name = 't2'" );
-		$this->assertEquals(
-			array(
-				(object) array(
-					'CONSTRAINT_CATALOG'            => 'def',
-					'CONSTRAINT_SCHEMA'             => 'wp',
-					'CONSTRAINT_NAME'               => 't2_ibfk_1',
-					'TABLE_CATALOG'                 => 'def',
-					'TABLE_SCHEMA'                  => 'wp',
-					'TABLE_NAME'                    => 't2',
-					'COLUMN_NAME'                   => 't1_id',
-					'ORDINAL_POSITION'              => '1',
-					'POSITION_IN_UNIQUE_CONSTRAINT' => '1',
-					'REFERENCED_TABLE_SCHEMA'       => 'wp',
-					'REFERENCED_TABLE_NAME'         => 't1',
-					'REFERENCED_COLUMN_NAME'        => 'id',
-				),
-				(object) array(
-					'CONSTRAINT_CATALOG'            => 'def',
-					'CONSTRAINT_SCHEMA'             => 'wp',
-					'CONSTRAINT_NAME'               => 't2_ibfk_2',
-					'TABLE_CATALOG'                 => 'def',
-					'TABLE_SCHEMA'                  => 'wp',
-					'TABLE_NAME'                    => 't2',
-					'COLUMN_NAME'                   => 't1_name',
-					'ORDINAL_POSITION'              => '1',
-					'POSITION_IN_UNIQUE_CONSTRAINT' => '1',
-					'REFERENCED_TABLE_SCHEMA'       => 'wp',
-					'REFERENCED_TABLE_NAME'         => 't1',
-					'REFERENCED_COLUMN_NAME'        => 'name',
-				),
-			),
-			$result
-		);
+		$this->assertEquals( array(), $result );
 
 		// SHOW CREATE TABLE
 		$result = $this->assertQuery( 'SHOW CREATE TABLE t2' );
@@ -2121,9 +2037,7 @@ class WP_MySQL_On_SQLite_Metadata_Tests extends TestCase {
 							'CREATE TABLE `t2` (',
 							'  `id` int DEFAULT NULL,',
 							'  `t1_id` int DEFAULT NULL,',
-							'  `t1_name` varchar(255) DEFAULT NULL,',
-							'  CONSTRAINT `t2_ibfk_1` FOREIGN KEY (`t1_id`) REFERENCES `t1` (`id`),',
-							'  CONSTRAINT `t2_ibfk_2` FOREIGN KEY (`t1_name`) REFERENCES `t1` (`name`) ON DELETE CASCADE',
+							'  `t1_name` varchar(255) DEFAULT NULL',
 							') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 						)
 					),
@@ -2444,7 +2358,8 @@ class WP_MySQL_On_SQLite_Metadata_Tests extends TestCase {
 		$this->assertQuery(
 			'CREATE TABLE t2 (
 				id INT,
-				t1_id INT REFERENCES t1 (id),
+				t1_id INT,
+				FOREIGN KEY (t1_id) REFERENCES t1 (id),
 				FOREIGN KEY (t1_id) REFERENCES t1 (id),
 				CONSTRAINT fk1 FOREIGN KEY (t1_id) REFERENCES t1 (id) ON DELETE CASCADE
 			)'
