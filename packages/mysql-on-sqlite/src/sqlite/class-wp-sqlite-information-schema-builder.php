@@ -2439,6 +2439,19 @@ class WP_SQLite_Information_Schema_Builder {
 			return "b'0'";
 		}
 
+		// Hex literal, e.g. x'05' or 0x05. Convert it to a bit literal digit by
+		// digit, as a value of 64 bits doesn't fit into an integer.
+		if (
+			preg_match( "/\Ax'([0-9a-f]*)'\z/", $value, $matches )
+			|| preg_match( '/\A0x([0-9a-f]+)\z/', $value, $matches )
+		) {
+			$value = "b'";
+			foreach ( str_split( $matches[1] ) as $digit ) {
+				$value .= sprintf( '%04b', hexdec( $digit ) );
+			}
+			$value .= "'";
+		}
+
 		// Bit literal, e.g. b'101' or 0b101.
 		if (
 			preg_match( "/\Ab'([01]*)'\z/", $value, $matches )
@@ -2446,14 +2459,6 @@ class WP_SQLite_Information_Schema_Builder {
 		) {
 			$bits = ltrim( $matches[1], '0' );
 			return "b'" . ( '' === $bits ? '0' : $bits ) . "'";
-		}
-
-		// Hex literal, e.g. x'05' or 0x05.
-		if (
-			preg_match( "/\Ax'([0-9a-f]*)'\z/", $value, $matches )
-			|| preg_match( '/\A0x([0-9a-f]+)\z/', $value, $matches )
-		) {
-			return "b'" . decbin( hexdec( $matches[1] ) ) . "'";
 		}
 
 		// Non-negative decimal, e.g. 5, or a numeric string literal such as '0'.
