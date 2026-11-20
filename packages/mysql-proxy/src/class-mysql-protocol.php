@@ -495,16 +495,27 @@ class MySQL_Protocol {
 	}
 
 	/**
-	 * Build the row packet.
+	 * Build the row packet(s).
+	 *
+	 * Rows whose encoded payload reaches or exceeds `MAX_PACKET_LENGTH`
+	 * (0x00ffffff bytes) are split across multiple MySQL wire packets.
 	 *
 	 * @see https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_com_query_response_text_resultset_row.html
+	 * @see https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_packets.html
 	 *
-	 * @param  int    $sequence_id The sequence ID of the packet.
-	 * @param  array  $columns     The columns.
-	 * @param  object $row         The row.
-	 * @return string              The row packet.
+	 * @param  int      $sequence_id      The sequence ID of the first packet.
+	 * @param  array    $columns          The columns.
+	 * @param  object   $row              The row.
+	 * @param  int|null $next_sequence_id Optional. Receives the sequence ID following
+	 *                                    the last packet emitted (wrapped to 0..255).
+	 * @return string                     The row packet(s).
 	 */
-	public static function build_row_packet( int $sequence_id, array $columns, object $row ): string {
+	public static function build_row_packet(
+		int $sequence_id,
+		array $columns,
+		object $row,
+		?int &$next_sequence_id = null
+	): string {
 		$payload = '';
 		foreach ( $columns as $column ) {
 			$value = $row->{$column['name']} ?? null;
@@ -514,19 +525,67 @@ class MySQL_Protocol {
 				$payload .= self::encode_length_encoded_string( (string) $value );
 			}
 		}
-		return self::build_packet( $sequence_id, $payload );
+		$packets          = self::build_packets( $sequence_id, $payload );
+		$next_sequence_id = $sequence_id;
+		return $packets;
 	}
 
 	/**
-	 * Build a MySQL packet.
+	 * Build one or more MySQL packets for a message payload.
+	 *
+	 * Payloads of `MAX_PACKET_LENGTH` (0x00ffffff) bytes or larger are split
+	 * across `MAX_PACKET_LENGTH` packets, terminated by a packet shorter than
+	 * `MAX_PACKET_LENGTH` (empty when the payload length is an exact multiple
+	 * of `MAX_PACKET_LENGTH`).
 	 *
 	 * @see https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_packets.html
 	 *
-	 * @param  int    $sequence_id The sequence ID of the packet.
-	 * @param  string $payload     The payload of the packet.
+	 * @param  int    $sequence_id The sequence ID of the first packet. Advanced
+	 *                             past the last packet emitted (wrapped to 0..255).
+	 * @param  string $payload     The message payload.
 	 * @return string              The packet data.
 	 */
+	public static function build_packets( int &$sequence_id, string $payload ): string {
+		$length = strlen( $payload );
+		if ( $length < self::MAX_PACKET_LENGTH ) {
+			$packet      = self::build_packet( $sequence_id, $payload );
+			$sequence_id = ( $sequence_id + 1 ) & 0xff;
+			return $packet;
+		}
+
+		$packets = '';
+		$offset  = 0;
+		while ( $length - $offset >= self::MAX_PACKET_LENGTH ) {
+			$packets    .= self::build_packet(
+				$sequence_id,
+				substr( $payload, $offset, self::MAX_PACKET_LENGTH )
+			);
+			$sequence_id = ( $sequence_id + 1 ) & 0xff;
+			$offset     += self::MAX_PACKET_LENGTH;
+		}
+		$packets    .= self::build_packet(
+			$sequence_id,
+			$offset < $length ? substr( $payload, $offset ) : ''
+		);
+		$sequence_id = ( $sequence_id + 1 ) & 0xff;
+		return $packets;
+	}
+
+	/**
+	 * Build a single MySQL wire packet.
+	 *
+	 * @see https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_packets.html
+	 *
+	 * @param  int    $sequence_id        The sequence ID of the packet.
+	 * @param  string $payload            The payload of the packet.
+	 * @return string                     The packet data.
+	 * @throws MySQL_Proxy_Exception      When the payload exceeds MAX_PACKET_LENGTH.
+	 */
 	public static function build_packet( int $sequence_id, string $payload ): string {
+		if ( strlen( $payload ) > self::MAX_PACKET_LENGTH ) {
+			throw new MySQL_Proxy_Exception( 'Packet payload exceeds maximum MySQL packet length.' );
+		}
+
 		/**
 		 * Assemble the packet.
 		 *

@@ -63,4 +63,26 @@ class WP_MySQL_Proxy_PDO_Test extends WP_MySQL_Proxy_Test {
 			$stmt->fetchAll( PDO::FETCH_ASSOC )
 		);
 	}
+
+	public function test_large_result_row(): void {
+		$this->iniSet( 'memory_limit', '512M' );
+
+		$this->pdo->exec( 'CREATE TABLE t (v LONGTEXT)' );
+		$this->pdo->exec( "INSERT INTO t (v) VALUES ('" . str_repeat( 'a', 1048576 ) . "')" );
+		for ( $i = 0; $i < 4; $i++ ) {
+			$this->pdo->exec( 'UPDATE t SET v = CONCAT(v, v)' );
+		}
+
+		// 16,777,211 bytes + 4-byte 0xfd length prefix = 16,777,215 (exact MAX_PACKET_LENGTH).
+		$exact = $this->pdo->query( 'SELECT SUBSTRING(v, 1, 16777211) FROM t' )->fetchColumn();
+		$this->assertSame( 16777211, strlen( $exact ) );
+
+		// 16,777,220 bytes + 9-byte 0xfe length prefix > MAX_PACKET_LENGTH.
+		$over = $this->pdo->query( "SELECT CONCAT(v, 'tail') FROM t" )->fetchColumn();
+		$this->assertSame( 16777220, strlen( $over ) );
+		$this->assertSame( 'aatail', substr( $over, -6 ) );
+
+		// Verify the connection remains synchronized for subsequent queries.
+		$this->assertEquals( 1, $this->pdo->query( 'SELECT 1' )->fetchColumn() );
+	}
 }
