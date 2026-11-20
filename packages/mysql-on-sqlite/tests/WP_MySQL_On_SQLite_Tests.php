@@ -2537,6 +2537,163 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 				"ALTER TABLE _tmp_invalid_bit_default ALTER COLUMN injected SET DEFAULT '-0.1'",
 				'injected',
 			),
+			'CREATE too wide'    => array(
+				"CREATE TABLE _tmp_created_invalid_bit_default (injected BIT(8) DEFAULT b'111111111')",
+				'injected',
+			),
+			'CREATE no width'    => array(
+				"CREATE TABLE _tmp_created_invalid_bit_default (injected BIT DEFAULT b'10')",
+				'injected',
+			),
+			'ADD too wide'       => array(
+				"ALTER TABLE _tmp_invalid_bit_default ADD COLUMN injected_2 BIT(8) DEFAULT b'111111111'",
+				'injected_2',
+			),
+			'MODIFY too wide'    => array(
+				'ALTER TABLE _tmp_invalid_bit_default MODIFY COLUMN injected BIT(8) DEFAULT 0x01FF',
+				'injected',
+			),
+			'CHANGE too wide'    => array(
+				'ALTER TABLE _tmp_invalid_bit_default CHANGE COLUMN injected injected_2 BIT(8) DEFAULT 0b111111111',
+				'injected_2',
+			),
+			'SET too wide'       => array(
+				"ALTER TABLE _tmp_invalid_bit_default ALTER COLUMN injected SET DEFAULT b'10'",
+				'injected',
+			),
+			'SET (too wide)'     => array(
+				"ALTER TABLE _tmp_invalid_bit_default ALTER COLUMN injected SET DEFAULT (b'10')",
+				'injected',
+			),
+			'too large number'   => array(
+				'ALTER TABLE _tmp_invalid_bit_default MODIFY COLUMN injected BIT(8) DEFAULT 256',
+				'injected',
+			),
+			'64 bits in BIT(63)' => array(
+				sprintf( "ALTER TABLE _tmp_invalid_bit_default MODIFY COLUMN injected BIT(63) DEFAULT b'%s'", str_repeat( '1', 64 ) ),
+				'injected',
+			),
+			'65 bits in BIT(64)' => array(
+				sprintf( "ALTER TABLE _tmp_invalid_bit_default MODIFY COLUMN injected BIT(64) DEFAULT b'1%s'", str_repeat( '0', 64 ) ),
+				'injected',
+			),
+			'9 bytes in BIT(64)' => array(
+				'ALTER TABLE _tmp_invalid_bit_default MODIFY COLUMN injected BIT(64) DEFAULT 0x01FFFFFFFFFFFFFFFF',
+				'injected',
+			),
+		);
+	}
+
+	public function testBitDefaultValuesOfFullColumnWidth(): void {
+		$bits_64 = str_repeat( '1', 64 );
+		$this->assertQuery(
+			"CREATE TABLE _tmp_bit_defaults (
+				no_width BIT DEFAULT 1,
+				true_literal BIT(1) DEFAULT TRUE,
+				bit_literal BIT(8) DEFAULT b'11111111',
+				leading_zeros BIT(8) DEFAULT b'0000000011111111',
+				hex_number BIT(8) DEFAULT 0x00FF,
+				integer_number BIT(8) DEFAULT 255,
+				bits_64 BIT(64) DEFAULT b'$bits_64',
+				expression BIT(8) DEFAULT (b'111111111')
+			)"
+		);
+		$this->assertQuery( "ALTER TABLE _tmp_bit_defaults ALTER COLUMN no_width SET DEFAULT b'01'" );
+		$this->assertQuery( "ALTER TABLE _tmp_bit_defaults ALTER COLUMN true_literal SET DEFAULT (b'1')" );
+
+		$this->assertQuery( 'SHOW CREATE TABLE _tmp_bit_defaults' );
+		$create_table = $this->last_result[0]->{'Create Table'};
+		$this->assertStringContainsString( "`no_width` bit(1) DEFAULT b'1',", $create_table );
+		$this->assertStringContainsString( "`true_literal` bit(1) DEFAULT b'1',", $create_table );
+		$this->assertStringContainsString( "`bit_literal` bit(8) DEFAULT b'11111111',", $create_table );
+		$this->assertStringContainsString( "`leading_zeros` bit(8) DEFAULT b'11111111',", $create_table );
+		$this->assertStringContainsString( "`hex_number` bit(8) DEFAULT b'11111111',", $create_table );
+		$this->assertStringContainsString( "`integer_number` bit(8) DEFAULT b'11111111',", $create_table );
+		$this->assertStringContainsString( "`bits_64` bit(64) DEFAULT b'$bits_64',", $create_table );
+
+		// Like in MySQL, an expression default is not checked.
+		$this->assertStringContainsString( "`expression` bit(8) DEFAULT (b'111111111')", $create_table );
+	}
+
+	public function testRejectsStoredBitDefaultValueOfMoreThan64Bits(): void {
+		// Only a driver version without the width check could store such a default.
+		$this->assertQuery( 'CREATE TABLE _tmp_bit_defaults (id INT, b BIT(64))' );
+		$this->sqlite->exec(
+			sprintf(
+				"UPDATE _wp_sqlite_mysql_information_schema_columns SET column_default = 'b''1%s''' WHERE table_name = '_tmp_bit_defaults' AND column_name = 'b'",
+				str_repeat( '0', 64 )
+			)
+		);
+
+		$exception = null;
+		try {
+			$this->query( 'ALTER TABLE _tmp_bit_defaults ADD COLUMN c INT' );
+		} catch ( WP_MySQL_On_SQLite_Exception $e ) {
+			$exception = $e;
+		}
+
+		$this->assertInstanceOf( WP_MySQL_On_SQLite_Exception::class, $exception );
+		$this->assertSame( array( '42000', 1067, "Invalid default value for 'b'" ), $exception->errorInfo );
+
+		// The table is not changed.
+		$this->assertQuery( 'SHOW COLUMNS FROM _tmp_bit_defaults' );
+		$this->assertSame( array( 'id', 'b' ), array_column( $this->last_result, 'Field' ) );
+	}
+
+	/**
+	 * @dataProvider invalidBitWidthQueries
+	 */
+	public function testRejectsInvalidBitWidths( string $query, string $message, string $sqlstate, int $code ): void {
+		$this->assertQuery( 'CREATE TABLE _tmp_invalid_bit_width (id INT, b BIT(8))' );
+
+		$exception = null;
+		try {
+			$this->query( $query );
+		} catch ( WP_MySQL_On_SQLite_Exception $e ) {
+			$exception = $e;
+		}
+
+		$this->assertInstanceOf( WP_MySQL_On_SQLite_Exception::class, $exception );
+		$this->assertStringEndsWith( ": $code $message", $exception->getMessage() );
+		$this->assertSame( $sqlstate, $exception->getCode() );
+		$this->assertSame( array( $sqlstate, $code, $message ), $exception->errorInfo );
+
+		// The table is not changed.
+		$this->assertQuery( 'SHOW CREATE TABLE _tmp_invalid_bit_width' );
+		$this->assertStringContainsString( '`b` bit(8) DEFAULT NULL', $this->last_result[0]->{'Create Table'} );
+	}
+
+	public static function invalidBitWidthQueries(): array {
+		$too_wide     = array( "Display width out of range for column 'b' (max = 64)", '42000', 1439 );
+		$invalid_size = array( "Invalid size for column 'b'.", 'HY000', 3013 );
+
+		return array(
+			'CREATE 65 bits'            => array_merge( array( 'CREATE TABLE _tmp_created_invalid_bit_width (b BIT(65))' ), $too_wide ),
+			'CREATE leading zero'       => array_merge( array( 'CREATE TABLE _tmp_created_invalid_bit_width (b BIT(065))' ), $too_wide ),
+			'CREATE 65 bits, default'   => array_merge( array( 'CREATE TABLE _tmp_created_invalid_bit_width (b BIT(65) DEFAULT -1)' ), $too_wide ),
+			'ADD 65 bits'               => array(
+				'ALTER TABLE _tmp_invalid_bit_width ADD COLUMN c BIT(65)',
+				"Display width out of range for column 'c' (max = 64)",
+				'42000',
+				1439,
+			),
+			'MODIFY 65 bits'            => array_merge( array( 'ALTER TABLE _tmp_invalid_bit_width MODIFY COLUMN b BIT(65)' ), $too_wide ),
+			'CHANGE 65 bits'            => array_merge( array( 'ALTER TABLE _tmp_invalid_bit_width CHANGE COLUMN b b BIT(65)' ), $too_wide ),
+			'CREATE more than 32 bits'  => array(
+				'CREATE TABLE _tmp_created_invalid_bit_width (b BIT(4294967296))',
+				"Display width out of range for column 'b' (max = 4294967295)",
+				'42000',
+				1439,
+			),
+			'CREATE more than 64 bits'  => array(
+				'CREATE TABLE _tmp_created_invalid_bit_width (b BIT(99999999999999999999))',
+				"Display width out of range for column 'b' (max = 4294967295)",
+				'42000',
+				1439,
+			),
+			'CREATE zero bits'          => array_merge( array( 'CREATE TABLE _tmp_created_invalid_bit_width (b BIT(0))' ), $invalid_size ),
+			'CREATE zero bits, default' => array_merge( array( "CREATE TABLE _tmp_created_invalid_bit_width (b BIT(0) DEFAULT b'1')" ), $invalid_size ),
+			'MODIFY zero bits'          => array_merge( array( 'ALTER TABLE _tmp_invalid_bit_width MODIFY COLUMN b BIT(0)' ), $invalid_size ),
 		);
 	}
 

@@ -18,6 +18,8 @@ class WP_SQLite_Information_Schema_Exception extends Exception {
 	const TYPE_CONSTRAINT_DOES_NOT_EXIST      = 'constraint-does-not-exist';
 	const TYPE_MULTIPLE_CONSTRAINTS_WITH_NAME = 'multiple-constraints-with-name';
 	const TYPE_INVALID_DEFAULT_VALUE          = 'invalid-default-value';
+	const TYPE_INVALID_COLUMN_SIZE            = 'invalid-column-size';
+	const TYPE_DISPLAY_WIDTH_OUT_OF_RANGE     = 'display-width-out-of-range';
 
 	/**
 	 * The exception type.
@@ -183,6 +185,38 @@ class WP_SQLite_Information_Schema_Exception extends Exception {
 			self::TYPE_INVALID_DEFAULT_VALUE,
 			sprintf( "Invalid default value for '%s'.", $column_name ),
 			array( 'column_name' => $column_name )
+		);
+	}
+
+	/**
+	 * Create an invalid column size exception.
+	 *
+	 * @param  string $column_name The name of the affected column.
+	 * @return self                The exception instance.
+	 */
+	public static function invalid_column_size( string $column_name ): WP_SQLite_Information_Schema_Exception {
+		return new self(
+			self::TYPE_INVALID_COLUMN_SIZE,
+			sprintf( "Invalid size for column '%s'.", $column_name ),
+			array( 'column_name' => $column_name )
+		);
+	}
+
+	/**
+	 * Create a display width out of range exception.
+	 *
+	 * @param  string $column_name The name of the affected column.
+	 * @param  int    $max_width   The maximum display width.
+	 * @return self                The exception instance.
+	 */
+	public static function display_width_out_of_range( string $column_name, int $max_width ): WP_SQLite_Information_Schema_Exception {
+		return new self(
+			self::TYPE_DISPLAY_WIDTH_OUT_OF_RANGE,
+			sprintf( "Display width out of range for column '%s' (max = %d).", $column_name, $max_width ),
+			array(
+				'column_name' => $column_name,
+				'max_width'   => $max_width,
+			)
 		);
 	}
 }
