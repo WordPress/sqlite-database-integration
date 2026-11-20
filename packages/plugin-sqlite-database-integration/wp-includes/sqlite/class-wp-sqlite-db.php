@@ -524,9 +524,12 @@ class WP_SQLite_DB extends wpdb {
 		$wpdb_allow_unsafe_unquoted_parameters = $this->__get( 'allow_unsafe_unquoted_parameters' );
 		if ( $wpdb_allow_unsafe_unquoted_parameters !== $this->allow_unsafe_unquoted_parameters ) {
 			$property = new ReflectionProperty( 'wpdb', 'allow_unsafe_unquoted_parameters' );
-			$property->setAccessible( true );
+
+			// Private properties are accessible since PHP 8.1, and the method is deprecated since PHP 8.5.
+			if ( PHP_VERSION_ID < 80100 ) {
+				$property->setAccessible( true );
+			}
 			$property->setValue( $this, $this->allow_unsafe_unquoted_parameters );
-			$property->setAccessible( false );
 		}
 
 		return parent::prepare( $query, ...$args );
