@@ -22,7 +22,7 @@ The monorepo packages are placed under the `packages` directory.
 The WordPress plugin links the MySQL on SQLite package using a symlink. The build
 script replaces the symlink with a copy of the package for release.
 
-The codebase is pure PHP with zero dependencies. It supports PHP 7.2 through 8.5,
+The codebase is pure PHP with zero dependencies. It supports PHP 7.2 through 8.6,
 MySQL syntax from version 5.7 onward, and requires SQLite 3.37.0 or newer
 (with legacy mode down to 3.27.0).
 

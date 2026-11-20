@@ -59,6 +59,7 @@ class WP_MySQL_Proxy_Command_Test extends TestCase {
 			array( array( '--user=user' ), '', 'Error: A nonempty password without NUL bytes is required.' ),
 			array( array( '--user=user', '--password-file=/nonexistent/proxy-password' ), 'password', 'must name a readable file' ),
 			array( array( '--user=user', '--password-file=' . __DIR__ ), 'password', 'must name a readable file' ),
+			array( array( '--user=user', '--password-file=/dev/fd/99' ), 'password', '--password-file could not be read' ),
 			array( array( '--user=user', '--user=other' ), 'password', 'Invalid command-line options' ),
 			array( array( '--user=user', '--auth-plugin=mysql_clear_password' ), 'password', 'Error: The authentication plugin must be one of' ),
 			array( array( '--user=user', '--auth-plugin=' ), 'password', 'Error: The authentication plugin must be one of' ),
