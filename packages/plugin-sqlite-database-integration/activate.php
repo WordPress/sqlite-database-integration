@@ -46,6 +46,16 @@ function sqlite_activation() {
 
 	check_admin_referer( 'sqlite-install' );
 
+	/*
+	 * The drop-in would fail every request when it cannot create or write the
+	 * database. A stale install link can skip the check on the settings screen,
+	 * so return there to show the error.
+	 */
+	if ( ! sqlite_plugin_is_database_location_writable() ) {
+		wp_safe_redirect( sqlite_plugin_get_admin_page_url() );
+		exit;
+	}
+
 	sqlite_plugin_copy_db_file();
 
 	// WordPress will automatically redirect to the install screen here.

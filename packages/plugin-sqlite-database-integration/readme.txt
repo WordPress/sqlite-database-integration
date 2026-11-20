@@ -62,6 +62,12 @@ The random path makes the database location difficult to guess when it is not ot
 
 Integrations should always read `DB_PATH` after WordPress loads instead of assuming a fixed database path.
 
+= Why do I see a database location warning? =
+
+Your SQLite database is in a folder that your website may expose, such as the WordPress folder, `wp-content`, or another known public web root. We recommend moving it to a private folder outside the public web root that your web server does not expose.
+
+For instructions, open **Settings → SQLite integration → Database protection**. On multisite, use Network Admin.
+
 = How can I configure the database location? =
 
 To properly **secure the SQLite database**, define the `DB_PATH` constant to an **explicit path** that is protected from public web access. An explicit `DB_PATH` value is used as-is without randomization. Define it in `wp-config.php`:

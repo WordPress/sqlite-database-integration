@@ -936,6 +936,90 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 		$this->assert_protected_directory( $database_root );
 	}
 
+	/**
+	 * @dataProvider writable_storage_locations
+	 */
+	public function test_reports_writable_storage_without_creating_files( $is_secret_root, $suffix ) {
+		$database_root = $this->create_temporary_directory();
+		$location      = $database_root . $suffix;
+		$storage       = $is_secret_root ? WP_SQLite_Storage::with_secret_path( $location ) : WP_SQLite_Storage::with_explicit_path( $location );
+
+		$this->assertTrue( $storage->is_writable() );
+		$this->assertSame( array( '.', '..' ), scandir( $database_root ) );
+	}
+
+	public function writable_storage_locations() {
+		return array(
+			'explicit path'                => array( false, '/database.sqlite' ),
+			'explicit path in new folders' => array( false, '/new/folder/database.sqlite' ),
+			'secret path root'             => array( true, '' ),
+			'new secret path root'         => array( true, '/new/folder' ),
+		);
+	}
+
+	public function test_reports_in_memory_storage_as_writable() {
+		$this->assertTrue( WP_SQLite_Storage::with_explicit_path( ':memory:' )->is_writable() );
+	}
+
+	/**
+	 * @dataProvider blocked_storage_locations
+	 */
+	public function test_reports_storage_blocked_by_another_file( $is_secret_root, $suffix ) {
+		$database_root = $this->create_temporary_directory();
+		$this->assertNotFalse( file_put_contents( $database_root . '/file', '' ) );
+		$this->assertTrue( symlink( $database_root . '/missing', $database_root . '/link' ) );
+		$location = $database_root . $suffix;
+		$storage  = $is_secret_root ? WP_SQLite_Storage::with_secret_path( $location ) : WP_SQLite_Storage::with_explicit_path( $location );
+
+		$this->assertFalse( $storage->is_writable() );
+		$this->assertSame( array( '.', '..', 'file', 'link' ), scandir( $database_root ) );
+	}
+
+	public function blocked_storage_locations() {
+		return array(
+			'explicit path in a file'           => array( false, '/file/database.sqlite' ),
+			'explicit path below a file'        => array( false, '/file/new/database.sqlite' ),
+			'explicit path in a broken link'    => array( false, '/link/database.sqlite' ),
+			'secret path root in a file'        => array( true, '/file' ),
+			'secret path root below a file'     => array( true, '/file/new' ),
+			'secret path root in a broken link' => array( true, '/link' ),
+		);
+	}
+
+	public function test_reports_storage_in_a_read_only_directory() {
+		$database_root = $this->create_temporary_directory();
+		$this->make_read_only( $database_root );
+
+		try {
+			$this->assertFalse( WP_SQLite_Storage::with_explicit_path( $database_root . '/database.sqlite' )->is_writable() );
+			$this->assertFalse( WP_SQLite_Storage::with_explicit_path( $database_root . '/new/database.sqlite' )->is_writable() );
+			$this->assertFalse( WP_SQLite_Storage::with_secret_path( $database_root )->is_writable() );
+			$this->assertFalse( WP_SQLite_Storage::with_secret_path( $database_root . '/new' )->is_writable() );
+		} finally {
+			$this->assertTrue( chmod( $database_root, 0700 ) );
+		}
+	}
+
+	public function test_reports_a_read_only_explicit_database() {
+		$database_path = $this->create_temporary_directory() . '/database.sqlite';
+		$this->create_sqlite_database( $database_path );
+		$this->make_read_only( $database_path );
+
+		$this->assertFalse( WP_SQLite_Storage::with_explicit_path( $database_path )->is_writable() );
+	}
+
+	public function test_reports_initialized_storage_with_a_read_only_root_as_writable() {
+		$database_root = $this->create_temporary_directory_path();
+		$this->initialize_secret_path( $database_root );
+		$this->assertTrue( chmod( $database_root, 0500 ) );
+
+		try {
+			$this->assertTrue( WP_SQLite_Storage::with_secret_path( $database_root )->is_writable() );
+		} finally {
+			$this->assertTrue( chmod( $database_root, 0700 ) );
+		}
+	}
+
 	public function test_does_not_expose_the_database_path_when_initialization_fails() {
 		$database_root = $this->create_temporary_directory();
 		$blocking_path = $database_root . '/blocking-file';
