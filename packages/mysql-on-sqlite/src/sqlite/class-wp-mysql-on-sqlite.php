@@ -4584,16 +4584,16 @@ class WP_MySQL_On_SQLite extends PDO {
 					$value = substr( $value, 2, -1 );
 				}
 
-				// Convert the binary string to HEX.
-				$hex = base_convert( $value, 2, 16 );
-
 				/*
-				 * The "base_convert()" function doesn't add or preserve padding.
-				 * Let's compute how many bytes we expect and pad the HEX value
-				 * to full bytes (SQLite requires HEX strings of even length).
+				 * Pad the binary string to full bytes (SQLite requires HEX strings
+				 * of even length), and convert it to HEX byte by byte, as a value
+				 * of 64 or more bits doesn't fit into an integer.
 				 */
-				$byte_count = (int) ceil( strlen( $value ) / 8 );
-				$hex        = str_pad( $hex, $byte_count * 2, '0', STR_PAD_LEFT );
+				$value = str_pad( $value, (int) ceil( strlen( $value ) / 8 ) * 8, '0', STR_PAD_LEFT );
+				$hex   = '';
+				for ( $i = 0; $i < strlen( $value ); $i += 8 ) {
+					$hex .= sprintf( '%02x', bindec( substr( $value, $i, 8 ) ) );
+				}
 				return sprintf( "x'%s'", $hex );
 			case WP_MySQL_Lexer::HEX_NUMBER:
 				/*
@@ -7919,7 +7919,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	private function format_sqlite_column_default( array $column ): string {
 		if ( 'bit' === $column['DATA_TYPE'] ) {
 			// BIT defaults are stored as b'...' literals; reformat as an integer.
-			return (string) bindec( substr( $column['COLUMN_DEFAULT'], 2, -1 ) );
+			return $this->convert_bits_to_decimal( substr( $column['COLUMN_DEFAULT'], 2, -1 ) );
 		}
 
 		// A BLOB column in a STRICT table only accepts a BLOB default.
@@ -7929,6 +7929,33 @@ class WP_MySQL_On_SQLite extends PDO {
 		}
 
 		return $this->quote_sqlite_value( $column['COLUMN_DEFAULT'] );
+	}
+
+	/**
+	 * Convert a string of bits to a decimal number.
+	 *
+	 * The number is computed in decimal digits, as a value of 64 or more bits
+	 * doesn't fit into an integer.
+	 *
+	 * @param  string $bits The bits, e.g. "101".
+	 * @return string       The decimal number, e.g. "5".
+	 */
+	private function convert_bits_to_decimal( string $bits ): string {
+		// Decimal digits of the number, starting with the least significant one.
+		$digits = array( 0 );
+		for ( $i = 0; $i < strlen( $bits ); $i++ ) {
+			// Multiply the number by two and add the bit.
+			$carry = (int) $bits[ $i ];
+			foreach ( $digits as $position => $digit ) {
+				$value               = 2 * $digit + $carry;
+				$digits[ $position ] = $value % 10;
+				$carry               = intdiv( $value, 10 );
+			}
+			if ( $carry > 0 ) {
+				$digits[] = $carry;
+			}
+		}
+		return strrev( implode( '', $digits ) );
 	}
 
 	/**

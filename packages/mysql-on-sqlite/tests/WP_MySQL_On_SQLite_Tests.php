@@ -2397,6 +2397,51 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		);
 	}
 
+	public function testShowCreateTableWithLargeBitDefaultValues(): void {
+		// Values of 64 bits don't fit into an integer.
+		$bits_63 = str_repeat( '1', 63 );
+		$bits_64 = str_repeat( '1', 64 );
+		$this->assertQuery(
+			"CREATE TABLE _tmp_bit_defaults (
+				id INT DEFAULT 0,
+				bit_literal_63_bits BIT(64) DEFAULT b'$bits_63',
+				hex_number_63_bits BIT(64) DEFAULT 0x7FFFFFFFFFFFFFFF,
+				bit_literal_64_bits BIT(64) DEFAULT b'$bits_64',
+				binary_number_64_bits BIT(64) DEFAULT 0b$bits_64,
+				hex_literal_64_bits BIT(64) DEFAULT x'FFFFFFFFFFFFFFFF',
+				hex_number_64_bits BIT(64) DEFAULT 0xFFFFFFFFFFFFFFFF,
+				hex_number_odd_length BIT(16) DEFAULT 0xABC
+			)"
+		);
+
+		$this->assertQuery( 'SHOW CREATE TABLE _tmp_bit_defaults;' );
+		$results      = $this->last_result;
+		$create_table = $results[0]->{'Create Table'};
+		$this->assertStringContainsString( "`bit_literal_63_bits` bit(64) DEFAULT b'$bits_63',", $create_table );
+		$this->assertStringContainsString( "`hex_number_63_bits` bit(64) DEFAULT b'$bits_63',", $create_table );
+		$this->assertStringContainsString( "`bit_literal_64_bits` bit(64) DEFAULT b'$bits_64',", $create_table );
+		$this->assertStringContainsString( "`binary_number_64_bits` bit(64) DEFAULT b'$bits_64',", $create_table );
+		$this->assertStringContainsString( "`hex_literal_64_bits` bit(64) DEFAULT b'$bits_64',", $create_table );
+		$this->assertStringContainsString( "`hex_number_64_bits` bit(64) DEFAULT b'$bits_64',", $create_table );
+		$this->assertStringContainsString( "`hex_number_odd_length` bit(16) DEFAULT b'101010111100'", $create_table );
+	}
+
+	public function testLongBitLiterals(): void {
+		$bits_64 = str_repeat( '1', 64 );
+		$bits_72 = '10000001' . str_repeat( '0', 56 ) . '00000001';
+		$this->assertQuery( "SELECT HEX(b'$bits_64') AS bits_64, HEX(0b$bits_72) AS bits_72, HEX(b'') AS no_bits" );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'bits_64' => 'FFFFFFFFFFFFFFFF',
+					'bits_72' => '810000000000000001',
+					'no_bits' => '',
+				),
+			),
+			$this->last_result
+		);
+	}
+
 	/**
 	 * @dataProvider invalidBitDefaultQueries
 	 */
