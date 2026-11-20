@@ -4584,16 +4584,15 @@ class WP_MySQL_On_SQLite extends PDO {
 					$value = substr( $value, 2, -1 );
 				}
 
-				// Convert the binary string to HEX.
-				$hex = base_convert( $value, 2, 16 );
-
 				/*
-				 * The "base_convert()" function doesn't add or preserve padding.
-				 * Let's compute how many bytes we expect and pad the HEX value
-				 * to full bytes (SQLite requires HEX strings of even length).
+				 * Pad the binary string to full bytes, as SQLite requires HEX strings
+				 * of even length. Then convert each byte to two HEX digits.
 				 */
-				$byte_count = (int) ceil( strlen( $value ) / 8 );
-				$hex        = str_pad( $hex, $byte_count * 2, '0', STR_PAD_LEFT );
+				$value = str_pad( $value, (int) ceil( strlen( $value ) / 8 ) * 8, '0', STR_PAD_LEFT );
+				$hex   = '';
+				for ( $i = 0; $i < strlen( $value ); $i += 8 ) {
+					$hex .= sprintf( '%02x', bindec( substr( $value, $i, 8 ) ) );
+				}
 				return sprintf( "x'%s'", $hex );
 			case WP_MySQL_Lexer::HEX_NUMBER:
 				/*
@@ -7918,8 +7917,15 @@ class WP_MySQL_On_SQLite extends PDO {
 	 */
 	private function format_sqlite_column_default( array $column ): string {
 		if ( 'bit' === $column['DATA_TYPE'] ) {
-			// BIT defaults are stored as b'...' literals; reformat as an integer.
-			return (string) bindec( substr( $column['COLUMN_DEFAULT'], 2, -1 ) );
+			// BIT defaults are stored as b'...' literals of up to 64 bits.
+			$bits = substr( $column['COLUMN_DEFAULT'], 2, -1 );
+			if ( strlen( $bits ) > 64 ) {
+				throw WP_SQLite_Information_Schema_Exception::invalid_default_value( $column['COLUMN_NAME'] );
+			}
+
+			// Reformat as an integer. The "%u" format prints all 64 bits as unsigned.
+			// Requires 64-bit PHP. A 32-bit integer loses the bits shifted by 32.
+			return sprintf( '%u', bindec( substr( $bits, 0, -32 ) ) << 32 | bindec( substr( $bits, -32 ) ) );
 		}
 
 		// A BLOB column in a STRICT table only accepts a BLOB default.
@@ -8359,6 +8365,26 @@ class WP_MySQL_On_SQLite extends PDO {
 					'42000',
 					null,
 					array( '42000', 1067, $driver_message )
+				);
+			case WP_SQLite_Information_Schema_Exception::TYPE_INVALID_COLUMN_SIZE:
+				$driver_message = sprintf( "Invalid size for column '%s'.", $e->get_data()['column_name'] );
+				return $this->new_driver_exception(
+					'SQLSTATE[HY000]: General error: 3013 ' . $driver_message,
+					'HY000',
+					null,
+					array( 'HY000', 3013, $driver_message )
+				);
+			case WP_SQLite_Information_Schema_Exception::TYPE_DISPLAY_WIDTH_OUT_OF_RANGE:
+				$driver_message = sprintf(
+					"Display width out of range for column '%s' (max = %d)",
+					$e->get_data()['column_name'],
+					$e->get_data()['max_width']
+				);
+				return $this->new_driver_exception(
+					'SQLSTATE[42000]: Syntax error or access violation: 1439 ' . $driver_message,
+					'42000',
+					null,
+					array( '42000', 1439, $driver_message )
 				);
 			case WP_SQLite_Information_Schema_Exception::TYPE_CONSTRAINT_DOES_NOT_EXIST:
 				$driver_message = sprintf( "Constraint '%s' does not exist.", $e->get_data()['name'] );
