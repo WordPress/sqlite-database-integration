@@ -6144,7 +6144,7 @@ class WP_MySQL_On_SQLite extends PDO {
 			throw $this->new_driver_exception(
 				sprintf(
 					"SQLSTATE[42S22]: Column not found: 1054 Unknown column '%s' in 'field list'",
-					$unknown_columns[0]
+					reset( $unknown_columns )
 				),
 				'42S22'
 			);

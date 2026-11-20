@@ -17695,6 +17695,30 @@ END;
 			'INSERT INTO t (missing_column) VALUES (1)',
 			"SQLSTATE[42S22]: Column not found: 1054 Unknown column 'missing_column' in 'field list'"
 		);
+
+		// Missing column after an existing one.
+		$this->assertQueryError(
+			'INSERT INTO t (value, missing_column) VALUES (1, 2)',
+			"SQLSTATE[42S22]: Column not found: 1054 Unknown column 'missing_column' in 'field list'"
+		);
+
+		// Multiple missing columns. The first one is reported.
+		$this->assertQueryError(
+			'INSERT INTO t (value, missing_b, missing_a) VALUES (1, 2, 3)',
+			"SQLSTATE[42S22]: Column not found: 1054 Unknown column 'missing_b' in 'field list'"
+		);
+
+		// Missing column in the SET form.
+		$this->assertQueryError(
+			'INSERT INTO t SET value = 1, missing_column = 2',
+			"SQLSTATE[42S22]: Column not found: 1054 Unknown column 'missing_column' in 'field list'"
+		);
+
+		// Missing column in REPLACE.
+		$this->assertQueryError(
+			'REPLACE INTO t (value, missing_column) VALUES (1, 2)',
+			"SQLSTATE[42S22]: Column not found: 1054 Unknown column 'missing_column' in 'field list'"
+		);
 	}
 
 	public function testInsertErrorsInNonStrictMode(): void {
@@ -17710,6 +17734,30 @@ END;
 		// Missing column.
 		$this->assertQueryError(
 			'INSERT INTO t (missing_column) VALUES (1)',
+			"SQLSTATE[42S22]: Column not found: 1054 Unknown column 'missing_column' in 'field list'"
+		);
+
+		// Missing column after an existing one.
+		$this->assertQueryError(
+			'INSERT INTO t (value, missing_column) VALUES (1, 2)',
+			"SQLSTATE[42S22]: Column not found: 1054 Unknown column 'missing_column' in 'field list'"
+		);
+
+		// Multiple missing columns. The first one is reported.
+		$this->assertQueryError(
+			'INSERT INTO t (value, missing_b, missing_a) VALUES (1, 2, 3)',
+			"SQLSTATE[42S22]: Column not found: 1054 Unknown column 'missing_b' in 'field list'"
+		);
+
+		// Missing column in the SET form.
+		$this->assertQueryError(
+			'INSERT INTO t SET value = 1, missing_column = 2',
+			"SQLSTATE[42S22]: Column not found: 1054 Unknown column 'missing_column' in 'field list'"
+		);
+
+		// Missing column in REPLACE.
+		$this->assertQueryError(
+			'REPLACE INTO t (value, missing_column) VALUES (1, 2)',
 			"SQLSTATE[42S22]: Column not found: 1054 Unknown column 'missing_column' in 'field list'"
 		);
 	}
