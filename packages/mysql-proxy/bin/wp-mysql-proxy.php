@@ -125,11 +125,6 @@ if ( isset( $opts['password-file'] ) ) {
 	$password_file = $opts['password-file'];
 
 	// Pipes, such as /dev/stdin or a process substitution, keep the password off the disk.
-	if ( ! is_readable( $password_file ) || is_dir( $password_file ) ) {
-		fwrite( STDERR, "Error: --password-file must name a readable file.\n" );
-		exit( 1 );
-	}
-
 	// On Linux, PHP can't open a pipe by its /dev/fd path, so read a descriptor of
 	// this process through php://fd. See https://github.com/php/php-src/issues/9551.
 	$source = $password_file;
@@ -137,6 +132,11 @@ if ( isset( $opts['password-file'] ) ) {
 		$source = 'php://fd/0';
 	} elseif ( preg_match( '~^/(?:dev|proc/self)/fd/(\d+)$~', $password_file, $match ) ) {
 		$source = 'php://fd/' . $match[1];
+	} elseif ( ! is_readable( $password_file ) || is_dir( $password_file ) ) {
+		// Only other paths are checked, as is_readable() fails for the path of
+		// a pipe on thread-safe PHP builds.
+		fwrite( STDERR, "Error: --password-file must name a readable file.\n" );
+		exit( 1 );
 	}
 
 	// Report a failed read without PHP's warning, which names the path.
