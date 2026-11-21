@@ -194,6 +194,26 @@ class WP_SQLite_Database_Integration_Authorization_Test extends WP_UnitTestCase 
 	}
 
 	/**
+	 * @dataProvider data_redirect_users
+	 */
+	public function test_unrelated_redirect_preserves_cache( $role ) {
+		$user_id = null === $role ? 0 : self::factory()->user->create( array( 'role' => $role ) );
+		wp_set_current_user( $user_id );
+
+		sqlite_activation();
+
+		$this->assert_redirect_preserves_cache();
+	}
+
+	public static function data_redirect_users() {
+		return array(
+			'anonymous'     => array( null ),
+			'subscriber'    => array( 'subscriber' ),
+			'administrator' => array( 'administrator' ),
+		);
+	}
+
+	/**
 	 * @group ms-excluded
 	 */
 	public function test_confirm_install_is_ignored_on_another_page() {
@@ -205,6 +225,7 @@ class WP_SQLite_Database_Integration_Authorization_Test extends WP_UnitTestCase 
 		$_REQUEST = $_GET;
 
 		$this->assertNull( sqlite_activation() );
+		$this->assert_redirect_preserves_cache();
 	}
 
 	/**
@@ -827,6 +848,9 @@ class WP_SQLite_Database_Integration_Authorization_Test extends WP_UnitTestCase 
 		$redirect_reached = false;
 		$filter           = function ( $location ) use ( &$redirect_url ) {
 			$redirect_url = $location;
+			wp_cache_set( 'sqlite_redirect_test', 'cached during redirect' );
+			// Run the final redirect filter without sending headers or exiting the test.
+			$this->assertSame( 'WordPress', apply_filters( 'x_redirect_by', 'WordPress', 302, $location ) );
 			throw new RuntimeException( 'Install redirect reached.' );
 		};
 
@@ -844,6 +868,7 @@ class WP_SQLite_Database_Integration_Authorization_Test extends WP_UnitTestCase 
 
 		$this->assertTrue( $redirect_reached, 'The install request did not redirect.' );
 		$this->assertSame( admin_url(), $redirect_url );
+		$this->assertFalse( wp_cache_get( 'sqlite_redirect_test' ), 'The database switch must flush the cache.' );
 	}
 
 	private function assert_valid_nonce_install_is_denied() {
@@ -870,6 +895,7 @@ class WP_SQLite_Database_Integration_Authorization_Test extends WP_UnitTestCase 
 
 		$this->assertFalse( $nonce_checked, 'The capability check must run before nonce validation.' );
 		$this->assertSame( $dropin_before, file_get_contents( WP_CONTENT_DIR . '/db.php' ) );
+		$this->assert_redirect_preserves_cache();
 	}
 
 	private function assert_invalid_nonce_is_denied() {
@@ -893,6 +919,29 @@ class WP_SQLite_Database_Integration_Authorization_Test extends WP_UnitTestCase 
 		}
 
 		$this->assertTrue( $nonce_checked );
+		$this->assert_redirect_preserves_cache();
+	}
+
+	private function assert_redirect_preserves_cache() {
+		$using_external_cache = (bool) wp_using_ext_object_cache();
+		// Route transients through the object cache, as with a persistent cache drop-in.
+		wp_using_ext_object_cache( true );
+
+		try {
+			wp_cache_set( 'sqlite_redirect_test', 'cached value' );
+			set_transient( 'sqlite_redirect_test', 'transient value', MINUTE_IN_SECONDS );
+			set_site_transient( 'sqlite_redirect_test', 'site transient value', MINUTE_IN_SECONDS );
+
+			$this->assertSame( 'WordPress', apply_filters( 'x_redirect_by', 'WordPress', 302, wp_login_url() ) );
+			$this->assertSame( 'cached value', wp_cache_get( 'sqlite_redirect_test' ) );
+			$this->assertSame( 'transient value', get_transient( 'sqlite_redirect_test' ) );
+			$this->assertSame( 'site transient value', get_site_transient( 'sqlite_redirect_test' ) );
+		} finally {
+			wp_cache_delete( 'sqlite_redirect_test' );
+			delete_transient( 'sqlite_redirect_test' );
+			delete_site_transient( 'sqlite_redirect_test' );
+			wp_using_ext_object_cache( $using_external_cache );
+		}
 	}
 
 	private function set_install_request( $nonce ) {
