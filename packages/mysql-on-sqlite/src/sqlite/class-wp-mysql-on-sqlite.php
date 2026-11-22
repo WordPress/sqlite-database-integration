@@ -5423,12 +5423,14 @@ class WP_MySQL_On_SQLite extends PDO {
 	 *   SQLite: GROUP_CONCAT([DISTINCT] expr [, separator] [ORDER BY ...])
 	 *
 	 * In MySQL, several expressions are concatenated per row; in SQLite, the
-	 * second argument is the separator. As in MySQL, a row in which one of the
-	 * expressions is NULL is skipped, because "||" returns NULL then.
+	 * second argument is the separator. Each expression is parenthesized, as
+	 * "||" binds more tightly than most operators. As in MySQL, a row in which
+	 * one of the expressions is NULL is skipped, because "||" returns NULL then.
 	 *
 	 * ORDER BY in an aggregate function requires SQLite 3.44.0 or newer. SQLite
 	 * allows DISTINCT only with a single argument, so DISTINCT can't be combined
-	 * with a separator other than the default ",".
+	 * with a separator other than the default ",". Nor with several expressions:
+	 * MySQL compares their values separately, not their concatenation.
 	 *
 	 * @param  WP_Parser_Node $node The "sumExpr" AST node.
 	 * @return string               The translated value.
@@ -5439,10 +5441,18 @@ class WP_MySQL_On_SQLite extends PDO {
 		foreach ( $node->get_first_child_node( 'exprList' )->get_child_nodes( 'expr' ) as $expr ) {
 			$expressions[] = $this->translate( $expr );
 		}
-		$value = 1 === count( $expressions ) ? $expressions[0] : '(' . implode( ' || ', $expressions ) . ')';
 
 		$is_distinct = $node->has_child_token( WP_MySQL_Lexer::DISTINCT_SYMBOL );
-		$args        = $is_distinct ? 'DISTINCT ' . $value : $value;
+		if ( 1 === count( $expressions ) ) {
+			$value = $expressions[0];
+		} elseif ( $is_distinct ) {
+			throw $this->new_not_supported_exception(
+				'GROUP_CONCAT() with DISTINCT and several expressions'
+			);
+		} else {
+			$value = '((' . implode( ') || (', $expressions ) . '))';
+		}
+		$args = $is_distinct ? 'DISTINCT ' . $value : $value;
 
 		$separator = $node->get_first_child_node( 'textString' );
 		if ( null !== $separator ) {

@@ -18147,6 +18147,8 @@ END;
 			// Several expressions are concatenated per row.
 			'GROUP_CONCAT(x, y)'                      => array( 'b2,a1', 'c1,a,b2' ),
 			"GROUP_CONCAT(x, '-', y SEPARATOR ' | ')" => array( 'b-2 | a-1', 'c-1 | a,b-2' ),
+			// Each expression keeps its own boundaries ("||" binds more tightly than "+").
+			'GROUP_CONCAT(y + 1, y * 10)'             => array( '320,210', '210,320' ),
 			// Rows with a NULL value are skipped.
 			'GROUP_CONCAT(z)'                         => array( 'p', 'r,s' ),
 			'GROUP_CONCAT(x, z)'                      => array( 'bp', 'cr,a,bs' ),
@@ -18201,6 +18203,13 @@ END;
 		$this->assertQueryError(
 			"SELECT GROUP_CONCAT(DISTINCT x SEPARATOR '; ') AS result FROM t",
 			'MySQL query not supported. Cause: GROUP_CONCAT() with DISTINCT and a SEPARATOR other than ","'
+		);
+
+		// MySQL compares the values of several expressions separately, not their
+		// concatenation: ('a', 'bc') and ('ab', 'c') are two different values.
+		$this->assertQueryError(
+			'SELECT GROUP_CONCAT(DISTINCT x, x) AS result FROM t',
+			'MySQL query not supported. Cause: GROUP_CONCAT() with DISTINCT and several expressions'
 		);
 	}
 }
