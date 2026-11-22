@@ -5432,6 +5432,10 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * with a separator other than the default ",". Nor with several expressions:
 	 * MySQL compares their values separately, not their concatenation.
 	 *
+	 * A number in ORDER BY refers to an expression of GROUP_CONCAT() itself, as
+	 * in MySQL ("ORDER BY 1" sorts by the first one). SQLite would take it as a
+	 * constant, so it is replaced with that expression.
+	 *
 	 * @param  WP_Parser_Node $node The "sumExpr" AST node.
 	 * @return string               The translated value.
 	 * @throws WP_MySQL_On_SQLite_Exception When the translation fails.
@@ -5474,7 +5478,24 @@ class WP_MySQL_On_SQLite extends PDO {
 					'GROUP_CONCAT() with ORDER BY requires SQLite 3.44.0 or newer'
 				);
 			}
-			$args .= ' ' . $this->translate( $order );
+			$terms = array();
+			foreach ( $order->get_first_child_node( 'orderList' )->get_child_nodes( 'orderExpression' ) as $term ) {
+				$expr      = $term->get_first_child_node( 'expr' );
+				$direction = $term->get_first_child_node( 'direction' );
+				$position  = $this->get_order_position( $expr );
+				if ( null === $position ) {
+					$sql = $this->translate( $expr );
+				} elseif ( $position >= 1 && $position <= count( $expressions ) ) {
+					$sql = '(' . $expressions[ $position - 1 ] . ')';
+				} else {
+					throw $this->new_driver_exception(
+						sprintf( "SQLSTATE[42S22]: Column not found: 1054 Unknown column '%s' in 'order clause'", $position ),
+						'42S22'
+					);
+				}
+				$terms[] = null === $direction ? $sql : $sql . ' ' . $this->translate( $direction );
+			}
+			$args .= ' ORDER BY ' . implode( ', ', $terms );
 		}
 
 		$sql    = sprintf( 'GROUP_CONCAT(%s)', $args );
@@ -5483,6 +5504,27 @@ class WP_MySQL_On_SQLite extends PDO {
 			$sql .= ' ' . $this->translate( $window );
 		}
 		return $sql;
+	}
+
+	/**
+	 * Get the position an ORDER BY term refers to, if it is one.
+	 *
+	 * In MySQL, an ORDER BY term that is an integer, also in parentheses, is a
+	 * position, not a constant. Other expressions, such as "-1" or "1 + 1", are not.
+	 *
+	 * @param  WP_Parser_Node $expr The "expr" AST node of the ORDER BY term.
+	 * @return int|null             The position, or null when the term is not one.
+	 */
+	private function get_order_position( WP_Parser_Node $expr ): ?int {
+		$number = null;
+		foreach ( $expr->get_descendant_tokens() as $token ) {
+			if ( WP_MySQL_Lexer::INT_NUMBER === $token->id && null === $number ) {
+				$number = $token;
+			} elseif ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $token->id && WP_MySQL_Lexer::CLOSE_PAR_SYMBOL !== $token->id ) {
+				return null;
+			}
+		}
+		return null === $number ? null : (int) $number->get_value();
 	}
 
 	/**

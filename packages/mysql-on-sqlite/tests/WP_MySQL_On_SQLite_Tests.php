@@ -18173,6 +18173,10 @@ END;
 			"GROUP_CONCAT(x ORDER BY y DESC SEPARATOR '; ')" => array( 'b; b; a', 'a,b; c' ),
 			"GROUP_CONCAT(x ORDER BY x, y DESC SEPARATOR '|')" => array( 'a|b|b', 'a,b|c' ),
 			'GROUP_CONCAT(DISTINCT x ORDER BY x DESC)' => array( 'b,a', 'c,a,b' ),
+			// A number refers to an expression of GROUP_CONCAT(), also in parentheses.
+			'GROUP_CONCAT(x ORDER BY 1)'               => array( 'a,b,b', 'a,b,c' ),
+			'GROUP_CONCAT(x, y ORDER BY 2 DESC)'       => array( 'b3,b2,a1', 'a,b2,c1' ),
+			"GROUP_CONCAT(x ORDER BY (1) DESC SEPARATOR '|')" => array( 'b|b|a', 'c|a,b' ),
 		);
 		foreach ( $tests as $expression => $expected ) {
 			$query = "SELECT $expression AS result FROM t GROUP BY g ORDER BY g";
@@ -18188,6 +18192,14 @@ END;
 
 			$result = $this->assertQuery( $query );
 			$this->assertSame( $expected, array_column( $result, 'result' ), $expression );
+		}
+
+		// A number that is not the position of an expression is an error, as in MySQL.
+		if ( version_compare( $this->engine->get_sqlite_version(), '3.44.0', '>=' ) ) {
+			$this->assertQueryError(
+				'SELECT GROUP_CONCAT(x ORDER BY 2) AS result FROM t',
+				"SQLSTATE[42S22]: Column not found: 1054 Unknown column '2' in 'order clause'"
+			);
 		}
 	}
 
