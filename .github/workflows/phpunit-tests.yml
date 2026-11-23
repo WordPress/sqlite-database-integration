@@ -47,6 +47,7 @@ jobs:
           - { php: '8.3', sqlite: '3.46.1' } # Debian 13 (Trixie)
           - { php: '8.4', sqlite: '3.51.2' } # First 2026 release
           - { php: '8.5', sqlite: 'latest' }
+          - { php: '8.6', sqlite: 'latest' }
 
     steps:
       - name: Checkout repository
