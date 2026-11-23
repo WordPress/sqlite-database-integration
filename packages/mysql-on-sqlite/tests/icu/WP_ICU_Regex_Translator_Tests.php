@@ -842,6 +842,13 @@ class WP_ICU_Regex_Translator_Tests extends TestCase {
 		);
 	}
 
+	public function test_a_negated_set_of_one_character_matches_whole_characters(): void {
+		$this->assertSame( '/[^ss]/uXi', WP_ICU_Regex_Translator::translate( '[^s]', 'i' ) );
+		$this->assertSame( '<日><本>s<😀>', $this->replace_matches( WP_ICU_Regex_Translator::translate( '[^s]', 'i' ), '日本s😀' ) );
+		$this->assertSame( '<“x>ς', $this->replace_matches( WP_ICU_Regex_Translator::translate( '[^σ]{2}', 'i' ), '“xς' ) );
+		$this->assertSame( '<日>s', $this->replace_matches( WP_ICU_Regex_Translator::translate( '(?i)[^\x73]' ), '日s' ) );
+	}
+
 	public function test_inline_flags_end_with_their_group(): void {
 		$this->assertSame( 1, preg_match( WP_ICU_Regex_Translator::translate( '(?:(?s).)a' ), "\na" ) );
 		$this->assertSame( 0, preg_match( WP_ICU_Regex_Translator::translate( '(?:(?s).).' ), "\n\n" ) );

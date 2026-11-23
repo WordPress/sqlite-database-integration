@@ -339,6 +339,12 @@ class WP_ICU_Regex_Translator {
 			},
 			substr( $set, $start, -1 )
 		);
+
+		// PCRE 10.32–10.39 can match part of a UTF-8 character with "(?i)[^s]".
+		// Writing "[^ss]" avoids the bug and excludes the same characters.
+		if ( 2 === $start && preg_match( '/^(?:\\\\x\{[0-9A-F]+\}|\\\\[^a-zA-Z]|[^\\\\])$/su', $body ) ) {
+			$body .= $body;
+		}
 		return substr( $set, 0, $start ) . $body . ']';
 	}
 
