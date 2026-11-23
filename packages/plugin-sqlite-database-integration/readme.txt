@@ -28,7 +28,7 @@ The plugin replaces the default MySQL database layer with an SQLite-backed imple
 
 **Important:** Enabling SQLite creates a separate, empty database; it does not migrate an existing site. If you enable it on a site that uses MySQL or MariaDB, WordPress will ask you to set up the site again. Disabling the plugin reconnects WordPress to the previous database with its data unchanged. Changes made while using SQLite are not transferred.
 
-The plugin requires the PDO SQLite PHP extension and SQLite 3.37.0 or newer.
+The plugin requires 64-bit PHP with the PDO SQLite extension and SQLite 3.37.0 or newer.
 
 == Frequently Asked Questions ==
 
@@ -75,7 +75,7 @@ The value of `DB_PATH` must be an absolute path to the SQLite database file, or 
 
 = What does the plugin require? =
 
-In addition to the WordPress and PHP versions listed above, the plugin requires the PDO SQLite PHP extension and SQLite 3.37.0 or newer. The setup screen also needs write access to the `wp-content` directory and will detect conflicting database drop-ins.
+In addition to the WordPress and PHP versions listed above, the plugin requires 64-bit PHP with the PDO SQLite extension and SQLite 3.37.0 or newer. The setup screen also needs write access to the `wp-content` directory and will detect conflicting database drop-ins.
 
 = Where can I submit my plugin feedback? =
 

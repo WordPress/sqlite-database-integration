@@ -17,6 +17,10 @@ try {
 		return;
 	}
 
+	if ( PHP_INT_SIZE < 8 ) {
+		throw new RuntimeException( 'The SQLite Integration plugin requires 64-bit PHP.' );
+	}
+
 	if ( ! extension_loaded( 'pdo' ) ) {
 		wp_die(
 			new WP_Error(

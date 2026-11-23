@@ -19,6 +19,14 @@ function sqlite_plugin_admin_notice() {
 		return;
 	}
 
+	if ( PHP_INT_SIZE < 8 ) {
+		printf(
+			'<div class="notice notice-error"><p>%s</p></div>',
+			esc_html__( 'The SQLite Integration plugin requires 64-bit PHP. Please switch to a 64-bit PHP installation before enabling SQLite.', 'sqlite-database-integration' )
+		);
+		return;
+	}
+
 	// Bail early if the pdo_sqlite extension is not loaded.
 	if ( ! extension_loaded( 'pdo_sqlite' ) ) {
 		printf(
