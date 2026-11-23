@@ -1254,6 +1254,16 @@ class WP_MySQL_On_SQLite_Translation_Tests extends TestCase {
 		);
 	}
 
+	public function testBitDefaultValues(): void {
+		// SQLite reads an integer that doesn't fit into 63 bits as a real number.
+		$bits_63 = str_repeat( '1', 63 );
+		$bits_64 = str_repeat( '1', 64 );
+		$this->assertQuery(
+			'CREATE TABLE `t` ( `i1` INTEGER DEFAULT 5, `i2` INTEGER DEFAULT 9223372036854775807, `i3` INTEGER DEFAULT 18446744073709551615 )' . $this->strict_suffix,
+			"CREATE TABLE t (i1 BIT(4) DEFAULT b'101', i2 BIT(64) DEFAULT b'$bits_63', i3 BIT(64) DEFAULT b'$bits_64')"
+		);
+	}
+
 	public function testBooleanDataTypes(): void {
 		$this->assertQuery(
 			'CREATE TABLE `t` ( `i1` INTEGER, `i2` INTEGER )' . $this->strict_suffix,
@@ -1723,6 +1733,31 @@ class WP_MySQL_On_SQLite_Translation_Tests extends TestCase {
 		$this->assertQuery(
 			"SELECT x'417a' AS `0b0100000101111010`",
 			'SELECT 0b0100000101111010'
+		);
+
+		// Values that are not a whole number of bytes are padded with leading zeros.
+		$this->assertQuery(
+			"SELECT x'01e1' AS `b'111100001'`",
+			"SELECT b'111100001'"
+		);
+
+		// Values of 64 or more bits don't fit into an integer.
+		$bits = str_repeat( '1', 64 );
+		$this->assertQuery(
+			"SELECT x'ffffffffffffffff' AS `b'$bits'`",
+			"SELECT b'$bits'"
+		);
+
+		$bits = '10000001' . str_repeat( '0', 56 ) . '00000001';
+		$this->assertQuery(
+			"SELECT x'810000000000000001' AS `0b$bits`",
+			"SELECT 0b$bits"
+		);
+
+		// An empty value.
+		$this->assertQuery(
+			"SELECT x'' AS `b''`",
+			"SELECT b''"
 		);
 	}
 

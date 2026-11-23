@@ -1069,7 +1069,7 @@ class WP_SQLite_Information_Schema_Builder {
 	): void {
 		$columns_table = $this->get_table_name( $table_is_temporary, 'columns' );
 		$column        = $this->connection->query(
-			'SELECT DATA_TYPE, DATETIME_PRECISION, IS_NULLABLE, EXTRA FROM ' . $this->connection->quote_identifier( $columns_table ) . '
+			'SELECT DATA_TYPE, NUMERIC_PRECISION, DATETIME_PRECISION, IS_NULLABLE, EXTRA FROM ' . $this->connection->quote_identifier( $columns_table ) . '
 			WHERE table_schema = ? AND table_name = ? AND column_name = ?',
 			array( self::SAVED_DATABASE_NAME, $table_name, $column_name )
 		)->fetch( PDO::FETCH_ASSOC );
@@ -1094,9 +1094,10 @@ class WP_SQLite_Information_Schema_Builder {
 			$expression         = $node->get_first_child_node( 'exprWithParentheses' );
 			$literal            = $expression ? $this->get_parenthesized_default_literal( $expression ) : null;
 			$datetime_precision = null === $column['DATETIME_PRECISION'] ? null : (int) $column['DATETIME_PRECISION'];
+			$numeric_precision  = null === $column['NUMERIC_PRECISION'] ? null : (int) $column['NUMERIC_PRECISION'];
 			$default            = $literal
-				? $this->get_literal_default( $literal, $column['DATA_TYPE'], $column_name, $datetime_precision )
-				: $this->get_default_value( $node, $column['DATA_TYPE'], $column_name, $datetime_precision );
+				? $this->get_literal_default( $literal, $column['DATA_TYPE'], $column_name, $datetime_precision, $numeric_precision )
+				: $this->get_default_value( $node, $column['DATA_TYPE'], $column_name, $datetime_precision, $numeric_precision );
 			if ( null === $default && 'NO' === $column['IS_NULLABLE'] ) {
 				throw WP_SQLite_Information_Schema_Exception::invalid_default_value( $column_name );
 			}
@@ -1669,8 +1670,14 @@ class WP_SQLite_Information_Schema_Builder {
 	 */
 	private function extract_column_data( string $table_name, string $column_name, WP_Parser_Node $node, int $position ): array {
 		list ( $data_type, $column_type ) = $this->get_column_data_types( $node );
+		list ( $precision, $scale )       = $this->get_column_numeric_attributes( $node, $data_type );
 
-		$default  = $this->get_column_default( $node, $data_type, $column_name );
+		// Like MySQL, check the width of a BIT column before its default value.
+		if ( 'bit' === $data_type ) {
+			$this->validate_bit_width( $column_name, $precision );
+		}
+
+		$default  = $this->get_column_default( $node, $data_type, $column_name, $precision );
 		$nullable = $this->get_column_nullable( $node );
 		$key      = $this->get_column_key( $node );
 		$extra    = $this->get_column_extra( $node );
@@ -1678,7 +1685,6 @@ class WP_SQLite_Information_Schema_Builder {
 
 		list ( $charset, $collation )        = $this->get_column_charset_and_collation( $node, $data_type );
 		list ( $char_length, $octet_length ) = $this->get_column_lengths( $node, $data_type, $charset );
-		list ( $precision, $scale )          = $this->get_column_numeric_attributes( $node, $data_type );
 		$datetime_precision                  = $this->get_column_datetime_precision( $node, $data_type );
 		$generation_expression               = $this->get_column_generation_expression( $node );
 
@@ -2212,12 +2218,13 @@ class WP_SQLite_Information_Schema_Builder {
 	/**
 	 * Extract column default value from the "columnDefinition" or "fieldDefinition" AST node.
 	 *
-	 * @param  WP_Parser_Node $node        The "columnDefinition" or "fieldDefinition" AST node.
-	 * @param  string         $data_type   The column data type as stored in information schema.
-	 * @param  string         $column_name The column name.
-	 * @return string|null                 The column default as stored in information schema.
+	 * @param  WP_Parser_Node $node              The "columnDefinition" or "fieldDefinition" AST node.
+	 * @param  string         $data_type         The column data type as stored in information schema.
+	 * @param  string         $column_name       The column name.
+	 * @param  int|null       $numeric_precision The column numeric precision. For BIT, the width in bits.
+	 * @return string|null                       The column default as stored in information schema.
 	 */
-	private function get_column_default( WP_Parser_Node $node, string $data_type, string $column_name ): ?string {
+	private function get_column_default( WP_Parser_Node $node, string $data_type, string $column_name, ?int $numeric_precision ): ?string {
 		$default_attr = null;
 		foreach ( $node->get_descendant_nodes( 'columnAttribute' ) as $attr ) {
 			if ( $attr->has_child_token( WP_MySQL_Lexer::DEFAULT_SYMBOL ) ) {
@@ -2229,7 +2236,7 @@ class WP_SQLite_Information_Schema_Builder {
 			return null;
 		}
 		$datetime_precision = $this->get_column_datetime_precision( $node, $data_type );
-		return $this->get_default_value( $default_attr, $data_type, $column_name, $datetime_precision );
+		return $this->get_default_value( $default_attr, $data_type, $column_name, $datetime_precision, $numeric_precision );
 	}
 
 	/**
@@ -2239,9 +2246,10 @@ class WP_SQLite_Information_Schema_Builder {
 	 * @param  string         $data_type          The column data type as stored in information schema.
 	 * @param  string         $column_name        The column name.
 	 * @param  int|null       $datetime_precision The column fractional seconds precision.
+	 * @param  int|null       $numeric_precision  The column numeric precision. For BIT, the width in bits.
 	 * @return string|null                        The default value as stored in information schema.
 	 */
-	private function get_default_value( WP_Parser_Node $node, string $data_type, string $column_name, ?int $datetime_precision ): ?string {
+	private function get_default_value( WP_Parser_Node $node, string $data_type, string $column_name, ?int $datetime_precision, ?int $numeric_precision ): ?string {
 		/*
 		 * [GRAMMAR]
 		 * columnAttribute:
@@ -2271,10 +2279,10 @@ class WP_SQLite_Information_Schema_Builder {
 				// A signed number, such as "-5", has no "literal" child node.
 				// Like MySQL, drop the unary plus, e.g., "+5" becomes "5".
 				$number  = ltrim( $this->get_value( $signed_literal ), '+' );
-				$default = $this->normalize_literal_default( $number, $data_type, $column_name );
+				$default = $this->normalize_literal_default( $number, $data_type, $column_name, $numeric_precision );
 				return $this->get_temporal_zero_value( $data_type, $default, $datetime_precision ) ?? $default;
 			}
-			return $this->get_literal_default( $literal, $data_type, $column_name, $datetime_precision );
+			return $this->get_literal_default( $literal, $data_type, $column_name, $datetime_precision, $numeric_precision );
 		}
 
 		// DEFAULT (expression) - MySQL 8.0.13+ supports exprWithParentheses
@@ -2293,9 +2301,10 @@ class WP_SQLite_Information_Schema_Builder {
 	 * @param  string         $data_type          The column data type as stored in information schema.
 	 * @param  string         $column_name        The column name.
 	 * @param  int|null       $datetime_precision The column fractional seconds precision.
+	 * @param  int|null       $numeric_precision  The column numeric precision. For BIT, the width in bits.
 	 * @return string|null                        The default value as stored in information schema.
 	 */
-	private function get_literal_default( WP_Parser_Node $literal, string $data_type, string $column_name, ?int $datetime_precision ): ?string {
+	private function get_literal_default( WP_Parser_Node $literal, string $data_type, string $column_name, ?int $datetime_precision, ?int $numeric_precision ): ?string {
 		// DEFAULT NULL
 		if ( $literal->has_child_node( 'nullLiteral' ) ) {
 			return null;
@@ -2311,7 +2320,7 @@ class WP_SQLite_Information_Schema_Builder {
 			$bool_value   = $bool_literal->has_child_token( WP_MySQL_Lexer::TRUE_SYMBOL ) ? '1' : '0';
 			$default      = 'bit' === $data_type ? "b'{$bool_value}'" : $bool_value;
 		} else {
-			$default = $this->normalize_literal_default( $this->get_value( $literal ), $data_type, $column_name );
+			$default = $this->normalize_literal_default( $this->get_value( $literal ), $data_type, $column_name, $numeric_precision );
 		}
 
 		/*
@@ -2328,19 +2337,22 @@ class WP_SQLite_Information_Schema_Builder {
 	/**
 	 * Normalize a literal default value for the column data type.
 	 *
-	 * @param  string $default_value The literal default value.
-	 * @param  string $data_type     The column data type as stored in information schema.
-	 * @param  string $column_name   The column name.
-	 * @return string                The default value as stored in information schema.
+	 * @param  string   $default_value     The literal default value.
+	 * @param  string   $data_type         The column data type as stored in information schema.
+	 * @param  string   $column_name       The column name.
+	 * @param  int|null $numeric_precision The column numeric precision. For BIT, the width in bits.
+	 * @return string                      The default value as stored in information schema.
 	 */
-	private function normalize_literal_default( string $default_value, string $data_type, string $column_name ): string {
+	private function normalize_literal_default( string $default_value, string $data_type, string $column_name, ?int $numeric_precision ): string {
 		if ( 'bit' === $data_type ) {
 			/*
 			 * @TODO: Validate and normalize defaults from their AST and the full
 			 * column definition before storing them in the information schema.
 			 */
 			$bit_default = $this->get_bit_default( $default_value );
-			if ( null === $bit_default ) {
+
+			// The value must fit the column width. The "b''" wrapper takes 3 bytes.
+			if ( null === $bit_default || strlen( $bit_default ) - 3 > $numeric_precision ) {
 				throw WP_SQLite_Information_Schema_Exception::invalid_default_value( $column_name );
 			}
 			return $bit_default;
@@ -2439,6 +2451,19 @@ class WP_SQLite_Information_Schema_Builder {
 			return "b'0'";
 		}
 
+		// Hex literal, e.g. x'05' or 0x05. Convert it to a bit literal digit by
+		// digit, as a value of 64 bits doesn't fit into an integer.
+		if (
+			preg_match( "/\Ax'([0-9a-f]*)'\z/", $value, $matches )
+			|| preg_match( '/\A0x([0-9a-f]+)\z/', $value, $matches )
+		) {
+			$value = "b'";
+			foreach ( str_split( $matches[1] ) as $digit ) {
+				$value .= sprintf( '%04b', hexdec( $digit ) );
+			}
+			$value .= "'";
+		}
+
 		// Bit literal, e.g. b'101' or 0b101.
 		if (
 			preg_match( "/\Ab'([01]*)'\z/", $value, $matches )
@@ -2446,14 +2471,6 @@ class WP_SQLite_Information_Schema_Builder {
 		) {
 			$bits = ltrim( $matches[1], '0' );
 			return "b'" . ( '' === $bits ? '0' : $bits ) . "'";
-		}
-
-		// Hex literal, e.g. x'05' or 0x05.
-		if (
-			preg_match( "/\Ax'([0-9a-f]*)'\z/", $value, $matches )
-			|| preg_match( '/\A0x([0-9a-f]+)\z/', $value, $matches )
-		) {
-			return "b'" . decbin( hexdec( $matches[1] ) ) . "'";
 		}
 
 		// Non-negative decimal, e.g. 5, or a numeric string literal such as '0'.
@@ -2913,7 +2930,9 @@ class WP_SQLite_Information_Schema_Builder {
 
 		// For bit columns, we need to check the precision.
 		if ( 'bit' === $data_type ) {
-			$field_length = $node->get_first_descendant_node( 'fieldLength' );
+			// Search only the data type. An expression in the column definition
+			// can contain a length as well, e.g. "CAST(... AS CHAR(10))".
+			$field_length = $node->get_first_descendant_node( 'dataType' )->get_first_descendant_node( 'fieldLength' );
 			if ( null === $field_length ) {
 				return array( 1, null );
 			}
@@ -2946,6 +2965,28 @@ class WP_SQLite_Information_Schema_Builder {
 		}
 
 		return array( null, null );
+	}
+
+	/**
+	 * Check that the width of a BIT column is 1 to 64 bits.
+	 *
+	 * @param  string $column_name The column name.
+	 * @param  int    $width       The column width in bits.
+	 * @throws WP_SQLite_Information_Schema_Exception When the width is not valid.
+	 */
+	private function validate_bit_width( string $column_name, int $width ): void {
+		if ( 0 === $width ) {
+			throw WP_SQLite_Information_Schema_Exception::invalid_column_size( $column_name );
+		}
+
+		if ( $width > 64 ) {
+			// MySQL reports a different limit when the width doesn't fit in 32 bits.
+			$max_width = 64;
+			if ( $width > 4294967295 ) {
+				$max_width = 4294967295;
+			}
+			throw WP_SQLite_Information_Schema_Exception::display_width_out_of_range( $column_name, $max_width );
+		}
 	}
 
 	/**
