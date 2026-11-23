@@ -1231,6 +1231,13 @@ class WP_MySQL_On_SQLite extends PDO {
 			}
 			if ( $e instanceof WP_MySQL_On_SQLite_Exception ) {
 				$driver_exception = $e;
+			} elseif ( $e instanceof WP_ICU_Regex_Exception ) {
+				$driver_exception = $this->new_driver_exception(
+					sprintf( 'SQLSTATE[HY000]: General error: %d %s', $e->getCode(), $e->getMessage() ),
+					'HY000',
+					$e,
+					array( 'HY000', $e->getCode(), $e->getMessage() )
+				);
 			} elseif ( $e instanceof PDOException ) {
 				$driver_exception = $this->convert_sqlite_exception( $e );
 			} else {

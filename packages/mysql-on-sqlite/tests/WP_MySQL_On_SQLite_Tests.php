@@ -380,12 +380,11 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 
 	public static function regexpLikeErrors() {
 		return array(
-			'invalid pattern' => array( "REGEXP_LIKE('abc', '(abc')", 'Invalid regular expression: (abc.' ),
-			'unknown escape'  => array( "REGEXP_LIKE('y', '\\\\y')", 'Invalid regular expression: \\y.' ),
-			'ICU escape'      => array( "REGEXP_LIKE('A', '\\\\u0041')", 'Invalid regular expression: \\u0041.' ),
-			'bad property'    => array( "REGEXP_LIKE('a', '\\\\p{Foo}')", 'Invalid regular expression: \\p{Foo}.' ),
-			'operator escape' => array( "'y' REGEXP '\\\\y'", 'Invalid regular expression: \\y.' ),
-			'binary escape'   => array( "X'FF' REGEXP '\\\\y'", 'Invalid regular expression: \\y.' ),
+			'invalid pattern' => array( "REGEXP_LIKE('abc', '(abc')", 'SQLSTATE[HY000]: General error: 3688 Invalid regular expression: (abc.' ),
+			'unknown escape'  => array( "REGEXP_LIKE('N', '\\\\N')", 'SQLSTATE[HY000]: General error: 3690 Unsupported regular expression syntax: \\N' ),
+			'bad property'    => array( "REGEXP_LIKE('a', '\\\\p{Foo}')", 'SQLSTATE[HY000]: General error: 3688 Invalid regular expression: \\p{Foo}.' ),
+			'operator escape' => array( "'N' REGEXP '\\\\N'", 'SQLSTATE[HY000]: General error: 3690 Unsupported regular expression syntax: \\N' ),
+			'binary escape'   => array( "X'FF' REGEXP '\\\\N'", 'SQLSTATE[HY000]: General error: 3690 Unsupported regular expression syntax: \\N' ),
 			'extra argument'  => array(
 				"REGEXP_LIKE('abc', 'abc', 'c', 'extra')",
 				'SQLSTATE[HY000]: General error: 1 wrong number of arguments to function REGEXP_LIKE()',
@@ -468,7 +467,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$subject = str_repeat( 'a', 30 );
 		$this->assertQueryError(
 			"SELECT REGEXP_LIKE('$subject', '^(a?){30}a{30}\$')",
-			'Regular expression evaluation exceeded internal limits.'
+			'SQLSTATE[HY000]: General error: 3699 Regular expression evaluation exceeded internal limits.'
 		);
 	}
 
@@ -489,7 +488,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		);
 		$this->assertQueryError(
 			"SELECT REGEXP_LIKE('', '$pattern')",
-			'Regular expression evaluation exceeded internal limits.'
+			'SQLSTATE[HY000]: General error: 3699 Regular expression evaluation exceeded internal limits.'
 		);
 	}
 
@@ -502,7 +501,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			$this->iniSet( 'pcre.recursion_limit', '1000' );
 			$this->assertQueryError(
 				"SELECT REGEXP_LIKE('$subject', '^(a|b)*\$')",
-				'Regular expression evaluation exceeded internal limits.'
+				'SQLSTATE[HY000]: General error: 3698 Regular expression evaluation exceeded internal limits.'
 			);
 			return;
 		}
@@ -536,7 +535,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$subject = str_repeat( 'a', 200000 );
 		$this->assertQueryError(
 			"SELECT REGEXP_LIKE('$subject', '^(a|b)*\$')",
-			'Regular expression evaluation exceeded internal limits.'
+			'SQLSTATE[HY000]: General error: 3698 Regular expression evaluation exceeded internal limits.'
 		);
 	}
 
@@ -558,11 +557,11 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 	public function testRegexpLegacyOperatorInvalidPattern() {
 		$this->assertQueryError(
 			"SELECT 'abc' REGEXP '(abc'",
-			'Invalid regular expression: (abc.'
+			'SQLSTATE[HY000]: General error: 3688 Invalid regular expression: (abc.'
 		);
 		$this->assertQueryError(
 			"SELECT 'abc' RLIKE ''",
-			'Illegal argument to a regular expression.'
+			'SQLSTATE[HY000]: General error: 3685 Illegal argument to a regular expression.'
 		);
 	}
 
@@ -782,27 +781,103 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$this->assertSame( '1', $this->last_result[0]->r );
 	}
 
-	public function testRegexpEscapedKIsLiteral() {
-		// Like ICU, read "\K" as "K", also in a set. In quoted text, it stays "\K".
-		$this->assertQuery(
-			"SELECT
-				REGEXP_LIKE('K', '\\\\K') AS letter,
-				REGEXP_LIKE('ab', 'a\\\\Kb') AS no_reset,
-				'aKb' REGEXP 'a\\\\Kb' AS operator_result,
-				REGEXP_LIKE('K', '[\\\\K]') AS in_set,
-				REGEXP_LIKE('\\\\K', '^\\\\Q\\\\K\\\\E\$') AS quoted"
+	/**
+	 * @dataProvider regexpIcuSyntaxCases
+	 */
+	public function testRegexpIcuSyntax( $sql, $expected ) {
+		$this->assertQuery( "SELECT $sql AS r" );
+		$this->assertSame( $expected, $this->last_result[0]->r );
+	}
+
+	public static function regexpIcuSyntaxCases() {
+		return array(
+			'code point escape'              => array( "REGEXP_LIKE('A', '\\\\u0041')", '1' ),
+			'word character with an accent'  => array( "REGEXP_SUBSTR('-éa-', '\\\\w+')", 'éa' ),
+			'POSIX class'                    => array( "REGEXP_SUBSTR('1aé2', '[[:alpha:]]+')", 'aé' ),
+			'set before a CRLF'              => array( "REGEXP_LIKE('dog\\r\\ncat', '[^a-z]cat')", '1' ),
+			'no line end inside a CRLF'      => array( "HEX(REGEXP_REPLACE('a\\r\\n', '\$', '!'))", '61210D0A21' ),
+			'negated set of one character'   => array( "REGEXP_REPLACE('日本s', '[^s]', '-')", '--s' ),
+			'quoted text'                    => array( "REGEXP_LIKE('\\\\K', '^\\\\Q\\\\K\\\\E\$')", '1' ),
+
+			// ICU treats "\K" as a literal K. PCRE uses it to reset the match start.
+			'escaped letter'                 => array( "REGEXP_LIKE('y', '^\\\\y\$')", '1' ),
+			'escaped K'                      => array( "REGEXP_SUBSTR('aKb', 'a\\\\K')", 'aK' ),
+			'escaped K, no reset'            => array( "REGEXP_REPLACE('ab', 'a\\\\Kb', '!')", 'ab' ),
+			'escaped K, operator'            => array( "'aKb' REGEXP 'a\\\\Kb'", '1' ),
+			'escaped K, in a set'            => array( "REGEXP_LIKE('K', '[\\\\K]')", '1' ),
+			'escaped K, binary'              => array( "REGEXP_LIKE(X'4BFF', '\\\\K')", '1' ),
+
+			'look-behind'                    => array( "REGEXP_SUBSTR('price: 42', '(?<=: )\\\\d+')", '42' ),
+			'look-behind with alternatives'  => array( "REGEXP_REPLACE('my acct', '(?<!requested|similar) acct', '!')", 'my!' ),
+			'leading dot-star, each line'    => array( "HEX(REGEXP_REPLACE('abc\\nabc', '.*b', '!'))", '21630A2163' ),
+			'leading dot-star, from pos'     => array( "REGEXP_SUBSTR('abc\\nabc', '.*c', 2)", 'bc' ),
+			'leading dot-star, occurrence'   => array( "REGEXP_INSTR('abc\\nabc', '.*c', 2, 2)", '5' ),
+			'leading dot-plus, from pos'     => array( "REGEXP_SUBSTR('abc\\nabc', '.+c', 3)", 'abc' ),
+			'leading dot-star, in a group'   => array( "REGEXP_REPLACE('abc\\nabc', '(.*)c', '[$1]', 2)", "a[b]\n[ab]" ),
+			'dot with a count'               => array( "REGEXP_SUBSTR('-cba', 'c?-.{2}')", '-cb' ),
+
+			// MySQL 8 rejects these, but MySQL 5.7 and MariaDB accept them.
+			'legacy word boundaries'         => array( "REGEXP_LIKE('a cat', '[[:<:]]cat[[:>:]]')", '1' ),
+			'legacy word boundaries, binary' => array( "REGEXP_LIKE(X'6120636174FF', '[[:<:]]cat[[:>:]]')", '1' ),
+			'literal braces'                 => array( "REGEXP_LIKE('a{b}', 'a{b}')", '1' ),
 		);
-		$this->assertEquals(
-			array(
-				(object) array(
-					'letter'          => '1',
-					'no_reset'        => '0',
-					'operator_result' => '1',
-					'in_set'          => '1',
-					'quoted'          => '1',
-				),
-			),
-			$this->last_result
+	}
+
+	/**
+	 * @dataProvider regexpUnsupportedSyntaxCases
+	 */
+	public function testRegexpUnsupportedSyntax( $sql, $syntax ) {
+		$this->assertQueryError( "SELECT $sql", "SQLSTATE[HY000]: General error: 3690 Unsupported regular expression syntax: $syntax" );
+	}
+
+	public static function regexpUnsupportedSyntaxCases() {
+		return array(
+			'named character'           => array( "REGEXP_LIKE('N', '\\\\N')", '\\N' ),
+			'named character, in a set' => array( "REGEXP_LIKE('N', '[\\\\N]')", '\\N' ),
+			'named character, operator' => array( "'aNb' REGEXP 'a\\\\Nb'", '\\N' ),
+			'named character, binary'   => array( "REGEXP_LIKE(X'FF', '\\\\N')", '\\N' ),
+			'REGEXP_REPLACE'            => array( "REGEXP_REPLACE('ab', 'a\\\\N', 'X')", '\\N' ),
+			'REGEXP_SUBSTR'             => array( "REGEXP_SUBSTR('ab', 'a\\\\N', 1, 2)", '\\N' ),
+			'REGEXP_INSTR'              => array( "REGEXP_INSTR('ab', 'a\\\\N')", '\\N' ),
+			'extended flag'             => array( "REGEXP_LIKE('ab', '(?x) a b')", '(?x' ),
+			'PCRE named group'          => array( "REGEXP_LIKE('a', '(?P<n>a)')", '(?P' ),
+			'PCRE verb'                 => array( "REGEXP_LIKE('ab', 'a(*ACCEPT)b')", '*' ),
+			'nested set'                => array( "REGEXP_LIKE('b', '[a[bc]]')", '[' ),
+			'set operator'              => array( "REGEXP_LIKE('b', '[a-z&&[^aeiou]]')", '[' ),
+			'look-behind of any length' => array( "REGEXP_LIKE('aab', '(?<=a+)b')", '(?<=' ),
+			'empty quoted text'         => array( "REGEXP_LIKE('', '\\\\Q')", '\\Q' ),
+			'comment with a backslash'  => array( "REGEXP_SUBSTR('aa', '(?#\\\\G)a', 2)", '(?#' ),
+		);
+	}
+
+	/**
+	 * @dataProvider regexpErrorNumbers
+	 */
+	public function testRegexpErrorsHaveMysqlErrorNumbers( $sql, $code, $message ) {
+		$exception = null;
+		try {
+			$this->query( "SELECT $sql" );
+		} catch ( WP_MySQL_On_SQLite_Exception $e ) {
+			$exception = $e;
+		}
+		$this->assertNotNull( $exception, 'An exception was expected, but none was thrown.' );
+		$this->assertSame( "SQLSTATE[HY000]: General error: $code $message", $exception->getMessage() );
+		$this->assertSame( 'HY000', $exception->getCode() );
+		$this->assertSame( array( 'HY000', $code, $message ), $exception->errorInfo );
+		$this->assertSame( array( 'HY000', $code, $message ), $this->engine->errorInfo() );
+	}
+
+	public static function regexpErrorNumbers() {
+		$limit = 'Regular expression evaluation exceeded internal limits.';
+		return array(
+			'empty pattern'           => array( "REGEXP_LIKE('abc', '')", 3685, 'Illegal argument to a regular expression.' ),
+			'empty pattern, operator' => array( "'abc' REGEXP ''", 3685, 'Illegal argument to a regular expression.' ),
+			'pos past the end'        => array( "REGEXP_INSTR('abc', 'a', 5)", 3686, 'Index out of bounds in regular expression search.' ),
+			'group past the last one' => array( "REGEXP_REPLACE('abc', 'a', '\$1')", 3686, 'Index out of bounds in regular expression search.' ),
+			'invalid pattern'         => array( "REGEXP_LIKE('abc', '(abc')", 3688, 'Invalid regular expression: (abc.' ),
+			'unsupported syntax'      => array( "REGEXP_LIKE('abc', '(?x)abc')", 3690, 'Unsupported regular expression syntax: (?x' ),
+			'time limit'              => array( "REGEXP_LIKE('" . str_repeat( 'a', 30 ) . "', '^(a?){30}a{30}\$')", 3699, $limit ),
+			'unknown group name'      => array( "REGEXP_REPLACE('abc', 'a', '\${x}')", 3887, 'A capture group has an invalid name.' ),
 		);
 	}
 
@@ -823,7 +898,6 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			'two trailing backslashes'     => array( "REGEXP_LIKE('a\\\\\\\\', '^\\\\Qa\\\\\\\\')", '1' ),
 			'literal dot'                  => array( "REGEXP_LIKE('a.b', '^\\\\Qa.b')", '1' ),
 			'literal dot, no match'        => array( "REGEXP_LIKE('axb', '^\\\\Qa.b')", '0' ),
-			'empty'                        => array( "REGEXP_LIKE('', '\\\\Q')", '1' ),
 		);
 	}
 
@@ -885,12 +959,12 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			'pos zero, NULL subject'               => array( "REGEXP_REPLACE(NULL, 'a', 'X', 0)", $pos_error ),
 			'pos zero, NULL pattern'               => array( "REGEXP_REPLACE('abc', NULL, 'X', 0)", $pos_error ),
 			'pos zero, NULL replacement'           => array( "REGEXP_REPLACE('abc', 'a', NULL, 0)", $pos_error ),
-			'invalid pattern, pos zero'            => array( "REGEXP_REPLACE('abc', '(', 'X', 0)", 'Invalid regular expression: (.' ),
-			'invalid pattern, NULL subject'        => array( "REGEXP_REPLACE(NULL, '(', 'X')", 'Invalid regular expression: (.' ),
-			'invalid pattern, NULL pos'            => array( "REGEXP_REPLACE('abc', '(', 'X', NULL)", 'Invalid regular expression: (.' ),
-			'empty pattern, NULL subject'          => array( "REGEXP_REPLACE(NULL, '', 'X')", 'Illegal argument to a regular expression.' ),
-			'pos two past end'                     => array( "REGEXP_REPLACE('abc', 'a', 'X', 5)", 'Index out of bounds in regular expression search.' ),
-			'pos far past end'                     => array( "REGEXP_REPLACE('abc', 'a', 'X', 10)", 'Index out of bounds in regular expression search.' ),
+			'invalid pattern, pos zero'            => array( "REGEXP_REPLACE('abc', '(', 'X', 0)", 'SQLSTATE[HY000]: General error: 3688 Invalid regular expression: (.' ),
+			'invalid pattern, NULL subject'        => array( "REGEXP_REPLACE(NULL, '(', 'X')", 'SQLSTATE[HY000]: General error: 3688 Invalid regular expression: (.' ),
+			'invalid pattern, NULL pos'            => array( "REGEXP_REPLACE('abc', '(', 'X', NULL)", 'SQLSTATE[HY000]: General error: 3688 Invalid regular expression: (.' ),
+			'empty pattern, NULL subject'          => array( "REGEXP_REPLACE(NULL, '', 'X')", 'SQLSTATE[HY000]: General error: 3685 Illegal argument to a regular expression.' ),
+			'pos two past end'                     => array( "REGEXP_REPLACE('abc', 'a', 'X', 5)", 'SQLSTATE[HY000]: General error: 3686 Index out of bounds in regular expression search.' ),
+			'pos far past end'                     => array( "REGEXP_REPLACE('abc', 'a', 'X', 10)", 'SQLSTATE[HY000]: General error: 3686 Index out of bounds in regular expression search.' ),
 			'invalid match type'                   => array( "REGEXP_REPLACE('abc', 'a', 'X', 1, 0, 'x')", 'Incorrect arguments to regexp_replace' ),
 			'invalid match type, NULL subject'     => array( "REGEXP_REPLACE(NULL, 'a', 'X', 1, 0, 'x')", 'Incorrect arguments to regexp_replace' ),
 			'invalid match type, NULL replacement' => array( "REGEXP_REPLACE('abc', 'a', NULL, 1, 0, 'x')", 'Incorrect arguments to regexp_replace' ),
@@ -964,7 +1038,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		// MySQL/ICU rejects "${N}"; only named groups are referenced with braces.
 		$this->assertQueryError(
 			"SELECT REGEXP_REPLACE('abc', '(a)(b)(c)', '\${2}\${1}', 1, 1)",
-			'A capture group has an invalid name.'
+			'SQLSTATE[HY000]: General error: 3887 A capture group has an invalid name.'
 		);
 	}
 
@@ -1005,7 +1079,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			list( $pattern, $replacement ) = $case;
 			$this->assertQueryError(
 				"SELECT REGEXP_REPLACE('abc', '$pattern', '$replacement')",
-				'A capture group has an invalid name.'
+				'SQLSTATE[HY000]: General error: 3887 A capture group has an invalid name.'
 			);
 		}
 	}
@@ -1037,14 +1111,14 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 	public function testRegexpReplaceDollarWithoutDigitErrors() {
 		$this->assertQueryError(
 			"SELECT REGEXP_REPLACE('abc', 'b', 'x\$y')",
-			'A capture group has an invalid name.'
+			'SQLSTATE[HY000]: General error: 3887 A capture group has an invalid name.'
 		);
 	}
 
 	public function testRegexpReplaceDollarOutOfBoundsErrors() {
 		$this->assertQueryError(
 			"SELECT REGEXP_REPLACE('abc', '(b)', '[\$9]')",
-			'Index out of bounds in regular expression search.'
+			'SQLSTATE[HY000]: General error: 3686 Index out of bounds in regular expression search.'
 		);
 	}
 
@@ -1142,19 +1216,16 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			'REGEXP_REPLACE, after empty match' => array( "REGEXP_REPLACE('000123', '\\\\G0*', 'x')", 'xx123' ),
 			'REGEXP_REPLACE, pos'               => array( "REGEXP_REPLACE('aab', '\\\\Ga', '-', 2)", 'aab' ),
 			'REGEXP_REPLACE, second occurrence' => array( "REGEXP_REPLACE('aab', '\\\\Ga', '-', 1, 2)", 'a-b' ),
-			'REGEXP_REPLACE, in a comment'      => array( "REGEXP_REPLACE('aa', '(?#\\\\G)a', 'x', 2)", 'ax' ),
 			'REGEXP_REPLACE, escaped backslash' => array( "REGEXP_REPLACE('a\\\\Gb', '\\\\\\\\G', '-', 2)", 'a-b' ),
 
 			'REGEXP_SUBSTR, after empty match'  => array( "REGEXP_SUBSTR('abc', '\\\\G', 1, 2)", null ),
 			'REGEXP_SUBSTR, pos'                => array( "REGEXP_SUBSTR('abc', '\\\\G.', 2)", null ),
-			'REGEXP_SUBSTR, in a comment'       => array( "REGEXP_SUBSTR('aa', '(?#\\\\G)a', 2)", 'a' ),
 			'REGEXP_SUBSTR, second occurrence'  => array( "REGEXP_SUBSTR('abc', '\\\\G.', 1, 2)", 'b' ),
 
 			// REGEXP_INSTR() searches the subject from pos on, as if it started there.
 			'REGEXP_INSTR, after empty match'   => array( "REGEXP_INSTR('abc', '\\\\G', 1, 2)", '0' ),
 			'REGEXP_INSTR, pos'                 => array( "REGEXP_INSTR('abc', '\\\\G.', 2)", '2' ),
 			'REGEXP_INSTR, second occurrence'   => array( "REGEXP_INSTR('abc', '\\\\G.', 2, 2)", '3' ),
-			'REGEXP_INSTR, in a comment'        => array( "REGEXP_INSTR('aa', '(?#\\\\G)a', 1, 2)", '2' ),
 		);
 	}
 
@@ -1202,11 +1273,11 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		// Like MySQL, check the pattern and pos before NULL arguments make the result NULL.
 		$pos_error = "Incorrect parameters in the call to native function 'regexp_substr'";
 		return array(
-			'invalid pattern'                  => array( "REGEXP_SUBSTR('abc', '(abc')", 'Invalid regular expression: (abc.' ),
-			'invalid pattern, pos zero'        => array( "REGEXP_SUBSTR('abc', '(', 0)", 'Invalid regular expression: (.' ),
-			'invalid pattern, NULL subject'    => array( "REGEXP_SUBSTR(NULL, '(')", 'Invalid regular expression: (.' ),
-			'invalid pattern, NULL occurrence' => array( "REGEXP_SUBSTR('abc', '(', 1, NULL)", 'Invalid regular expression: (.' ),
-			'empty pattern, NULL subject'      => array( "REGEXP_SUBSTR(NULL, '')", 'Illegal argument to a regular expression.' ),
+			'invalid pattern'                  => array( "REGEXP_SUBSTR('abc', '(abc')", 'SQLSTATE[HY000]: General error: 3688 Invalid regular expression: (abc.' ),
+			'invalid pattern, pos zero'        => array( "REGEXP_SUBSTR('abc', '(', 0)", 'SQLSTATE[HY000]: General error: 3688 Invalid regular expression: (.' ),
+			'invalid pattern, NULL subject'    => array( "REGEXP_SUBSTR(NULL, '(')", 'SQLSTATE[HY000]: General error: 3688 Invalid regular expression: (.' ),
+			'invalid pattern, NULL occurrence' => array( "REGEXP_SUBSTR('abc', '(', 1, NULL)", 'SQLSTATE[HY000]: General error: 3688 Invalid regular expression: (.' ),
+			'empty pattern, NULL subject'      => array( "REGEXP_SUBSTR(NULL, '')", 'SQLSTATE[HY000]: General error: 3685 Illegal argument to a regular expression.' ),
 			'invalid match type'               => array( "REGEXP_SUBSTR('abc', 'a', 1, 1, 'x')", 'Incorrect arguments to regexp_substr' ),
 			'invalid match type, NULL subject' => array( "REGEXP_SUBSTR(NULL, 'a', 1, 1, 'x')", 'Incorrect arguments to regexp_substr' ),
 			'invalid match type, NULL pos'     => array( "REGEXP_SUBSTR('abc', 'a', NULL, 1, 'x')", 'Incorrect arguments to regexp_substr' ),
@@ -1215,8 +1286,8 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			'pos zero, empty subject'          => array( "REGEXP_SUBSTR('', 'a', 0)", $pos_error ),
 			'pos zero, NULL subject'           => array( "REGEXP_SUBSTR(NULL, 'a', 0)", $pos_error ),
 			'pos zero, NULL pattern'           => array( "REGEXP_SUBSTR('abc', NULL, 0)", $pos_error ),
-			'pos two past end'                 => array( "REGEXP_SUBSTR('abc', 'a', 5)", 'Index out of bounds in regular expression search.' ),
-			'pos far past end'                 => array( "REGEXP_SUBSTR('abc', 'a', 10)", 'Index out of bounds in regular expression search.' ),
+			'pos two past end'                 => array( "REGEXP_SUBSTR('abc', 'a', 5)", 'SQLSTATE[HY000]: General error: 3686 Index out of bounds in regular expression search.' ),
+			'pos far past end'                 => array( "REGEXP_SUBSTR('abc', 'a', 10)", 'SQLSTATE[HY000]: General error: 3686 Index out of bounds in regular expression search.' ),
 			'extra argument'                   => array(
 				"REGEXP_SUBSTR('abc', 'a', 1, 1, 'c', 'extra')",
 				'SQLSTATE[HY000]: General error: 1 wrong number of arguments to function REGEXP_SUBSTR()',
@@ -1283,18 +1354,18 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 	public static function regexpInstrErrors() {
 		$return_option = 'Incorrect arguments to regexp_instr: return_option must be 1 or 0.';
 		return array(
-			'invalid pattern'                        => array( "REGEXP_INSTR('abc', '(abc')", 'Invalid regular expression: (abc.' ),
+			'invalid pattern'                        => array( "REGEXP_INSTR('abc', '(abc')", 'SQLSTATE[HY000]: General error: 3688 Invalid regular expression: (abc.' ),
 			// Like MySQL, check the pattern before NULL arguments make the result NULL.
-			'invalid pattern, NULL subject'          => array( "REGEXP_INSTR(NULL, '(')", 'Invalid regular expression: (.' ),
-			'invalid pattern, NULL return_option'    => array( "REGEXP_INSTR('abc', '(', 1, 1, NULL)", 'Invalid regular expression: (.' ),
-			'empty pattern, NULL subject'            => array( "REGEXP_INSTR(NULL, '')", 'Illegal argument to a regular expression.' ),
+			'invalid pattern, NULL subject'          => array( "REGEXP_INSTR(NULL, '(')", 'SQLSTATE[HY000]: General error: 3688 Invalid regular expression: (.' ),
+			'invalid pattern, NULL return_option'    => array( "REGEXP_INSTR('abc', '(', 1, 1, NULL)", 'SQLSTATE[HY000]: General error: 3688 Invalid regular expression: (.' ),
+			'empty pattern, NULL subject'            => array( "REGEXP_INSTR(NULL, '')", 'SQLSTATE[HY000]: General error: 3685 Illegal argument to a regular expression.' ),
 			'invalid match type'                     => array( "REGEXP_INSTR('abc', 'a', 1, 1, 0, 'x')", 'Incorrect arguments to regexp_instr' ),
 			'invalid match type, NULL subject'       => array( "REGEXP_INSTR(NULL, 'a', 1, 1, 0, 'x')", 'Incorrect arguments to regexp_instr' ),
 			'invalid match type, NULL return_option' => array( "REGEXP_INSTR('abc', 'a', 1, 1, NULL, 'x')", 'Incorrect arguments to regexp_instr' ),
-			'pos zero'                               => array( "REGEXP_INSTR('abc', 'a', 0)", 'Index out of bounds in regular expression search.' ),
+			'pos zero'                               => array( "REGEXP_INSTR('abc', 'a', 0)", 'SQLSTATE[HY000]: General error: 3686 Index out of bounds in regular expression search.' ),
 			// Unlike REGEXP_SUBSTR() and REGEXP_REPLACE(), pos can't be one past the end.
-			'pos one past end'                       => array( "REGEXP_INSTR('abc', 'a', 4)", 'Index out of bounds in regular expression search.' ),
-			'pos far past end'                       => array( "REGEXP_INSTR('abc', 'a', 10)", 'Index out of bounds in regular expression search.' ),
+			'pos one past end'                       => array( "REGEXP_INSTR('abc', 'a', 4)", 'SQLSTATE[HY000]: General error: 3686 Index out of bounds in regular expression search.' ),
+			'pos far past end'                       => array( "REGEXP_INSTR('abc', 'a', 10)", 'SQLSTATE[HY000]: General error: 3686 Index out of bounds in regular expression search.' ),
 			'invalid return_option'                  => array( "REGEXP_INSTR('abc', 'a', 1, 1, 2)", $return_option ),
 			'invalid return_option, NULL subject'    => array( "REGEXP_INSTR(NULL, 'a', 1, 1, 2)", $return_option ),
 			'invalid return_option, NULL match type' => array( "REGEXP_INSTR('abc', 'a', 1, 1, 2, NULL)", $return_option ),
@@ -1320,7 +1391,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 
 		$this->assertQueryError(
 			"SELECT REGEXP_INSTR('', '(', 2)",
-			'Invalid regular expression: (.'
+			'SQLSTATE[HY000]: General error: 3688 Invalid regular expression: (.'
 		);
 	}
 
@@ -1362,19 +1433,19 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		// MySQL rejects the empty pattern with ERROR 3685.
 		$this->assertQueryError(
 			"SELECT REGEXP_LIKE('abc', '')",
-			'Illegal argument to a regular expression.'
+			'SQLSTATE[HY000]: General error: 3685 Illegal argument to a regular expression.'
 		);
 		$this->assertQueryError(
 			"SELECT REGEXP_REPLACE('abc', '', 'x')",
-			'Illegal argument to a regular expression.'
+			'SQLSTATE[HY000]: General error: 3685 Illegal argument to a regular expression.'
 		);
 		$this->assertQueryError(
 			"SELECT REGEXP_SUBSTR('abc', '')",
-			'Illegal argument to a regular expression.'
+			'SQLSTATE[HY000]: General error: 3685 Illegal argument to a regular expression.'
 		);
 		$this->assertQueryError(
 			"SELECT REGEXP_INSTR('abc', '')",
-			'Illegal argument to a regular expression.'
+			'SQLSTATE[HY000]: General error: 3685 Illegal argument to a regular expression.'
 		);
 	}
 
@@ -1420,54 +1491,6 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$this->assertSame( '😀', $this->last_result[0]->r );
 		$this->assertQuery( "SELECT REGEXP_INSTR('😀z', 'z', 1, 1, 1) AS r" );
 		$this->assertSame( '3', $this->last_result[0]->r );
-	}
-
-	public function testRegexpEscapedKInLookbehind() {
-		// "\K" is a literal "K". In PCRE, it could move the start of a match in a lookbehind
-		// to before the search, so that the next search found the same match forever.
-		$this->assertQuery(
-			"SELECT
-				REGEXP_REPLACE('ab', '(?<=\\\\Ka)', 'X') AS replace_result,
-				REGEXP_REPLACE('Kab', '(?<=\\\\Ka)', 'X') AS replace_after_k,
-				REGEXP_SUBSTR('ab', '(?<=\\\\Ka)', 1, 2) AS substr_result,
-				REGEXP_INSTR('Kab', '(?<=\\\\Ka)') AS instr_result"
-		);
-		$this->assertEquals(
-			array(
-				(object) array(
-					'replace_result'  => 'ab',
-					'replace_after_k' => 'KaXb',
-					'substr_result'   => null,
-					'instr_result'    => '3',
-				),
-			),
-			$this->last_result
-		);
-	}
-
-	/**
-	 * @dataProvider regexpQuoteInCommentCases
-	 */
-	public function testRegexpEscapedKAfterQuoteInComment( $sql, $pattern ) {
-		// The escaper reads a "\Q" in a comment as quoted text, so a later "\K" reaches
-		// PCRE. A match that starts before the search is then an error, not an endless loop.
-		$this->assertQueryError(
-			'SELECT ' . sprintf( $sql, $this->engine->quote( $pattern ) ),
-			"Invalid regular expression: $pattern."
-		);
-	}
-
-	public static function regexpQuoteInCommentCases() {
-		$comment  = '(?#\Q)(?<=\Ka)';
-		$extended = "(?x)#\\Q\n(?<=\\Ka)";
-		return array(
-			'REGEXP_REPLACE, comment'          => array( "REGEXP_REPLACE('ab', %s, 'X')", $comment ),
-			'REGEXP_REPLACE, extended comment' => array( "REGEXP_REPLACE('ab', %s, 'X')", $extended ),
-			'REGEXP_SUBSTR, comment'           => array( "REGEXP_SUBSTR('ab', %s, 1, 2)", $comment ),
-			'REGEXP_SUBSTR, extended comment'  => array( "REGEXP_SUBSTR('ab', %s, 1, 2)", $extended ),
-			'REGEXP_INSTR, comment'            => array( "REGEXP_INSTR('ab', %s, 1, 2)", $comment ),
-			'REGEXP_INSTR, extended comment'   => array( "REGEXP_INSTR('ab', %s, 1, 2)", $extended ),
-		);
 	}
 
 	/**
