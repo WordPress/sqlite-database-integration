@@ -19,6 +19,7 @@ require_once __DIR__ . '/mysql/class-wp-mysql-token.php';
 
 require_once __DIR__ . '/mysql/class-wp-mysql-lexer.php';
 require_once __DIR__ . '/mysql/class-wp-mysql-parser.php';
+require_once __DIR__ . '/icu/class-wp-icu-regex-translator.php';
 require_once __DIR__ . '/sqlite/class-wp-sqlite-connection.php';
 require_once __DIR__ . '/sqlite/class-wp-sqlite-configurator.php';
 require_once __DIR__ . '/sqlite/class-wp-sqlite-driver.php';
