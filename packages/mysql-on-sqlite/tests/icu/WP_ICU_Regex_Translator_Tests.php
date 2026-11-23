@@ -58,6 +58,20 @@ class WP_ICU_Regex_Translator_Tests extends TestCase {
 			array( '\\*', '', '*', '<*>' ),
 			array( '\\\\', '', '\\', '<\\>' ),
 			array( '\\/', '', '/', '</>' ),
+			// ICU treats these escaped letters literally, including PCRE escapes such as \K.
+			array( '\\y+', '', 'yy', '<yy>' ),
+			array( 'a\\Kb', '', 'aKb ab', '<aKb> ab' ),
+			array( '(?<=\\Ka)b', '', 'Kab ab', 'Ka<b> ab' ),
+			array( '\\K', 'i', 'kK', '<k><K>' ),
+			array( '(a)\\g1', '', 'aa ag1', 'aa <ag1|a>' ),
+			array( '(a)\\g{1}', '', 'aa ag', 'aa <ag|a>' ),
+			array( '(a)\\g<1>', '', 'ag<1>', '<ag<1>|a>' ),
+			array( '\\o{3}', '', 'ooo', '<ooo>' ),
+			array( 'a\\Eb', '', 'aEb', '<aEb>' ),
+			array( 'a\\Q.\\E\\Eb', '', 'a.Eb', '<a.Eb>' ),
+			array( '[a-\\y]+', '', 'ayz', '<ay>z' ),
+			array( '[^\\y]', '', 'yz', 'y<z>' ),
+			array( '\\C\\E\\F\\g\\I\\i\\J\\j\\K\\L\\l\\M\\m\\O\\o\\q\\T\\Y\\y', '', 'CEFgIiJjKLlMmOoqTYy', '<CEFgIiJjKLlMmOoqTYy>' ),
 			// Quantifiers.
 			array( 'a*', '', 'aab', '<aa><>b<>' ),
 			array( 'a+', '', 'aab', '<aa>b' ),
@@ -144,6 +158,14 @@ class WP_ICU_Regex_Translator_Tests extends TestCase {
 			array( '[-a]', '', '-a', '<-><a>' ),
 			array( '[a-]', '', '-a', '<-><a>' ),
 			array( '[a-c-e]', '', 'be-d', '<b><e><->d' ),
+			array( '[a-c-e-g]', '', 'bdefg-', '<b>d<e><f><g><->' ),
+			array( '[a-c-\\d]', '', 'b-1e', '<b><-><1>e' ),
+			array( '[a-c0-9-\\s]', '', 'b5- e', '<b><5><->< >e' ),
+			array( '[^a-c-\\d]', '', 'b-1e', 'b-1<e>' ),
+			array( '[а-я-\\w]', '', 'я-_!', '<я><-><_>!' ),
+			array( '[\\x41-\\x43-\\p{Nd}]', '', 'B-1D', '<B><-><1>D' ),
+			array( '[a-c-[:digit:]]', '', 'b-1e', '<b><-><1>e' ),
+			array( '[a-c&\\d]', '', 'b&1e', '<b><&><1>e' ),
 			array( '[\\w-z]', '', '-z.', '<-><z>.' ),
 			array( '[\\d-a]', '', '1-ab', '<1><-><a>b' ),
 			array( '[\\p{Lu}-z]', '', 'A-z', '<A><-><z>' ),
@@ -188,6 +210,9 @@ class WP_ICU_Regex_Translator_Tests extends TestCase {
 			array( '[[:punct:]]', '', 'a.+', 'a<.>+' ),
 			array( '[[:space:]]', '', "a \n", "a< ><\n>" ),
 			array( '[[:upper:]]', '', 'aA', 'a<A>' ),
+			array( '[[:upper:]]', '', 'ⅧⅷⒶⓐ🄰', '<Ⅷ>ⅷ<Ⓐ>ⓐ<🄰>' ),
+			array( '[:^upper:]', '', 'aAⅧ', '<a>AⅧ' ),
+			array( '\\p{upper}', '', 'aAⅧ', 'a<A><Ⅷ>' ),
 			array( '[[:upper:]]', 'i', 'aA1', '<a><A>1' ),
 			array( '[[:lower:]]', 'i', 'aA1', '<a><A>1' ),
 			array( '[[:word:]]', '', 'a_-', '<a><_>-' ),
@@ -202,16 +227,26 @@ class WP_ICU_Regex_Translator_Tests extends TestCase {
 			array( '\\p{lu}', '', 'aA', 'a<A>' ),
 			array( '\\p{ASCII}', '', 'aé', '<a>é' ),
 			array( '\\p{word}', '', 'a-', '<a>-' ),
+			array( '\\p{Alphabetic}', '', 'aⒶ1', '<a><Ⓐ>1' ),
+			array( '\\P{Alphabetic}', '', 'aⒶ1', 'aⒶ<1>' ),
+			array( '[\\p{Alphabetic}_]', '', 'a_1', '<a><_>1' ),
 			array( '\\p{Greek}', '', 'aα', 'a<α>' ),
 			array( '\\P{Greek}', '', 'aα', '<a>α' ),
 			array( '\\p{Han}', '', '日。', '<日>。' ),
 			array( '\\p{Old_Italic}', '', '𐌀a', '<𐌀>a' ),
+			array( '\\p{Yi}', '', 'ꀀ、', '<ꀀ>、' ),
+			array( '\\p{LC}', '', 'aA1', '<a><A>1' ),
+			array( '\\p{Cn}', '', "a\u{FFFF}", "a<\u{FFFF}>" ),
 			array( '\\p{Lu}', 'i', 'aA1', '<a><A>1' ),
 			array( '\\P{Lu}', 'i', 'aA1', 'aA<1>' ),
 			array( '\\p{Ll}', 'i', 'aA1', '<a><A>1' ),
 			array( '(?i)\\p{Lu}', '', 'aA1', '<a><A>1' ),
 			array( '(?i:\\p{Lu})\\p{Lu}', '', 'aa', 'aa' ),
 			array( '(?i:\\p{Lu})\\p{Lu}', '', 'aA', '<aA>' ),
+			array( '\\p{Lt}', '', 'ǅǆǄa', '<ǅ>ǆǄa' ),
+			array( '\\p{Lt}', 'i', 'ǅǆǄaAᾈᾀ', '<ǅ><ǆ><Ǆ>aA<ᾈ><ᾀ>' ),
+			array( '\\P{Lt}', 'i', 'ǅǆaA', 'ǅǆ<a><A>' ),
+			array( '[\\p{Lt}x]', 'i', 'ǆXa', '<ǆ><X>a' ),
 			array( '(?-i)\\p{Lu}', 'i', 'aA', 'a<A>' ),
 			array( '\\p{Nd}', '', 'a٣', 'a<٣>' ),
 			array( '\\p{Zs}', '', "a\u{A0}", "a<\u{A0}>" ),
@@ -328,7 +363,6 @@ class WP_ICU_Regex_Translator_Tests extends TestCase {
 			array( 'a?+a', 'a', null ),
 			array( 'a(?=b)', 'ab', 'a' ),
 			array( 'a(?!b)', 'ac', 'a' ),
-			array( '(?<=ab{2})c', 'abbc', 'c' ),
 			array( '(?<!ab)c', 'aac', 'c' ),
 			array( '(?<word>a+)b\k<word>', 'aaabaaa', 'aaabaaa' ),
 			array( '(a)(b)\2\1', 'abba', 'abba' ),
@@ -388,8 +422,6 @@ class WP_ICU_Regex_Translator_Tests extends TestCase {
 			array( '[^]a]+', 'bc', 'bc' ),
 			array( '[-a&]+', '-a&', '-a&' ),
 			array( '(?dm)\n^', "\n", "\n" ),
-			array( '(?<=abc{2})d', 'abccd', 'd' ),
-			array( '(?<=(?:a|b){2})c', 'abc', 'c' ),
 			array( '\A[a\D]+\z', str_repeat( 'a', 64 ) . '1', null ),
 			array( '[abcdefghijk-z]+', 'ijxyz', 'ijxyz' ),
 			array( '[:digit:]+', '١٢', '١٢' ),
@@ -436,7 +468,7 @@ class WP_ICU_Regex_Translator_Tests extends TestCase {
 	 */
 	public function data_known_differences(): array {
 		return array(
-			array( '\\p{Lt}', 'i', 'ǅǆa', '<ǅ><ǆ>a', '<ǅ><ǆ><a>' ),
+			array( '\\p{Greek}', 'i', 'µμ', '<µ><μ>', 'µ<μ>' ),
 			array( '\\s', '', "\u{180E}", "\u{180E}", "<\u{180E}>" ),
 			array( '\\S', '', "a \u{180E}", "<a> <\u{180E}>", "<a> \u{180E}" ),
 			array( '\\h', '', "a \t\n\u{A0}\u{180E}", "a< ><\t>\n<\u{A0}>\u{180E}", "a< ><\t>\n<\u{A0}><\u{180E}>" ),
@@ -474,19 +506,15 @@ class WP_ICU_Regex_Translator_Tests extends TestCase {
 	 * @dataProvider data_unsupported_syntax
 	 */
 	public function test_unsupported_syntax( string $pattern ): void {
-		$this->expectException( DomainException::class );
+		$this->expectException( WP_ICU_Regex_Exception::class );
+		$this->expectExceptionCode( 3690 );
 		WP_ICU_Regex_Translator::translate( $pattern );
 	}
 
 	public function data_unsupported_syntax(): array {
 		return $this->as_cases(
 			array(
-				'\\y',
-				'\\K',
-				'\\C',
-				'\\g{1}',
 				'\\Q\\E',
-				'a\\Eb',
 				'^*a',
 				'$*a',
 				'^+a',
@@ -512,7 +540,6 @@ class WP_ICU_Regex_Translator_Tests extends TestCase {
 				'(?x)( ?:a)',
 				'[\\b]',
 				'[\\1]',
-				'[\\y]',
 				'[a-\\p]',
 				'[a[bc]d]',
 				'[a[^b]]',
@@ -551,6 +578,8 @@ class WP_ICU_Regex_Translator_Tests extends TestCase {
 				'[a][&-c]',
 				'(?i)[[a-c]--[B]]',
 				'[[:^alpha:]]',
+				'[[:^upper:]]',
+				'[\\P{Alphabetic}]',
 				'[:a\\x41:]',
 				'\\p{uppercase letter}',
 				'\\p{UPPERCASE-LETTER}',
@@ -566,10 +595,11 @@ class WP_ICU_Regex_Translator_Tests extends TestCase {
 				'\\p{Script=Greek}',
 				'\\p{sc=Han}',
 				'\\p{old italic}',
+				'\\p{RI}',
+				'\\p{di}',
 				'^*',
+				'(?<=ab{2})c',
 				'(a)\12',
-				'\j\K\C',
-				'\E',
 				'a\Q\E+',
 				'(?x)\Q #[]() \E',
 				'(?x)[\Q ^ \E]',
@@ -605,6 +635,8 @@ class WP_ICU_Regex_Translator_Tests extends TestCase {
 				'[[a-z]&[bc]\d]',
 				'[[a-z]&[bc]d]',
 				'[[a-z]-[bc]&\p{L}]',
+				'(?<=abc{2})d',
+				'(?<=(?:a|b){2})c',
 				'[ab--bc]',
 				'[a--b&&b]',
 				'[[a][b][c]]+',
@@ -619,6 +651,20 @@ class WP_ICU_Regex_Translator_Tests extends TestCase {
 				'\p{General_Category=Decimal_Number}+',
 				'\p{gC=lU}+',
 				'\p{upper-case_letter}+',
+
+				// Lookbehinds outside the fixed-length subset.
+				'(?<=a?)b',
+				'(?<=a{2})b',
+				'(?<=a{1,2})b',
+				'(?<!(a))b',
+				'(?<=(?:a|b))c',
+				'(?<=^a)b',
+				'(?<=a$)b',
+				'(?<=\ba)b',
+				'(?<=(?<=a)b)c',
+				'(?<=a(?=b))b',
+				'(?<=(a))\1',
+				'(?<=\Qa\E)b',
 			)
 		);
 	}
@@ -629,7 +675,8 @@ class WP_ICU_Regex_Translator_Tests extends TestCase {
 	 * @dataProvider data_pcre_syntax
 	 */
 	public function test_pcre_syntax_is_rejected( string $pattern ): void {
-		$this->expectException( DomainException::class );
+		$this->expectException( WP_ICU_Regex_Exception::class );
+		$this->expectExceptionCode( 3690 );
 		WP_ICU_Regex_Translator::translate( $pattern );
 	}
 
@@ -679,10 +726,6 @@ class WP_ICU_Regex_Translator_Tests extends TestCase {
 				'(?<n>a)(?P=n)',
 				'(?<n>a)\\k\'n\'',
 				'(?<n>a)\\k{n}',
-				'(a)\\g1',
-				'(a)\\g{1}',
-				'(a)\\g{-1}',
-				'(a)\\g<1>',
 				'(?U)a',
 				'(?J)a',
 				'(?n)a',
@@ -694,13 +737,6 @@ class WP_ICU_Regex_Translator_Tests extends TestCase {
 				'\\N',
 				'a\\N+',
 				'\\N{U+41}',
-				'\\K',
-				'a\\Kb',
-				'(?<=\\Ka)',
-				'\\C',
-				'\\o{101}',
-				'\\E',
-				'a\\Eb',
 				'\\pL',
 				'\\PL',
 				'\\p{L&}',
@@ -735,7 +771,7 @@ class WP_ICU_Regex_Translator_Tests extends TestCase {
 	public function test_invalid_patterns_do_not_compile( string $pattern ): void {
 		try {
 			$compiled = WP_ICU_Regex_Translator::translate( $pattern );
-		} catch ( DomainException $e ) {
+		} catch ( WP_ICU_Regex_Exception $e ) {
 			$this->addToAssertionCount( 1 );
 			return;
 		}
@@ -779,12 +815,17 @@ class WP_ICU_Regex_Translator_Tests extends TestCase {
 				'a\\',
 				'[z-a]',
 				'[a-\\d]',
+				'[a-cd-\\d]',
+				'[a-c&-\\d]',
 				'[--a]',
 				'[a--]',
 				'[&&a]',
 				'[a&&]',
 				'\\p{Nope}',
 				'\\p{Greekish}',
+				'\\p{Xx}',
+				"\\p{Lu\n}",
+				"\\p{Greek\n}",
 				'\\p{L',
 				'\\p',
 				'(?<a>x)(?<a>y)',
@@ -820,6 +861,7 @@ class WP_ICU_Regex_Translator_Tests extends TestCase {
 			array( 'abc', 'ims', '/abc/uXi' ),
 			array( 'a/b', '', '/a\/b/uX' ),
 			array( "a\0b", '', '/a\x00b/uX' ),
+			array( "a\\\0b[\\\0]", '', '/a\x00b[\x00]/uX' ),
 			array( 'a.b', 's', '/a[\s\S]b/uX' ),
 			array( 'a.b', 'd', '/a[^\n]b/uX' ),
 			array( '^a$', 'md', '/(?<![^\n])a(?![^\n])/uX' ),
@@ -831,7 +873,7 @@ class WP_ICU_Regex_Translator_Tests extends TestCase {
 			array( '[:^digit:]', '', '/[^\d]/uX' ),
 			array( '\p{Lu}', '', '/[\p{Lu}]/uX' ),
 			array( '\p{Lu}', 'i', '/[\p{L&}]/uXi' ),
-			array( '(?i)[[:upper:]](?-i)[[:upper:]]', '', '/(?i)[\p{L&}](?-i)[\p{Lu}]/uX' ),
+			array( '(?i)[[:upper:]](?-i)[[:lower:]]', '', '/(?i)[\p{L&}](?-i)[\p{Ll}]/uX' ),
 			array( '(?m)a(?s:b)', '', '/(?-i)a(?-i:b)/uX' ),
 			array( '(a)\1', '', '/(a)\g{1}/uX' ),
 			array( '\Qa.b/c\E', '', '/a\.b\/c/uX' ),
@@ -839,7 +881,127 @@ class WP_ICU_Regex_Translator_Tests extends TestCase {
 			array( 'a(?#comment)b', '', '/a(?#)b/uX' ),
 			array( '\x41\x{1F600}\0101\cA', '', '/\x{41}\x{1F600}\x{41}\x{1}/uX' ),
 			array( 'a{2,3}?b*+', '', '/a{2,3}?b*+/uX' ),
+			array( 'a\Kb\C\E\g{1}[\K]', '', '/aKbCEg{1}[K]/uX' ),
+			array( '(?<=a|bc)\d', '', '/(?<=a|bc)[\d]/uX' ),
+			array( '(?<![a-z].)\x41', '', '/(?<![a-z]\V)\x{41}/uX' ),
+			array( 'a.{2}b.{1,}', '', '/a[^\v]{2}b[^\v]{1,}/uX' ),
+
+			// Start checks for a leading ".*" or ".+" under different flags.
+			array( '.*a', '', '/(?:\G|(?<=\v))\V*a/uX' ),
+			array( '.*a', 'd', '/(?:\G|(?<=\n))[^\n]*a/uX' ),
+			array( '.*a', 's', '/\G[\s\S]*a/uX' ),
+			array( '.+a', 's', '/\G[\s\S]+a/uX' ),
+			array( '.*|^.$', 'dmsm', '/\G[\s\S]*|(?<![^\n])[\s\S](?![^\n])/uX' ),
+			array( '.*?a|b|.*+c|.+?d', 'd', '/(?:\G|(?<=\n))[^\n]*?a|b|(?:\G|(?<=\n))[^\n]*+c|(?:\G|(?<=\n))[^\n]+?d/uX' ),
+			array( '(?i).*a', 'd', '/(?i)(?:\G|(?<=\n))[^\n]*a/uX' ),
+			array( '(?s).*a', 'd', '/(?-i)\G[\s\S]*a/uX' ),
+			array( '.a|.?a|.{0,}a|b.*', 'd', '/[^\n]a|[^\n]?a|[^\n]{0,}a|b[^\n]*/uX' ),
+			array( '(a|.*b)', 'd', '/(a|[^\n]*b)/uX' ),
+			array( '(?<=a|).*b', 'd', '/(?<=a|)[^\n]*b/uX' ),
+			array( '(?#c).*a', 'd', '/(?#)[^\n]*a/uX' ),
+
+			// Inside a group, a start check is valid only if the whole match can start there.
+			array( '(.*)a|(?:.*a)|(?i:.*a)', 'd', '/((?:\G|(?<=\n))[^\n]*)a|(?:(?:\G|(?<=\n))[^\n]*a)|(?i:(?:\G|(?<=\n))[^\n]*a)/uX' ),
+			array( '(.*)a', '', '/((?:\G|(?<=\v))\V*)a/uX' ),
+			array( '((?<n>.+))a', 's', '/((?<n>\G[\s\S]+))a/uX' ),
+			array( '((?s).*)a', 'd', '/((?-i)\G[\s\S]*)a/uX' ),
+			array( '(.*a)+|(.*)?b|((.*)c){2}', 'd', '/([^\n]*a)+|([^\n]*)?b|(([^\n]*)c){2}/uX' ),
+			array( "(\0)|(.*a)|((.*b)c){2}|(?s:.+d)", 'd', '/(\x00)|((?:\G|(?<=\n))[^\n]*a)|(([^\n]*b)c){2}|(?-i:\G[\s\S]+d)/uX' ),
+			array( '(.*a)|(.+b)\2', 's', '/([\s\S]*a)|([\s\S]+b)\g{2}/uX' ),
+			array( '(?=.*a)b|(?>.*a)b', 'd', '/(?=[^\n]*a)b|(?>[^\n]*a)b/uX' ),
+			array( '(.*)a\1', 'd', '/([^\n]*)a\g{1}/uX' ),
+			array( '(?<n>.*)a\k<n>', 'd', '/(?<n>[^\n]*)a\k<n>/uX' ),
+			array( '.*(a)\1', 'd', '/(?:\G|(?<=\n))[^\n]*(a)\g{1}/uX' ),
 		);
+	}
+
+	/**
+	 * @dataProvider data_bytes
+	 */
+	public function test_bytes( string $pattern, string $flags, string $subject, ?string $expected ): void {
+		$found = preg_match( WP_ICU_Regex_Translator::translate( $pattern, $flags, false, true ), $subject, $match );
+		$this->assertSame( $expected, 1 === $found ? $match[0] : null );
+	}
+
+	/**
+	 * Byte-mode line endings are LF, VT, FF, and CR. A byte with value 0x85 is ordinary data.
+	 */
+	public function data_bytes(): array {
+		return array(
+			array( '.', '', "\xC4\x85", "\xC4" ),
+			array( '^..$', '', "\xC4\x85", "\xC4\x85" ),
+			array( '^a.$', '', "a\x85", "a\x85" ),
+			array( '^a.$', '', "a\x0B", null ),
+			array( '^a.$', '', "a\x0C", null ),
+			array( '^a.$', '', "a\r", null ),
+			array( '^a.$', '', "a\n", null ),
+			array( 'a.', 's', "a\n", "a\n" ),
+			array( 'a.', 'd', "a\r", "a\r" ),
+			array( 'a$', '', "a\x85", null ),
+			array( 'a$', '', "a\x0B", 'a' ),
+			array( 'a$', '', "a\r\n", 'a' ),
+			array( 'a$', '', "a\n\n", null ),
+			array( 'a$', 'd', "a\r", null ),
+			array( 'a$', 'm', "a\x0Cb", 'a' ),
+			array( '^a', 'm', "\x85a", null ),
+			array( '^a', 'm', "\x0Ca", 'a' ),
+			array( 'a\Z', '', "a\r\n", 'a' ),
+			array( 'a\Z', '', "a\x85", null ),
+			array( '\R', '', "\x85", null ),
+			array( '\R', '', "\x0B", "\x0B" ),
+			array( '\R', '', "\r\n", "\r\n" ),
+			array( 'a', '', 'A', null ),
+			array( 'a', 'i', 'A', 'A' ),
+			array( '\w+', '', "-ab_1\xC3\xA9", 'ab_1' ),
+			array( '\W', '', 'a-', '-' ),
+			array( '\d+', '', 'a12', '12' ),
+			array( '\D', '', '1a', 'a' ),
+			array( '\s\S', '', 'a b', ' b' ),
+			array( '\h\v', '', "a\t\n", "\t\n" ),
+			array( '[\w-]+', '', 'a-b c', 'a-b' ),
+			array( '[^\w]', '', 'a-', '-' ),
+			array( '[\W]', '', 'a-', '-' ),
+			array( '[^\d\s]', '', '1 o', 'o' ),
+			array( '[[:alpha:]]+', '', "1ab\xE9", 'ab' ),
+			array( '[[:^alpha:]]', '', 'a1', '1' ),
+			array( '[^[:alpha:]]', '', 'a1', '1' ),
+			array( '[:alpha:]+', '', '1ab2', 'ab' ),
+			array( '\p{alpha}', '', '1a', 'a' ),
+			array( '\p{Alphabetic}', '', '1a', 'a' ),
+			array( '[[:upper:]]', '', 'aB', 'B' ),
+			array( '[[:upper:]]', 'i', 'aB', 'a' ),
+			array( '[[:punct:][:digit:]]+', '', 'a!.1b', '!.1' ),
+			array( '[[:word:]]+', '', '-a_1', 'a_1' ),
+			array( '[[:xdigit:]]+', '', 'g1A', '1A' ),
+			array( 'a\b', '', 'a b', 'a' ),
+			array( 'a\b', '', 'ab', null ),
+			array( 'a\B', '', 'ab', 'a' ),
+			array( '[[:<:]]b[[:>:]]', '', 'ab b', 'b' ),
+			array( '\xE9', '', "\xE9", "\xE9" ),
+			array( '\x{E9}', '', "\xE9", "\xE9" ),
+			array( "[\x80-\xFF]", '', "a\xE9", "\xE9" ),
+			array( "[^\xE9]", 'i', "\xE9a", 'a' ),
+			array( "(?<=\xC3)\xA9", '', "\xC3\xA9", "\xA9" ),
+			array( '\Qa.b\E', '', 'a.b', 'a.b' ),
+			array( "a/\0b", '', "a/\0b", "a/\0b" ),
+		);
+	}
+
+	public function test_bytes_use_the_classes_of_pcre(): void {
+		$this->assertSame(
+			'/a[^\n\x0B\f\r][\w][^\d][[:alpha:][:^digit:]\S]\b[[:<:]]/Xi',
+			WP_ICU_Regex_Translator::translate( 'a.\w\D[[:alpha:][:^digit:]\S]\b[[:<:]]', 'i', false, true )
+		);
+	}
+
+	public function test_a_code_point_above_a_byte_does_not_compile_for_bytes(): void {
+		set_error_handler( static function () {} );
+		try {
+			$result = preg_match( WP_ICU_Regex_Translator::translate( '\x{100}', '', false, true ), '' );
+		} finally {
+			restore_error_handler();
+		}
+		$this->assertFalse( $result );
 	}
 
 	public function test_a_negated_set_of_one_character_matches_whole_characters(): void {
@@ -862,14 +1024,40 @@ class WP_ICU_Regex_Translator_Tests extends TestCase {
 		$this->assertSame( 1, preg_match( WP_ICU_Regex_Translator::translate( '\Ga|b', '', true ), 'ab' ) );
 	}
 
+	public function test_a_leading_dot_star_matches_like_any_other(): void {
+		$this->assertSame( "<ab>\n<cb>", $this->replace_matches( WP_ICU_Regex_Translator::translate( '.*b' ), "ab\ncb" ) );
+		$this->assertSame( "<ab>\nb\n<cb>", $this->replace_matches( WP_ICU_Regex_Translator::translate( '.+b' ), "ab\nb\ncb" ) );
+		$this->assertSame( "<ab\r\ncb>", $this->replace_matches( WP_ICU_Regex_Translator::translate( '.*b', 's' ), "ab\r\ncb" ) );
+		$this->assertSame( "<ab\rcb>", $this->replace_matches( WP_ICU_Regex_Translator::translate( '.*b', 'd' ), "ab\rcb" ) );
+		$this->assertSame( "<a><>\u{2028}<b><>", $this->replace_matches( WP_ICU_Regex_Translator::translate( '.*' ), "a\u{2028}b" ) );
+		$this->assertSame( '<a>b', $this->replace_matches( WP_ICU_Regex_Translator::translate( 'a|.*c' ), 'ab' ) );
+
+		$this->assertSame( "<ab>\n<cb>", $this->replace_matches( WP_ICU_Regex_Translator::translate( '(?:.*)b' ), "ab\ncb" ) );
+		$this->assertSame( "<ab>\nb\n<cb>", $this->replace_matches( WP_ICU_Regex_Translator::translate( '(?i:(?:.+)b)' ), "ab\nb\ncb" ) );
+		$this->assertSame( 'a<b-b|b>', $this->replace_matches( WP_ICU_Regex_Translator::translate( '(.*)-\1' ), 'ab-b' ) );
+		$this->assertSame( '<xaya|ya>', $this->replace_matches( WP_ICU_Regex_Translator::translate( '(.*a){2}' ), 'xaya' ) );
+		$this->assertSame( 'a<ab>', $this->replace_matches( WP_ICU_Regex_Translator::translate( '(?>.*?a)b' ), 'aab' ) );
+		$this->assertSame( 'x<b>', $this->replace_matches( WP_ICU_Regex_Translator::translate( '(?=.*b)b' ), 'xb' ) );
+
+		// A search can start in the middle of a line.
+		$this->assertSame( 1, preg_match( WP_ICU_Regex_Translator::translate( '.*c' ), "abc\nabc", $match, 0, 1 ) );
+		$this->assertSame( 'bc', $match[0] );
+		$this->assertSame( 1, preg_match( WP_ICU_Regex_Translator::translate( '.*c', 's' ), "abc\nabc", $match, 0, 1 ) );
+		$this->assertSame( "bc\nabc", $match[0] );
+		$this->assertSame( 1, preg_match( WP_ICU_Regex_Translator::translate( '(.*)c' ), "abc\nabc", $match, 0, 1 ) );
+		$this->assertSame( 'bc', $match[0] );
+
+		$this->assertSame( '/(?:\G|(?<=[\n\x0B\f\r]))[^\n\x0B\f\r]*a/X', WP_ICU_Regex_Translator::translate( '.*a', '', false, true ) );
+	}
+
 	public function test_unknown_flags_are_rejected(): void {
-		$this->expectException( DomainException::class );
+		$this->expectException( WP_ICU_Regex_Exception::class );
 		WP_ICU_Regex_Translator::translate( 'a', 'x' );
 	}
 
-	public function test_a_pattern_that_pcre_cannot_compile_is_rejected(): void {
+	public function test_a_pattern_above_the_length_limit_is_rejected(): void {
 		$this->assertSame( '/' . str_repeat( 'a', 65535 ) . '/uX', WP_ICU_Regex_Translator::translate( str_repeat( 'a', 65535 ) ) );
-		$this->expectException( DomainException::class );
+		$this->expectException( WP_ICU_Regex_Exception::class );
 		WP_ICU_Regex_Translator::translate( str_repeat( 'a', 65536 ) );
 	}
 
@@ -882,9 +1070,19 @@ class WP_ICU_Regex_Translator_Tests extends TestCase {
 	public function test_long_subjects_stay_within_pcre_limits(): void {
 		$subject = str_repeat( "ab \r\n", 200000 );
 		$this->assertSame( 1, preg_match( WP_ICU_Regex_Translator::translate( '^.*$', 's' ), $subject ) );
-		$this->assertSame( 1, preg_match( WP_ICU_Regex_Translator::translate( '^(?:\w+\b\W+)*$' ), "ab \r\n" ) );
 		$this->assertSame( 1, preg_match( WP_ICU_Regex_Translator::translate( '^[\w\s]*$' ), $subject ) );
 		$this->assertSame( 1, preg_match( WP_ICU_Regex_Translator::translate( '\A[^x]*\z' ), $subject ) );
+	}
+
+	public function test_a_dot_with_a_count_matches_after_an_optional_character(): void {
+		$this->assertSame( '<-cb>a', $this->replace_matches( WP_ICU_Regex_Translator::translate( 'c?-.{2}' ), '-cba' ) );
+		$this->assertSame( '<-cba>', $this->replace_matches( WP_ICU_Regex_Translator::translate( 'c?-.{2,}' ), '-cba' ) );
+	}
+
+	public function test_a_pattern_with_many_dots_compiles(): void {
+		// Expanding each dot into a large set can push a long alternation over PCRE's compiled pattern size limit.
+		$pattern = implode( '|', array_fill( 0, 3000, '10.0.0.1' ) );
+		$this->assertSame( 1, preg_match( WP_ICU_Regex_Translator::translate( $pattern ), '10-0-0-1' ) );
 	}
 
 	private function as_cases( array $patterns ): array {
