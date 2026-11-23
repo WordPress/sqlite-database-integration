@@ -35,7 +35,7 @@ if ( PHP_VERSION_ID >= 80400 ) {
  * It translates queries written in MySQL SQL dialect to an SQLite SQL dialect,
  * maintains necessary metadata, and executes the translated queries in SQLite.
  *
- * The driver requires PDO with the SQLite driver, and the PCRE engine.
+ * The driver requires 64-bit PHP, PDO with the SQLite driver, and the PCRE engine.
  */
 class WP_MySQL_On_SQLite extends PDO {
 	use WP_MySQL_On_SQLite_PDO_Compat;
@@ -135,9 +135,6 @@ class WP_MySQL_On_SQLite extends PDO {
 		'HIGH_NOT_PRECEDENCE'        => 1 << 29,
 		'NO_ENGINE_SUBSTITUTION'     => 1 << 30,
 		'PAD_CHAR_TO_FULL_LENGTH'    => 1 << 31,
-
-		// Modes below require 64-bit PHP.
-		// TODO: Consider supporting these values on 32-bit PHP as well.
 		'TIME_TRUNCATE_FRACTIONAL'   => 1 << 32,
 	);
 
@@ -810,6 +807,10 @@ class WP_MySQL_On_SQLite extends PDO {
 		?string $password = null,
 		?array $options = null
 	) {
+		if ( PHP_INT_SIZE < 8 ) {
+			throw $this->new_driver_exception( 'The MySQL on SQLite driver requires 64-bit PHP.' );
+		}
+
 		$options = $options ?? array();
 
 		// PDO DSN can't include "\0" bytes; parsing stops at the first one.

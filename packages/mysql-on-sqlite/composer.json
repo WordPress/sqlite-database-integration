@@ -17,6 +17,7 @@
 	},
 	"require": {
 		"php": ">=7.2",
+		"php-64bit": "*",
 		"ext-pdo": "*",
 		"ext-pdo_sqlite": "*"
 	},
