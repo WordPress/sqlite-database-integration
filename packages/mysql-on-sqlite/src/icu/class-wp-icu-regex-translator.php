@@ -123,7 +123,7 @@ class WP_ICU_Regex_Translator {
 
 	// Catch unrecognized syntax so the error can name the offending token.
 	private const OTHER = '\\\\(?:Q\\\\E|\d+)?|\(\?(?:<[=!]|\w+|[^)])?|[\s\S]';
-	private const TOKEN = '/(?:[^\\\\\[(){}|^$.*+?\/\x00]++|' . self::QUOTE . '(?:\\\\E|\z)|' . self::ESCAPE . '|' . self::POSIX . '|' . self::SET . '|[.)\/\x00])' . self::QUANTIFIER . '|' . self::LOOK_BEHIND . '|' . self::GROUP . '|' . self::BRACE . '|\[\[:[<>]:\]\]|[|^$]|(' . self::OTHER . ')/';
+	private const TOKEN = '/(?:(?:[^\\\\\[(){}|^$.*+?\/\x00]++|' . self::QUOTE . '(?:\\\\E|\z)|' . self::ESCAPE . '|' . self::POSIX . '|' . self::SET . '|[.)\/\x00])' . self::QUANTIFIER . '|' . self::LOOK_BEHIND . '|' . self::GROUP . '|' . self::BRACE . '|\[\[:[<>]:\]\]|[|^$]|(' . self::OTHER . '))(?=([A-Za-z0-9_](?![*+?{]))?)/';
 
 	// Capture groups in TOKEN.
 	private const CAPTURE_QUANTIFIER     = 1;
@@ -131,6 +131,7 @@ class WP_ICU_Regex_Translator {
 	private const CAPTURE_FLAGS_OFF      = 3;
 	private const CAPTURE_FLAG_DELIMITER = 4;
 	private const CAPTURE_UNSUPPORTED    = 5;
+	private const CAPTURE_NEXT_WORD      = 6;
 
 	// Cap the input size before expanding tokens such as word boundaries into longer PCRE patterns.
 	private const MAX_LENGTH = 65535;
@@ -172,6 +173,13 @@ class WP_ICU_Regex_Translator {
 	 * @var bool
 	 */
 	private $is_leading = true;
+
+	/**
+	 * Whether the previous token ended with an unquantified ASCII word character.
+	 *
+	 * @var bool
+	 */
+	private $is_after_word = false;
 
 	/**
 	 * Whether \G in the input pattern must fail.
@@ -228,16 +236,24 @@ class WP_ICU_Regex_Translator {
 		$token      = $parts[0];
 		$quantifier = $parts[ self::CAPTURE_QUANTIFIER ] ?? '';
 		$item       = substr( $token, 0, strlen( $token ) - strlen( $quantifier ) );
-		if ( isset( $parts[ self::CAPTURE_UNSUPPORTED ] ) ) {
+		if ( '' !== ( $parts[ self::CAPTURE_UNSUPPORTED ] ?? '' ) ) {
 			throw new WP_ICU_Regex_Exception( "Unsupported regular expression syntax: $token", self::UNSUPPORTED );
 		}
-		$is_leading       = $this->is_leading;
-		$this->is_leading = '|' === $token && ! $this->groups;
+		$is_leading          = $this->is_leading;
+		$this->is_leading    = '|' === $token && ! $this->groups;
+		$is_after_word       = $this->is_after_word;
+		$this->is_after_word = false;
 
 		switch ( $item[0] ) {
 			case '\\':
 				// A position, like "\b", can't be repeated.
 				if ( '' === $quantifier || false === strpos( 'AbBGzZ', $item[1] ) ) {
+					// In "\bword\b", each boundary needs to test only the side facing away from the word.
+					// Omitting the other tests keeps word lists smaller when PCRE compiles them.
+					$is_before_word = isset( $parts[ self::CAPTURE_NEXT_WORD ] );
+					if ( 'b' === strtolower( $item[1] ) && ! $this->bytes && ( $is_before_word || $is_after_word ) ) {
+						return '(?' . ( $is_before_word ? '<' : '' ) . ( 'b' === $item[1] ? '!' : '=' ) . '[' . self::WORD . '])';
+					}
 					return $this->translate_escape( substr( $item, 1 ), false ) . $quantifier;
 				}
 				break;
@@ -265,8 +281,9 @@ class WP_ICU_Regex_Translator {
 						return '(?#)';
 					}
 					// LOOK_BEHIND excludes nested groups. Translate its contents with the current flags.
-					$inside           = self::replace( self::TOKEN, array( $this, 'translate_token' ), substr( $item, 4, -1 ) );
-					$this->is_leading = false;
+					$inside              = self::replace( self::TOKEN, array( $this, 'translate_token' ), substr( $item, 4, -1 ) );
+					$this->is_leading    = false;
+					$this->is_after_word = false;
 					return substr( $item, 0, 4 ) . $inside . ')';
 				}
 				// A lookahead consumes no text. An atomic group keeps its first match.
@@ -320,6 +337,7 @@ class WP_ICU_Regex_Translator {
 			case '|':
 				return '|';
 			default:
+				$this->is_after_word = '' === $quantifier && 1 === preg_match( '/[A-Za-z0-9_]$/D', $token );
 				return $token;
 		}
 		throw new WP_ICU_Regex_Exception( "Unsupported regular expression syntax: $token", self::UNSUPPORTED );

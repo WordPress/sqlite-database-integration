@@ -1050,6 +1050,24 @@ class WP_ICU_Regex_Translator_Tests extends TestCase {
 		$this->assertSame( '/(?:\G|(?<=[\n\x0B\f\r]))[^\n\x0B\f\r]*a/X', WP_ICU_Regex_Translator::translate( '.*a', '', false, true ) );
 	}
 
+	public function test_a_word_boundary_next_to_a_word_character_checks_one_side(): void {
+		$word = '[\p{L}\p{M}\p{Nd}\p{Nl}\p{Pc}\x{200C}\x{200D}\x{24B6}-\x{24E9}\x{1F130}-\x{1F149}\x{1F150}-\x{1F169}\x{1F170}-\x{1F189}]';
+		$this->assertSame( "/(?<!$word)word(?!$word)/uX", WP_ICU_Regex_Translator::translate( '\bword\b' ) );
+		$this->assertSame( "/(?<=$word)_1(?=$word)/uX", WP_ICU_Regex_Translator::translate( '\B_1\B' ) );
+		$this->assertSame( "/a(?<!$word)b|c(?!$word)/uXi", WP_ICU_Regex_Translator::translate( 'a\bb|c\b', 'i' ) );
+		$this->assertSame( '/\bword\b/X', WP_ICU_Regex_Translator::translate( '\bword\b', '', false, true ) );
+
+		// Keep the full boundary check unless the translator recognizes an adjacent, unquantified ASCII word character.
+		foreach ( array( '\b', '\b-', '\bé', '\ba*', '\ba?', '\ba{2}', '\b(a)', '\b[a]', '\b\w', '-\b', 'é\b', 'a*\b', 'a+\b', '(a)\b', '[a]\b', '\x61\b', '(?<=a)\b' ) as $pattern ) {
+			$this->assertStringContainsString( "(?(?<=$word)(?!$word)|(?=$word))", WP_ICU_Regex_Translator::translate( $pattern ), $pattern );
+		}
+
+		$this->assertSame( '<cat> concat cat_ écat <cat>', $this->replace_matches( WP_ICU_Regex_Translator::translate( '\bcat\b' ), 'cat concat cat_ écat cat' ) );
+		$this->assertSame( 'cat con<cat> é<cat>', $this->replace_matches( WP_ICU_Regex_Translator::translate( '\Bcat' ), 'cat concat écat' ) );
+		$this->assertSame( "<k> <\u{212A}> ak", $this->replace_matches( WP_ICU_Regex_Translator::translate( '\bk\b', 'i' ), "k \u{212A} ak" ) );
+		$this->assertSame( 'ab', $this->replace_matches( WP_ICU_Regex_Translator::translate( 'a\bb' ), 'ab' ) );
+	}
+
 	public function test_unknown_flags_are_rejected(): void {
 		$this->expectException( WP_ICU_Regex_Exception::class );
 		WP_ICU_Regex_Translator::translate( 'a', 'x' );
