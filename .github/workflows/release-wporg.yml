@@ -39,8 +39,9 @@ jobs:
 
       - name: Resolve tag
         id: resolve
+        env:
+          TAG: ${{ inputs.tag }}
         run: |
-          TAG="${{ inputs.tag }}"
           # Ensure the tag has a "v" prefix.
           [[ "$TAG" == v* ]] || TAG="v$TAG"
           echo "tag=$TAG" >> $GITHUB_OUTPUT
@@ -58,8 +59,10 @@ jobs:
           unzip plugin-sqlite-database-integration.zip
 
       - name: Verify release metadata
+        env:
+          VERSION: ${{ steps.resolve.outputs.version }}
         run: |
-          bash bin/verify-release-metadata.sh plugin-sqlite-database-integration "${{ steps.resolve.outputs.version }}"
+          bash bin/verify-release-metadata.sh plugin-sqlite-database-integration "$VERSION"
 
       - name: Deploy to WordPress.org
         uses: 10up/action-wordpress-plugin-deploy@2.3.0
