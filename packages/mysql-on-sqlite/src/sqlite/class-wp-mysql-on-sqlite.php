@@ -2886,12 +2886,27 @@ class WP_MySQL_On_SQLite extends PDO {
 			$affected_rows = 0;
 			if ( count( $ids ) > 0 ) {
 				foreach ( $table_aliases as $table ) {
+					/*
+					 * With an outer JOIN, a table may have no matching row for
+					 * some of the selected rows. Its ROWID is NULL for those rows,
+					 * and there is nothing to delete from the table for them.
+					 */
+					$rowids = array_filter(
+						array_column( $ids, "{$table}_rowid" ),
+						function ( $rowid ) {
+							return null !== $rowid;
+						}
+					);
+					if ( count( $rowids ) === 0 ) {
+						continue;
+					}
+
 					$stmt           = $this->execute_sqlite_query(
 						sprintf(
 							'DELETE FROM %s AS %s WHERE rowid IN ( %s )',
 							$this->quote_sqlite_identifier( $alias_map[ $table ] ),
 							$this->quote_sqlite_identifier( $table ),
-							implode( ', ', array_column( $ids, "{$table}_rowid" ) )
+							implode( ', ', $rowids )
 						)
 					);
 					$affected_rows += $stmt->rowCount();
