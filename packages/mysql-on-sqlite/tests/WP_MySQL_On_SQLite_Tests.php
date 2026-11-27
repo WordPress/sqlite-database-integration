@@ -11309,6 +11309,77 @@ END;
 		$this->assertQuery( 'INSERT INTO t_explicit (a) VALUES (999)' );
 	}
 
+	public function testInlineReferencesWithCheckConstraintRecordsCheckType(): void {
+		$this->assertQuery( 'CREATE TABLE p (id INT PRIMARY KEY)' );
+		$this->assertQuery( 'CREATE TABLE t (id INT, a INT CHECK (a > 0) REFERENCES p (id))' );
+
+		// CHECK constraint t_chk_1 is recorded with CONSTRAINT_TYPE = 'CHECK' (not 'FOREIGN KEY').
+		$table_constraints = $this->assertQuery( "SELECT constraint_name, constraint_type FROM information_schema.table_constraints WHERE table_name = 't'" );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'CONSTRAINT_NAME' => 't_chk_1',
+					'CONSTRAINT_TYPE' => 'CHECK',
+				),
+			),
+			$table_constraints
+		);
+
+		// No foreign key metadata is created in MySQL 8.4.
+		$referential_constraints = $this->assertQuery( "SELECT * FROM information_schema.referential_constraints WHERE table_name = 't'" );
+		$this->assertEquals( array(), $referential_constraints );
+
+		$key_column_usage = $this->assertQuery( "SELECT * FROM information_schema.key_column_usage WHERE table_name = 't'" );
+		$this->assertEquals( array(), $key_column_usage );
+
+		// The CHECK constraint is enforced while inline REFERENCES is ignored.
+		$this->expectException( 'WP_MySQL_On_SQLite_Exception' );
+		$this->expectExceptionMessage( 'SQLSTATE[23000]: Integrity constraint violation: 19 CHECK constraint failed' );
+		$this->assertQuery( 'INSERT INTO t (a) VALUES (-5)' );
+	}
+
+	public function testInlineReferencesEnforcedInMySQL9(): void {
+		$this->engine = new WP_MySQL_On_SQLite(
+			'mysql-on-sqlite:dbname=wp',
+			null,
+			null,
+			array(
+				'sqlite_pdo'    => $this->sqlite,
+				'mysql_version' => 90000,
+			)
+		);
+
+		$this->assertQuery( 'CREATE TABLE p (id INT PRIMARY KEY)' );
+		$this->assertQuery( 'CREATE TABLE t (id INT, a INT REFERENCES p (id))' );
+
+		// In MySQL 9.0+, inline REFERENCES generates foreign key metadata.
+		$table_constraints = $this->assertQuery( "SELECT constraint_name, constraint_type FROM information_schema.table_constraints WHERE table_name = 't'" );
+		$this->assertCount( 1, $table_constraints );
+		$this->assertEquals( 't_ibfk_1', $table_constraints[0]->CONSTRAINT_NAME );
+		$this->assertEquals( 'FOREIGN KEY', $table_constraints[0]->CONSTRAINT_TYPE );
+
+		$referential_constraints = $this->assertQuery( "SELECT constraint_name, referenced_table_name FROM information_schema.referential_constraints WHERE table_name = 't'" );
+		$this->assertCount( 1, $referential_constraints );
+		$this->assertEquals( 't_ibfk_1', $referential_constraints[0]->CONSTRAINT_NAME );
+		$this->assertEquals( 'p', $referential_constraints[0]->REFERENCED_TABLE_NAME );
+
+		$key_column_usage = $this->assertQuery( "SELECT constraint_name, column_name, referenced_table_name, referenced_column_name FROM information_schema.key_column_usage WHERE table_name = 't'" );
+		$this->assertCount( 1, $key_column_usage );
+		$this->assertEquals( 't_ibfk_1', $key_column_usage[0]->CONSTRAINT_NAME );
+		$this->assertEquals( 'a', $key_column_usage[0]->COLUMN_NAME );
+		$this->assertEquals( 'p', $key_column_usage[0]->REFERENCED_TABLE_NAME );
+		$this->assertEquals( 'id', $key_column_usage[0]->REFERENCED_COLUMN_NAME );
+
+		// SHOW CREATE TABLE includes the foreign key constraint.
+		$create_table = $this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertStringContainsString( 'CONSTRAINT `t_ibfk_1` FOREIGN KEY (`a`) REFERENCES `p` (`id`)', $create_table[0]->{'Create Table'} );
+
+		// Foreign key constraint is enforced in MySQL 9.0+.
+		$this->expectException( 'WP_MySQL_On_SQLite_Exception' );
+		$this->expectExceptionMessage( 'SQLSTATE[23000]: Integrity constraint violation: 19 FOREIGN KEY constraint failed' );
+		$this->assertQuery( 'INSERT INTO t (a) VALUES (999)' );
+	}
+
 	public function testUpdateWithJoinedTables(): void {
 		$sqlite_version = $this->engine->get_sqlite_version();
 		if ( version_compare( $sqlite_version, '3.33.0', '<' ) ) {
