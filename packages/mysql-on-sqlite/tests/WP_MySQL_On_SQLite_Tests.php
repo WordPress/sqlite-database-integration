@@ -381,15 +381,33 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 	public static function regexpLikeErrors() {
 		return array(
 			'invalid pattern' => array( "REGEXP_LIKE('abc', '(abc')", 'Invalid regular expression: (abc.' ),
-			'unknown escape'  => array( "REGEXP_LIKE('y', '\\\\y')", 'Invalid regular expression: \\y.' ),
-			'ICU escape'      => array( "REGEXP_LIKE('A', '\\\\u0041')", 'Invalid regular expression: \\u0041.' ),
+			'short escape'    => array( "REGEXP_LIKE('u004', '\\\\u004')", 'Invalid regular expression: \\u004.' ),
 			'bad property'    => array( "REGEXP_LIKE('a', '\\\\p{Foo}')", 'Invalid regular expression: \\p{Foo}.' ),
-			'operator escape' => array( "'y' REGEXP '\\\\y'", 'Invalid regular expression: \\y.' ),
-			'binary escape'   => array( "X'FF' REGEXP '\\\\y'", 'Invalid regular expression: \\y.' ),
+			'open comment'    => array( "REGEXP_LIKE('a', 'a(?#')", 'Invalid regular expression: a(?#.' ),
+			'comment quote'   => array( "REGEXP_LIKE('a', '(?#\\\\Q)a')", 'Invalid regular expression: (?#\\Q)a.' ),
+			'property with /' => array( "REGEXP_LIKE('a', '\\\\p{a/i}')", 'Invalid regular expression: \\p{a/i}.' ),
+			'"\\b+"'          => array( "REGEXP_LIKE('b', '\\\\b+')", 'Invalid regular expression: \\b+.' ),
+			'"\\B*"'          => array( "REGEXP_LIKE('b', '\\\\B*')", 'Invalid regular expression: \\B*.' ),
+			'"\\b{2}"'        => array( "REGEXP_LIKE('b', '\\\\b{2}')", 'Invalid regular expression: \\b{2}.' ),
+			'"\\b{x}"'        => array( "REGEXP_LIKE('b{x}', '\\\\b{x}')", 'Invalid regular expression: \\b{x}.' ),
 			'extra argument'  => array(
 				"REGEXP_LIKE('abc', 'abc', 'c', 'extra')",
 				'SQLSTATE[HY000]: General error: 1 wrong number of arguments to function REGEXP_LIKE()',
 			),
+		);
+	}
+
+	public function testRegexpOperatorLiteralEscape() {
+		// The REGEXP operator reads "\y" literally too, also when it matches bytes.
+		$this->assertQuery( "SELECT 'y' REGEXP '\\\\y' AS text_result, X'FF79' REGEXP '\\\\y' AS binary_result" );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'text_result'   => '1',
+					'binary_result' => '1',
+				),
+			),
+			$this->last_result
 		);
 	}
 
@@ -442,6 +460,8 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			'REGEXP_REPLACE, pos one past end' => array( "X'C485FF'", "REGEXP_REPLACE(b, '\$', 'x', 4)", "\xC4\x85\xFFx" ),
 			'REGEXP_REPLACE, occurrence'       => array( "X'C485FF'", "REGEXP_REPLACE(b, '(.)', '[\$1]', 2, 1)", "\xC4[\x85]\xFF" ),
 			'REGEXP_REPLACE, empty matches'    => array( "X'C485FF'", "REGEXP_REPLACE(b, 'x*', '-')", "-\xC4-\x85-\xFF-" ),
+			'REGEXP_REPLACE, word characters'  => array( "X'61812D62'", "REGEXP_REPLACE(b, '\\\\w', 'x')", "x\x81-x" ),
+			'REGEXP_REPLACE, word boundaries'  => array( "X'61812D62'", "REGEXP_REPLACE(b, '\\\\b', '|')", "|a|\x81-|b|" ),
 
 			'REGEXP_SUBSTR, any byte'          => array( "X'61FF62'", "REGEXP_SUBSTR(b, 'a.b')", "a\xFFb" ),
 			'REGEXP_SUBSTR, other case'        => array( "X'61FF41'", "REGEXP_SUBSTR(b, 'a.a')", null ),
@@ -548,6 +568,26 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$this->assertSame( '0', $this->last_result[0]->r );
 	}
 
+	/**
+	 * @dataProvider regexpLegacyWordBoundaryCases
+	 */
+	public function testRegexpLegacyWordBoundaries( $sql, $expected ) {
+		$this->assertQuery( "SELECT $sql AS r" );
+		$this->assertSame( $expected, $this->last_result[0]->r );
+	}
+
+	public static function regexpLegacyWordBoundaryCases() {
+		// MySQL 8 rejects MySQL 5.7's word boundaries, but they keep working.
+		return array(
+			'start and end of a word' => array( "'ab cd' REGEXP '[[:<:]]cd[[:>:]]'", '1' ),
+			'inside of a word'        => array( "'abcd' REGEXP '[[:<:]]cd'", '0' ),
+			'before a word character' => array( "'cde' REGEXP 'cd[[:>:]]'", '0' ),
+			'ignoring case'           => array( "'AB CD' REGEXP '[[:<:]]cd[[:>:]]'", '1' ),
+			'REGEXP BINARY'           => array( "'ab cd' REGEXP BINARY '[[:<:]]cd'", '1' ),
+			'REGEXP_LIKE'             => array( "REGEXP_LIKE('ab cd', '[[:<:]]cd')", '1' ),
+		);
+	}
+
 	public function testRegexpLegacyOperatorNullPropagation() {
 		$this->assertQuery( "SELECT NULL REGEXP 'a' AS r" );
 		$this->assertNull( $this->last_result[0]->r );
@@ -589,7 +629,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 
 	public function testRegexpNulBytePattern() {
 		// A pattern starting with a NUL byte is an ordinary case-insensitive pattern.
-		// NUL bytes also match in quoted text and after a backslash.
+		// NUL bytes also match in quoted text, after a backslash, and in sets.
 		$this->assertQuery( 'CREATE TABLE nul_patterns (id INT PRIMARY KEY, s TEXT, p TEXT)' );
 		$this->assertQuery(
 			"INSERT INTO nul_patterns VALUES
@@ -597,7 +637,9 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 				(2, 'aBc', X'0062'),
 				(3, 'abc', 'B'),
 				(4, X'61002F62', CONCAT('\\\\Qa', X'00', '/b\\\\E')),
-				(5, X'610062', CONCAT('a\\\\', X'00', 'B'))"
+				(5, X'610062', CONCAT('a\\\\', X'00', 'B')),
+				(6, X'610062', CONCAT('[', X'00', ']')),
+				(7, X'610062', CONCAT('[\\\\Q', X'00', '\\\\E]'))"
 		);
 		$this->assertQuery(
 			'SELECT
@@ -644,6 +686,20 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 					'binary_matched' => '0',
 					'like_matched'   => '1',
 					'position'       => '1',
+				),
+				(object) array(
+					'matched'        => '1',
+					'not_matched'    => '0',
+					'binary_matched' => '1',
+					'like_matched'   => '1',
+					'position'       => '2',
+				),
+				(object) array(
+					'matched'        => '1',
+					'not_matched'    => '0',
+					'binary_matched' => '1',
+					'like_matched'   => '1',
+					'position'       => '2',
 				),
 			),
 			$this->last_result
@@ -824,6 +880,30 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			'literal dot'                  => array( "REGEXP_LIKE('a.b', '^\\\\Qa.b')", '1' ),
 			'literal dot, no match'        => array( "REGEXP_LIKE('axb', '^\\\\Qa.b')", '0' ),
 			'empty'                        => array( "REGEXP_LIKE('', '\\\\Q')", '1' ),
+		);
+	}
+
+	public function testRegexpQuotedTextInExtendedMode() {
+		// Quoted spaces, tabs, and "#" stay literal in extended mode.
+		$this->assertQuery(
+			"SELECT
+				REGEXP_LIKE('a b', '^(?x)\\\\Qa b\\\\E\$') AS space,
+				REGEXP_LIKE('ab', '^(?x)\\\\Qa b\\\\E\$') AS no_space,
+				REGEXP_LIKE('a\tb', '^(?x)\\\\Qa\tb\\\\E\$') AS tab,
+				REGEXP_LIKE('a#b', '^(?x)\\\\Qa#b\\\\E\$') AS hash,
+				REGEXP_LIKE('a', '^(?x)\\\\Qa#b\\\\E') AS comment"
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'space'    => '1',
+					'no_space' => '0',
+					'tab'      => '1',
+					'hash'     => '1',
+					'comment'  => '0',
+				),
+			),
+			$this->last_result
 		);
 	}
 
@@ -1144,6 +1224,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			'REGEXP_REPLACE, second occurrence' => array( "REGEXP_REPLACE('aab', '\\\\Ga', '-', 1, 2)", 'a-b' ),
 			'REGEXP_REPLACE, in a comment'      => array( "REGEXP_REPLACE('aa', '(?#\\\\G)a', 'x', 2)", 'ax' ),
 			'REGEXP_REPLACE, escaped backslash' => array( "REGEXP_REPLACE('a\\\\Gb', '\\\\\\\\G', '-', 2)", 'a-b' ),
+			'REGEXP_REPLACE, letter in a set'   => array( "REGEXP_REPLACE('aGb', '[\\\\G]', 'x', 2)", 'axb' ),
 
 			'REGEXP_SUBSTR, after empty match'  => array( "REGEXP_SUBSTR('abc', '\\\\G', 1, 2)", null ),
 			'REGEXP_SUBSTR, pos'                => array( "REGEXP_SUBSTR('abc', '\\\\G.', 2)", null ),
@@ -1449,8 +1530,10 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 	 * @dataProvider regexpQuoteInCommentCases
 	 */
 	public function testRegexpEscapedKAfterQuoteInComment( $sql, $pattern ) {
-		// The escaper reads a "\Q" in a comment as quoted text, so a later "\K" reaches
-		// PCRE. A match that starts before the search is then an error, not an endless loop.
+		// The translation reads a "\Q" in an extended comment as quoted text, so a later
+		// "\K" reaches PCRE. A match that starts before the search is then an error, not an
+		// endless loop. In a "(?#...)" comment, "\Q" quotes the ")", like in ICU, so the
+		// comment has no end, which is an error too.
 		$this->assertQueryError(
 			'SELECT ' . sprintf( $sql, $this->engine->quote( $pattern ) ),
 			"Invalid regular expression: $pattern."
@@ -1539,6 +1622,396 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			),
 			$this->last_result
 		);
+	}
+
+	/**
+	 * @dataProvider regexpSetCases
+	 * @dataProvider regexpCodePointEscapeCases
+	 * @dataProvider regexpLiteralEscapeCases
+	 * @dataProvider regexpWordCases
+	 * @dataProvider regexpPropertyCases
+	 * @dataProvider regexpCommentCases
+	 */
+	public function testRegexpIcuSyntax( $pattern, $subject, $expected ) {
+		$this->assertQuery(
+			sprintf(
+				"SELECT REGEXP_REPLACE(%s, %s, '<\$0>', 1, 0, 'c') AS r",
+				$this->engine->quote( $subject ),
+				$this->engine->quote( $pattern )
+			)
+		);
+		$this->assertSame( $expected, $this->last_result[0]->r );
+	}
+
+	public static function regexpSetCases() {
+		return array(
+			// Nested sets are unions.
+			'nested set'                       => array( '[a[b]]', 'abc', '<a><b>c' ),
+			'nested range'                     => array( '[a-c[b]]', 'abcd', '<a><b><c>d' ),
+			'nested negated set'               => array( '[a[^b]]', 'abc', '<a>b<c>' ),
+			'negated union'                    => array( '[^a[^b]]', 'abc', 'a<b>c' ),
+			'"]" first'                        => array( '[]a]', ']ab', '<]><a>b' ),
+			'"]" first, negated'               => array( '[^]a]', ']ab', ']a<b>' ),
+			'":" first'                        => array( '[:\w]+', 'a:b c', '<a:b> <c>' ),
+			'":" first, then a POSIX class'    => array( '[:[:alpha:]]', 'a:1', '<a><:>1' ),
+			'"[:" without ":]"'                => array( '[:a:b]', 'xab:', 'x<a><b><:>' ),
+
+			// "--" and "&&" apply to the items up to the next of them, from left to right.
+			'difference'                       => array( '[a-z--[b]--[c]]', 'abcd-', '<a>bc<d>-' ),
+			'difference of characters'         => array( '[a-z--b--c]', 'abcd-', '<a>bc<d>-' ),
+			'difference of all items'          => array( '[[a-c]--[b]x]', 'abcx', '<a>b<c>x' ),
+			'intersection'                     => array( '[\w&&[a-c]]', 'abd-', '<a><b>d-' ),
+			'intersection of all items'        => array( '[[a-c]&&[b]x]', 'abcx', 'a<b>cx' ),
+			'intersection, then difference'    => array( '[a-z&&[a-m]--c]', 'abcdn-', '<a><b>c<d>n-' ),
+			'difference, then intersection'    => array( '[[a-z]--[b]&&[a-c]]', 'abcd-', '<a>b<c>d-' ),
+			'negated intersection'             => array( '[^[a-c]&&[b-d]]', 'abcd', '<a>bc<d>' ),
+			'empty intersection'               => array( '[a&&b]', 'ab', 'ab' ),
+			'class escapes'                    => array( '[\w--\d]', 'a1_', '<a>1<_>' ),
+			'POSIX classes'                    => array( '[[:alpha:]&&[:upper:]]', 'aBc', 'a<B>c' ),
+			'literal "&" after "&&"'           => array( '[&abcd&&&ac]', 'bac&&cad', 'b<a><c><&><&><c><a>d' ),
+			'literal "-" after "--"'           => array( '[-abcd---]', 'abc--', '<a><b><c>--' ),
+
+			// A single "-" or "&" between two sets applies to all the items before it. Class
+			// escapes and properties right after the second set join that set.
+			'single "-" between sets'          => array( '[[a-m]-[f-w]p]', 'depfgwxyz', '<d><e><p>fgwxyz' ),
+			'single "-", chained'              => array( '[[a-z]-[aeiou]-[xyz]]', 'abex-', 'a<b>ex-' ),
+			'single "-" in an operand'         => array( '[a-z--[b]-[c]]', 'abcd-', '<a>b<c><d>-' ),
+			'single "-" after a property'      => array( '[\p{L}-[:digit:]]', 'a-5', '<a>-5' ),
+			'single "-" after a POSIX class'   => array( '[[:digit:]-[:alpha:]]', '0-z', '<0>-z' ),
+			'single "&" between sets'          => array( '[[a-m]&[e-s]w]', 'efmwadnst', '<e><f><m><w>adnst' ),
+			'single "&" after a property'      => array( '[\p{L}&[a]]', 'ab&', '<a>b&' ),
+			'single "-" after a union'         => array( '[a[b]-[a]]', 'ab', 'a<b>' ),
+			'single "-" after a union of sets' => array( '[[a][b]-[a][c]]', 'abc', 'a<b><c>' ),
+			'single "&" after a union'         => array( '[x[a-m]&[e-s]]', 'xaf', 'xa<f>' ),
+			'class escape after a single "-"'  => array( '[[a-z]-[aeiou]\d]', 'ba1', '<b>a1' ),
+			'class escape after a single "&"'  => array( '[[a-z]&[a-m]\d]', 'bn1', '<b>n1' ),
+			'property after a single "-"'      => array( '[[a-z]-[aeiou]\p{Nd}]', 'ba1', '<b>a1' ),
+			'"-" after a joined property'      => array( '[[a-z]-[aeiou]\p{Nd}-[b]]', 'bc1', 'b<c>1' ),
+			'letter after a joined escape'     => array( '[[a-z]-[aeiou]\d1]', '12b', '<1>2<b>' ),
+			'POSIX class after a single "-"'   => array( '[[a-z]-[aeiou][:digit:]]', 'a1b', 'a<1><b>' ),
+
+			// Elsewhere, "-" and "&" are literal, unless "-" makes a range.
+			'"-" after a class escape'         => array( '[\w-[0-9]]', 'a-5_', '<a><-><5><_>' ),
+			'"-" before a property'            => array( '[\p{L}-\p{N}]', 'a-5', '<a><-><5>' ),
+			'"-" after a set, before a letter' => array( '[[a]-b]', 'ab-', '<a><b><->' ),
+			'"-" after a letter, before a set' => array( '[ab-[c]]', 'abc-', '<a><b><c><->' ),
+			'"-" after a letter, after a set'  => array( '[[a]b-[b]]', 'ab-', '<a><b><->' ),
+			'"-" after a letter, before POSIX' => array( '[a-[:digit:]]', 'za-9', 'z<a><-><9>' ),
+			'"-" after a POSIX class'          => array( '[[:digit:]-z]', '0-z=', '<0><-><z>=' ),
+			'"-" after a range'                => array( '[a-c-e]', 'abcde-', '<a><b><c>d<e><->' ),
+			'"-" first and last'               => array( '[-a]', 'a-b', '<a><->b' ),
+			'"-" after "^"'                    => array( '[^-a]', '-ab', '-a<b>' ),
+			'"&" between a set and a letter'   => array( '[[a]&b]', 'ab&', '<a><b><&>' ),
+			'"&" between a letter and a set'   => array( '[abcd&[ac]]', 'bd&x', '<b><d><&>x' ),
+			'"&" before a class escape'        => array( '[[a-c]&\w]', 'abd-&', '<a><b><d>-<&>' ),
+			'"&" last'                         => array( '[a-z&]', 'a&', '<a><&>' ),
+			'escaped bracket'                  => array( '[\[a]', '[a', '<[><a>' ),
+			'escaped hyphen'                   => array( '[a\-z]', 'a-zb', '<a><-><z>b' ),
+			'hex range'                        => array( '[\x{41}-\x{43}]', 'ABCD', '<A><B><C>D' ),
+			'quoted bracket'                   => array( '[\Qa]\E]', ']a', '<]><a>' ),
+			'empty quotes'                     => array( '[\W\Q\E]', 'a:', 'a<:>' ),
+			'empty quotes outside of a set'    => array( '(a)\1\Q\E0', 'aa0', '<aa0>' ),
+			'empty quotes before "-"'          => array( '[\Q\E-\w]', 'a-', '<a><->' ),
+			'empty quotes after a set'         => array( '[[a]\Q\E-z]', 'am-z', '<a>m<-><z>' ),
+			'empty quotes before a set'        => array( '[[a]-\Q\E[b]]', 'ab-', '<a>b-' ),
+			'quotes that end a range'          => array( '[a-\Qbc\E-z]', 'cm-', '<c><m>-' ),
+			'slash'                            => array( '[/a]', '/ab', '</><a>b' ),
+			'quoted slash'                     => array( '[\Q/\E]', 'a/', 'a</>' ),
+			'slash in a difference'            => array( '[[/a]--[a]]', '/a', '</>a' ),
+			'long set'                         => array( '[' . str_repeat( 'ab', 10000 ) . ']+', 'xab', 'x<ab>' ),
+			'"[]" in an extended comment'      => array( "(?x)a # []\nb", 'ab', '<ab>' ),
+			'"[^]" in an extended comment'     => array( "(?x)a # [^]\nb", 'ab', '<ab>' ),
+			'"\\c[" in a set'                  => array( '[\c[]', "a\e", "a<\e>" ),
+			'"\\c]" in a set'                  => array( '[\c]]', "a\x1D", "a<\x1D>" ),
+
+			// A POSIX class outside of a set is a set.
+			'POSIX class outside of a set'     => array( '[:alpha:]+', 'ab1', '<ab>1' ),
+			'negated POSIX class'              => array( '[:^alpha:]', 'a1', 'a<1>' ),
+			'POSIX class after a letter'       => array( 'x[:alpha:]', 'xa', '<xa>' ),
+
+			// Sets in lookbehinds.
+			'negated union in a lookbehind'    => array( '(?<![^[^a]a])', 'abc', '<>a<>b<>c<>' ),
+			'empty set in a lookbehind'        => array( '(?<![a&&m]c)', 'abc', '<>a<>b<>c<>' ),
+		);
+	}
+
+	public static function regexpCodePointEscapeCases() {
+		return array(
+			'"\\u"'                     => array( '\\u0041', 'ABA', '<A>B<A>' ),
+			'"\\u" in a set'            => array( '[\\u0041c]+', 'AcAcdef', '<AcAc>def' ),
+			'"\\u" range'               => array( '[\\u0041-\\u0043]', 'ABCD', '<A><B><C>D' ),
+			'"\\u", 2 bytes'            => array( 'caf\\u00e9', 'café', '<café>' ),
+			'"\\U"'                     => array( '\\U00010400', '𐐀', '<𐐀>' ),
+			'"\\U" range'               => array( '[\\u0000-\\U0010ffff]+', 'a😀', '<a😀>' ),
+			'negated "\\U" range'       => array( '[^\\u0000-\\U0010ffff]', 'a😀', 'a😀' ),
+			'surrogate pair'            => array( '\\ud800\\udc00', 'a𐀀', 'a<𐀀>' ),
+			'surrogate pair, uppercase' => array( '\\uD800\\uDC00', 'a𐀀', 'a<𐀀>' ),
+			'escaped backslash'         => array( '\\\\\\u0041', 'A', 'A' ),
+			'quoted'                    => array( '\\Q\\u0041\\E', 'u0041', 'u0041' ),
+			'octal'                     => array( '\\0101', 'ABA', '<A>B<A>' ),
+			'octal, 1 and 2 digits'     => array( '\\0154\\01442', 'ld2', '<ld2>' ),
+			'octal up to 0377'          => array( '\\0376', 'þ', '<þ>' ),
+			'octal past 0377'           => array( '\\0400', ' 0', '< 0>' ),
+			'octal NUL'                 => array( '\\00', 'a', 'a' ),
+			'octal range'               => array( '[\\0101-\\0103]', 'ABCD', '<A><B><C>D' ),
+			'"\\x4" in a nested set'    => array( '[\\x4[5]]', "\x045E", "<\x04><5>E" ),
+			'"\\x4" before quotes'      => array( '\\x4\\Q\\E5', "\x045E", "<\x045>E" ),
+			'"\\x4", quotes in a set'   => array( '[\\x4\\Q\\E5]', "\x045E", "<\x04><5>E" ),
+			'"\\c" and a digit'         => array( '\\c1', "q\x11", "q<\x11>" ),
+			'"\\c?"'                    => array( '\\c?', "\x7F\x1F", "\x7F<\x1F>" ),
+			'"\\c/"'                    => array( '\\c/', "/\x0F", "/<\x0F>" ),
+			'"\\c\\" at the end'        => array( 'a\\c\\', "a\x1C", "<a\x1C>" ),
+			'"\\c" and 2 bytes'         => array( "\\c\u{E9}", "\x03\x09", "\x03<\x09>" ),
+			'"\\c" in a set'            => array( '[\\c1]', "q\x11", "q<\x11>" ),
+		);
+	}
+
+	public static function regexpLiteralEscapeCases() {
+		return array(
+			'"\\y"'                   => array( '\\y', 'xy', 'x<y>' ),
+			'"\\j" in a set'          => array( '[\\j]+', 'jjx', '<jj>x' ),
+			'"\\K"'                   => array( 'a\\Kb', 'abaKb', 'ab<aKb>' ),
+			'"\\K" in a lookbehind'   => array( '(?<=\\Ka)', 'Kaa', 'Ka<>a' ),
+			'"\\C"'                   => array( '\\C', 'aC', 'a<C>' ),
+			'"\\E" outside of quotes' => array( 'a\\Eb', 'abaEb', 'ab<aEb>' ),
+			'"\\b" in a set'          => array( '[\\b]', 'ab', 'a<b>' ),
+			'"\\z" in a set'          => array( '[\\z]+', 'azz', 'a<zz>' ),
+			'"\\X" in a set'          => array( '[\\X]', 'aX', 'a<X>' ),
+			'"\\b" outside of a set'  => array( '\\bb', 'ab b', 'ab <b>' ),
+			'"\\z" outside of a set'  => array( 'a\\z', 'aa', 'a<a>' ),
+			'"\\x4\\E"'               => array( '\\x4\\E', "\x04E", "<\x04E>" ),
+			'"\\x4\\b" in a set'      => array( '[\\x4\\b]', "\x04bK", "<\x04><b>K" ),
+		);
+	}
+
+	public static function regexpWordCases() {
+		return array(
+			'"\\w" and marks'              => array( '\\w+', 'नमस्ते สวัสดี தமிழ்', '<नमस्ते> <สวัสดี> <தமிழ்>' ),
+			'"\\b" and marks'              => array( '\\bहिन्दी\\b', 'हिन्दी है', '<हिन्दी> है' ),
+			'"\\b" and a combining accent' => array( "\\bcafe\u{301}\\b", "a cafe\u{301} b", "a <cafe\u{301}> b" ),
+			'"\\w" and other numbers'      => array( '\\w', 'x²Ⅻ', '<x>²<Ⅻ>' ),
+			'"\\w" and letter symbols'     => array( '\\w', 'Ⓐ🄰', '<Ⓐ><🄰>' ),
+			'"\\w" and joiners'            => array( '\\w+', "ab\u{200C}cd\u{200D}ef", "<ab\u{200C}cd\u{200D}ef>" ),
+			'"\\w" and connectors'         => array( '\\w', '_‿', '<_><‿>' ),
+			'"\\W"'                        => array( '\\W+', "ab\u{200C}cd ²", "ab\u{200C}cd< ²>" ),
+			'"\\b"'                        => array( '\\b', 'ab cd', '<>ab<> <>cd<>' ),
+			'"\\B"'                        => array( '\\B', 'ab cd', 'a<>b c<>d' ),
+			'"\\w" in a set'               => array( '[\\w]+', 'ab²', '<ab>²' ),
+			'"\\W" in a set'               => array( '[\\W]+', 'ab²', 'ab<²>' ),
+			'"\\W" in a negated set'       => array( '[^\\W]+', 'ab² c', '<ab>² <c>' ),
+			'"[:word:]"'                   => array( '[[:word:]]+', 'नमस्ते ²', '<नमस्ते> ²' ),
+			'"[:^word:]"'                  => array( '[[:^word:]]+', "ab\u{200C}cd ²", "ab\u{200C}cd< ²>" ),
+			'"[:word:]" outside of a set'  => array( '[:word:]+', 'a²', '<a>²' ),
+			'"\\p{word}"'                  => array( '\\p{word}+', 'a² b', '<a>² <b>' ),
+			'"\\P{Word}"'                  => array( '\\P{Word}+', 'a² b', 'a<² >b' ),
+			'"\\w" in an intersection'     => array( '[\\w&&[^a]]+', 'ab²c', 'a<b>²<c>' ),
+			'"\\d"'                        => array( '\\d+', '١٢٣ ²', '<١٢٣> ²' ),
+		);
+	}
+
+	public static function regexpPropertyCases() {
+		return array(
+			'long name'                => array( '\\p{Lowercase_Letter}+', 'aBc', '<a>B<c>' ),
+			'long name with spaces'    => array( '\\p{lowercase letter}+', 'aBc', '<a>B<c>' ),
+			'long name in capitals'    => array( '\\p{LOWERCASELETTER}+', 'aBc', '<a>B<c>' ),
+			'long name with hyphens'   => array( '\\p{lowercase-letter}+', 'aBc', '<a>B<c>' ),
+			'negated long name'        => array( '\\P{Uppercase_Letter}+', 'aBc', '<a>B<c>' ),
+			'short name in lowercase'  => array( '\\p{lu}+', 'aBc', 'a<B>c' ),
+			'"Is" prefix'              => array( '\\p{IsLetter}+', 'a1b', '<a>1<b>' ),
+			'"Is" and a short name'    => array( '\\p{IsLu}+', 'aBc', 'a<B>c' ),
+			'"gc=" prefix'             => array( '\\p{gc=Lu}+', 'aBc', 'a<B>c' ),
+			'"General_Category="'      => array( '\\p{General_Category=Lu}+', 'aBc', 'a<B>c' ),
+			'alias "punct"'            => array( '\\p{punct}+', 'a.,b+', 'a<.,>b+' ),
+			'alias "digit"'            => array( '\\p{IsDigit}+', 'a12²', 'a<12>²' ),
+			'cased letters'            => array( '\\p{Cased_Letter}+', 'aB1', '<aB>1' ),
+			'short name "LC"'          => array( '\\p{LC}+', 'aB1', '<aB>1' ),
+			'"gc=" and "LC"'           => array( '\\p{gc=LC}+', 'aB1', '<aB>1' ),
+			'"LC" in POSIX syntax'     => array( '[:LC:]+', 'aB1', '<aB>1' ),
+			'property in POSIX syntax' => array( '[:Lu:]+', 'aBc', 'a<B>c' ),
+			'long name in POSIX'       => array( '[:Punctuation:]+', 'a.b', 'a<.>b' ),
+			'negated POSIX property'   => array( '[:^Lu:]+', 'aBc', '<a>B<c>' ),
+			'POSIX class as "\\p"'     => array( '\\p{alnum}+', 'a1-', '<a1>-' ),
+			'POSIX "xdigit" as "\\p"'  => array( '\\p{xdigit}+', 'fg', '<f>g' ),
+			'POSIX class as "\\P"'     => array( '\\P{alpha}+', 'a1b', 'a<1>b' ),
+			'"Is" and "Uppercase"'     => array( '\\p{IsUppercase}+', 'aBc', 'a<B>c' ),
+			'POSIX property in a set'  => array( '[[:Lu:]x]+', 'aBxc', 'a<Bx>c' ),
+			'POSIX class in capitals'  => array( '[:Alpha:]+', 'a1b', '<a>1<b>' ),
+			'POSIX syntax with spaces' => array( '[:Uppercase Letter:]+', 'aBc', 'a<B>c' ),
+			'POSIX syntax with "gc="'  => array( '[[:gc=Lu:]]+', 'aBc', 'a<B>c' ),
+			'negated POSIX with "gc="' => array( '[[:^gc=Lu:]]+', 'aBc', '<a>B<c>' ),
+			'script'                   => array( '\\p{Greek}+', 'aαβ', 'a<αβ>' ),
+			'"Is" and a script'        => array( '\\p{IsGreek}+', 'aαβ', 'a<αβ>' ),
+		);
+	}
+
+	public static function regexpCommentCases() {
+		return array(
+			'escape in a comment'     => array( 'a(?#\b)b', 'ab', '<ab>' ),
+			'set in a comment'        => array( '(?#[a--])a', 'a', '<a>' ),
+			'quoted ")" in a comment' => array( '(?#\Q)a\E)b', 'ab', 'a<b>' ),
+			'slash in a comment'      => array( '(?#/)a', 'a', '<a>' ),
+			'comment before a digit'  => array( '(a)\1(?#)0', 'aa0', '<aa0>' ),
+			'comment in a set'        => array( '[(?#)]+', '#)a', '<#)>a' ),
+			'"\\\\Q" in a comment'    => array( '(?#\\\\Q)a', 'a', '<a>' ),
+		);
+	}
+
+	/**
+	 * @dataProvider regexpInvalidSetCases
+	 */
+	public function testRegexpInvalidSets( $pattern ) {
+		$this->assertQueryError(
+			sprintf( "SELECT REGEXP_LIKE('a', %s)", $this->engine->quote( $pattern ) ),
+			"Invalid regular expression: $pattern."
+		);
+	}
+
+	public static function regexpInvalidSetCases() {
+		return array(
+			'empty set'                  => array( '[]' ),
+			'empty negated set'          => array( '[^]' ),
+			'"--" first'                 => array( '[--]' ),
+			'"&&" first'                 => array( '[&&a]' ),
+			'"--" last'                  => array( '[a--]' ),
+			'"&&" last'                  => array( '[a-z&&]' ),
+			'"--" first in a nested set' => array( '[abc[--def]]' ),
+			'range to a class escape'    => array( '[a-\w]' ),
+			'POSIX class with a comma'   => array( '[[:,:]]' ),
+			'POSIX class with an escape' => array( '[:\w:]' ),
+			'only empty quotes'          => array( '[\Q\E]' ),
+		);
+	}
+
+	/**
+	 * @dataProvider regexpSetIgnoreCaseCases
+	 */
+	public function testRegexpSetsIgnoreCase( $sql, $expected ) {
+		$this->assertQuery( "SELECT $sql AS r" );
+		$this->assertSame( $expected, $this->last_result[0]->r );
+	}
+
+	public static function regexpSetIgnoreCaseCases() {
+		// Without the "c" flag, set operations ignore case, also in their operands.
+		return array(
+			'difference'            => array( "REGEXP_LIKE('B', '^[a-z--[aeiou]]\$')", '1' ),
+			'difference, removed'   => array( "REGEXP_LIKE('A', '^[a-z--[aeiou]]\$')", '0' ),
+			'intersection'          => array( "REGEXP_LIKE('b', '^[a-z&&[A-C]]\$')", '1' ),
+			'intersection, removed' => array( "REGEXP_LIKE('D', '^[a-z&&[A-C]]\$')", '0' ),
+			'single "-"'            => array( "REGEXP_LIKE('b', '^[[a-z]-[B]]\$')", '0' ),
+			'negated difference'    => array( "REGEXP_LIKE('E', '^[^a-z--[aeiou]]\$')", '1' ),
+		);
+	}
+
+	/**
+	 * @dataProvider regexpPosixCaseClassCases
+	 */
+	public function testRegexpPosixCaseClasses( $sql, $expected ) {
+		$this->assertQuery( "SELECT $sql AS r" );
+		$this->assertSame( $expected, $this->last_result[0]->r );
+	}
+
+	public static function regexpPosixCaseClassCases() {
+		return array(
+			// Without the "c" flag, the classes ignore case, like in MySQL.
+			'upper, lowercase'         => array( "REGEXP_LIKE('a', '[[:upper:]]')", '1' ),
+			'lower, uppercase'         => array( "REGEXP_LIKE('A', '[[:lower:]]')", '1' ),
+			'upper, non-ASCII'         => array( "REGEXP_LIKE('é', '[[:upper:]]')", '1' ),
+			'lower, non-ASCII'         => array( "REGEXP_LIKE('É', '[[:lower:]]')", '1' ),
+			'upper, digit'             => array( "REGEXP_LIKE('1', '[[:upper:]]')", '0' ),
+			'negated class'            => array( "REGEXP_LIKE('a', '[[:^upper:]]')", '0' ),
+			'negated class, digit'     => array( "REGEXP_LIKE('1', '[[:^upper:]]')", '1' ),
+			'negated set'              => array( "REGEXP_LIKE('a', '[^[:upper:]]')", '0' ),
+			'with other set members'   => array( "REGEXP_LIKE('a', '^[[:upper:]0-9]\$')", '1' ),
+			'outside of a set'         => array( "REGEXP_LIKE('a', '[:upper:]')", '1' ),
+			'set difference'           => array( "REGEXP_LIKE('a', '^[[:upper:]--[b]]\$')", '1' ),
+			'set difference, removed'  => array( "REGEXP_LIKE('b', '^[[:upper:]--[b]]\$')", '0' ),
+			'REGEXP_REPLACE'           => array( "REGEXP_REPLACE('abC', '[[:lower:]]', 'x')", 'xxx' ),
+			'REGEXP_SUBSTR'            => array( "REGEXP_SUBSTR('abc1', '[[:upper:]]+')", 'abc' ),
+			'REGEXP_INSTR'             => array( "REGEXP_INSTR('1a', '[[:upper:]]')", '2' ),
+			'operator'                 => array( "'a' REGEXP '[[:upper:]]'", '1' ),
+			'negated operator'         => array( "'a' NOT REGEXP '[[:upper:]]'", '0' ),
+
+			// So do the matching Unicode properties.
+			'\\p{Lu}, lowercase'       => array( "REGEXP_LIKE('a', '\\\\p{Lu}')", '1' ),
+			'\\p{Ll}, uppercase'       => array( "REGEXP_LIKE('A', '\\\\p{Ll}')", '1' ),
+			'\\p{Lu}, non-ASCII'       => array( "REGEXP_LIKE('é', '\\\\p{Lu}')", '1' ),
+			'\\p{Lu}, digit'           => array( "REGEXP_LIKE('1', '\\\\p{Lu}')", '0' ),
+			'\\P{Lu}, lowercase'       => array( "REGEXP_LIKE('a', '\\\\P{Lu}')", '0' ),
+			'\\P{Lu}, digit'           => array( "REGEXP_LIKE('1', '\\\\P{Lu}')", '1' ),
+			'\\p{Lu} in a set'         => array( "REGEXP_LIKE('a', '[\\\\p{Lu}]')", '1' ),
+			'\\p{Lu} in a negated set' => array( "REGEXP_LIKE('a', '[^\\\\p{Lu}]')", '0' ),
+			'\\p{Lu}, intersection'    => array( "REGEXP_LIKE('a', '^[\\\\p{Lu}&&[a-c]]\$')", '1' ),
+			'long name, lowercase'     => array( "REGEXP_LIKE('a', '\\\\p{Uppercase_Letter}')", '1' ),
+			'capitals, lowercase'      => array( "REGEXP_LIKE('a', '[[:Upper:]]')", '1' ),
+			'\\p{Upper}, lowercase'    => array( "REGEXP_LIKE('a', '\\\\p{Upper}')", '1' ),
+			'\\p{Lower}, uppercase'    => array( "REGEXP_LIKE('A', '\\\\p{Lower}')", '1' ),
+			'\\p{Uppercase}'           => array( "REGEXP_LIKE('a', '\\\\p{Uppercase}')", '1' ),
+			'[:Uppercase:]'            => array( "REGEXP_LIKE('a', '[[:Uppercase:]]')", '1' ),
+			'\\p{Upper}, c flag'       => array( "REGEXP_LIKE('a', '\\\\p{Upper}', 'c')", '0' ),
+			'\\p{Lu}, REGEXP_REPLACE'  => array( "REGEXP_REPLACE('aB1', '\\\\p{Lu}', 'x')", 'xx1' ),
+			'\\p{Ll}, operator'        => array( "'A' REGEXP '\\\\p{Ll}'", '1' ),
+			'\\p{Lu}, c flag'          => array( "REGEXP_LIKE('a', '\\\\p{Lu}', 'c')", '0' ),
+			'\\p{Lu}, inline flag'     => array( "REGEXP_LIKE('a', '(?-i)\\\\p{Lu}')", '0' ),
+			'quoted \\p{Lu}'           => array( "REGEXP_LIKE('a', '\\\\Q\\\\p{Lu}\\\\E')", '0' ),
+			'escaped backslash'        => array( "REGEXP_LIKE('\\\\p{Lu}', '^\\\\\\\\p\\\\{Lu\\\\}\$')", '1' ),
+
+			// With the "c" flag, the classes keep their case.
+			'c flag, upper'            => array( "REGEXP_LIKE('A', '[[:upper:]]', 'c')", '1' ),
+			'c flag, other case'       => array( "REGEXP_LIKE('a', '[[:upper:]]', 'c')", '0' ),
+			'c flag, lower other case' => array( "REGEXP_LIKE('A', '[[:lower:]]', 'c')", '0' ),
+
+			// So they do with "(?-i)", which is how the REGEXP operator matches case.
+			'inline flag, upper'       => array( "REGEXP_LIKE('A', '(?-i)[[:upper:]]')", '1' ),
+			'inline flag, other case'  => array( "REGEXP_LIKE('a', '(?-i)[[:upper:]]')", '0' ),
+			'inline flag in a group'   => array( "REGEXP_LIKE('a', '(?-i:[[:upper:]])')", '0' ),
+			'inline flag among others' => array( "REGEXP_LIKE('a', '(?s-i)[[:upper:]]')", '0' ),
+			'inline flag, operator'    => array( "'a' REGEXP '(?-i)[[:upper:]]'", '0' ),
+
+			// Escaped and quoted text is not a class.
+			'escaped bracket'          => array( "REGEXP_LIKE('[:upper:]', '^\\\\[:upper:]\$')", '1' ),
+			'escaped bracket, letter'  => array( "REGEXP_LIKE('a', '^\\\\[:upper:]\$')", '0' ),
+			'quoted class'             => array( "REGEXP_LIKE('[:upper:]', '^\\\\Q[:upper:]\\\\E\$')", '1' ),
+			'quoted class, letter'     => array( "REGEXP_LIKE('a', '\\\\Q[:upper:]\\\\E')", '0' ),
+		);
+	}
+
+	/**
+	 * @dataProvider regexpPosixPunctCases
+	 */
+	public function testRegexpPosixPunct( $sql, $expected ) {
+		$this->assertQuery( "SELECT $sql AS r" );
+		$this->assertSame( $expected, $this->last_result[0]->r );
+	}
+
+	public static function regexpPosixPunctCases() {
+		return array(
+			// ICU's class holds Unicode punctuation only, without ASCII symbols.
+			'ASCII punctuation'      => array( "REGEXP_LIKE('.', '[[:punct:]]')", '1' ),
+			'plus'                   => array( "REGEXP_LIKE('+', '[[:punct:]]')", '0' ),
+			'dollar'                 => array( "REGEXP_LIKE('\$', '[[:punct:]]')", '0' ),
+			'equals'                 => array( "REGEXP_LIKE('=', '[[:punct:]]')", '0' ),
+			'tilde'                  => array( "REGEXP_LIKE('~', '[[:punct:]]')", '0' ),
+			'non-ASCII punctuation'  => array( "REGEXP_LIKE('«', '[[:punct:]]')", '1' ),
+			'non-ASCII symbol'       => array( "REGEXP_LIKE('€', '[[:punct:]]')", '0' ),
+			'c flag'                 => array( "REGEXP_LIKE('+', '[[:punct:]]', 'c')", '0' ),
+			'negated class'          => array( "REGEXP_LIKE('.', '[[:^punct:]]')", '0' ),
+			'negated class, symbol'  => array( "REGEXP_LIKE('+', '[[:^punct:]]')", '1' ),
+			'with other set members' => array( "REGEXP_LIKE('+', '^[[:punct:]+]\$')", '1' ),
+			'outside of a set'       => array( "REGEXP_LIKE('.', '[:punct:]')", '1' ),
+			'capitals, symbol'       => array( "REGEXP_LIKE('+', '[[:PUNCT:]]')", '0' ),
+			'REGEXP_REPLACE'         => array( "REGEXP_REPLACE('a+b.c\$d,e=f!g', '[[:punct:]]', '')", 'a+bc$de=fg' ),
+			'operator, punctuation'  => array( "'.' REGEXP '[[:punct:]]'", '1' ),
+			'operator, symbol'       => array( "'+' REGEXP '[[:punct:]]'", '0' ),
+			'quoted class'           => array( "REGEXP_LIKE('.', '\\\\Q[:punct:]\\\\E')", '0' ),
+		);
+	}
+
+	public function testRegexpPosixPunctOnBinaryData() {
+		// Bytes that are not valid UTF-8 are read as Latin-1, where 0xAB is "«".
+		$this->assertQuery( 'CREATE TABLE blobs (id INT PRIMARY KEY, b BLOB)' );
+		$this->assertQuery( "INSERT INTO blobs VALUES (1, X'2BFF'), (2, X'2EFF'), (3, X'AB')" );
+		$this->assertQuery( "SELECT b REGEXP '[[:punct:]]' AS r FROM blobs ORDER BY id" );
+		$this->assertSame( array( '0', '1', '1' ), array_column( $this->last_result, 'r' ) );
 	}
 
 	public function testInsertDateNow() {
