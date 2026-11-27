@@ -349,6 +349,10 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 	public function test_invalid_input_returns_partial_stream_without_end_markers(): void {
 		$names = self::token_names( "SELECT 1 WITH \x01" );
 		$this->assertSame( array( 'SELECT', 'NUM', 'WITH' ), $names );
+
+		// A quoted hex literal with an odd number of digits ends the stream
+		// after the last valid token, like other invalid input.
+		$this->assertSame( array( 'SELECT' ), self::token_names( "SELECT x'711'" ) );
 	}
 
 	/**
@@ -786,6 +790,9 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 			array( "x''", array_merge( array( WP_MySQL_Lexer::HEX_NUM ), $end ) ),
 			array( "x'", array() ), // invalid input
 			array( "x'ab", array() ), // invalid input
+			array( "x'711'", array() ), // invalid input, odd number of digits
+			array( "X'7'", array() ), // invalid input, odd number of digits
+			array( "x'7111'", array_merge( array( WP_MySQL_Lexer::HEX_NUM ), $end ) ),
 
 			// decimal
 			array( '123.456', array_merge( array( WP_MySQL_Lexer::DECIMAL_NUM ), $end ) ),
