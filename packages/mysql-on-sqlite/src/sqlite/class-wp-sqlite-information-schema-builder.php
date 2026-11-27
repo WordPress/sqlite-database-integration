@@ -359,15 +359,40 @@ class WP_SQLite_Information_Schema_Builder {
 	private $connection;
 
 	/**
+	 * Emulated MySQL version as an integer.
+	 *
+	 * @var int
+	 */
+	private $mysql_version;
+
+	/**
 	 * Constructor.
 	 *
 	 * @param string               $reserved_prefix An identifier prefix for internal database objects.
 	 * @param WP_SQLite_Connection $connection      An instance of the SQLite connection.
+	 * @param int                  $mysql_version   Optional. The emulated MySQL version as an integer. Default 80038.
 	 */
-	public function __construct( string $reserved_prefix, WP_SQLite_Connection $connection ) {
+	public function __construct(
+		string $reserved_prefix,
+		WP_SQLite_Connection $connection,
+		int $mysql_version = WP_MySQL_On_SQLite::DEFAULT_MYSQL_VERSION
+	) {
 		$this->connection             = $connection;
 		$this->table_prefix           = $reserved_prefix . 'mysql_information_schema_';
 		$this->temporary_table_prefix = $reserved_prefix . 'mysql_information_schema_tmp_';
+		$this->mysql_version          = $mysql_version;
+	}
+
+	/**
+	 * Check whether inline REFERENCES clauses are enforced for foreign keys.
+	 *
+	 * In MySQL, inline REFERENCES clauses are parsed but ignored prior to MySQL 9.0.
+	 * Starting with MySQL 9.0, inline REFERENCES clauses define foreign key constraints.
+	 *
+	 * @return bool True if inline REFERENCES clauses are enforced, false if ignored.
+	 */
+	private function supports_inline_references(): bool {
+		return $this->mysql_version >= 90000;
 	}
 
 	/**
@@ -602,10 +627,9 @@ class WP_SQLite_Information_Schema_Builder {
 				$table_name,
 				$index_data['index_name'] ?? null
 			);
-			$referential_constraint_data = $this->extract_referential_constraint_data(
-				$column_node,
-				$table_name
-			);
+			$referential_constraint_data = $this->supports_inline_references()
+				? $this->extract_referential_constraint_data( $column_node, $table_name )
+				: null;
 			$key_column_usage_data       = $this->extract_key_column_usage_data(
 				$column_node,
 				$table_name,
@@ -1925,6 +1949,10 @@ class WP_SQLite_Information_Schema_Builder {
 	 * @return array|null                 The referential constraint data as stored in information schema.
 	 */
 	private function extract_referential_constraint_data( WP_Parser_Node $node, string $table_name ): ?array {
+		if ( 'tableConstraintDef' !== $node->rule_name && ! $this->supports_inline_references() ) {
+			return null;
+		}
+
 		$references = $node->get_first_descendant_node( 'references' );
 		if ( null === $references ) {
 			return null;
@@ -2017,7 +2045,7 @@ class WP_SQLite_Information_Schema_Builder {
 	): array {
 		$is_primary = $node->get_first_descendant_token( WP_MySQL_Lexer::PRIMARY_SYMBOL );
 		$is_unique  = $node->get_first_descendant_token( WP_MySQL_Lexer::UNIQUE_SYMBOL );
-		$references = $node->get_first_descendant_node( 'references' );
+		$references = ( 'tableConstraintDef' === $node->rule_name || $this->supports_inline_references() ) ? $node->get_first_descendant_node( 'references' ) : null;
 		if ( null === $references && ! $is_primary && ! $is_unique ) {
 			return array();
 		}
@@ -3038,7 +3066,7 @@ class WP_SQLite_Information_Schema_Builder {
 			return $this->get_value( $name_node->get_first_child_node( 'identifier' ) );
 		}
 
-		$foreign_key      = $node->get_first_descendant_node( 'references' );
+		$foreign_key      = ( 'tableConstraintDef' === $node->rule_name || $this->supports_inline_references() ) ? $node->get_first_descendant_node( 'references' ) : null;
 		$check_constraint = $node->get_first_descendant_node( 'checkConstraint' );
 
 		// FOREIGN KEY and CHECK constraints without a name get a generated name.
@@ -3096,7 +3124,7 @@ class WP_SQLite_Information_Schema_Builder {
 		if ( $node->get_first_descendant_token( WP_MySQL_Lexer::UNIQUE_SYMBOL ) ) {
 			return 'UNIQUE';
 		}
-		if ( $node->get_first_descendant_node( 'references' ) ) {
+		if ( ( 'tableConstraintDef' === $node->rule_name || $this->supports_inline_references() ) && $node->get_first_descendant_node( 'references' ) ) {
 			return 'FOREIGN KEY';
 		}
 		if ( $node->get_first_descendant_node( 'checkConstraint' ) ) {

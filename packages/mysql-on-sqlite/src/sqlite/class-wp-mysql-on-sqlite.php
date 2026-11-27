@@ -964,7 +964,8 @@ class WP_MySQL_On_SQLite extends PDO {
 		// Initialize information schema builder.
 		$this->information_schema_builder = new WP_SQLite_Information_Schema_Builder(
 			self::RESERVED_PREFIX,
-			$this->connection
+			$this->connection,
+			$this->mysql_version
 		);
 
 		// Ensure that the database is configured.
