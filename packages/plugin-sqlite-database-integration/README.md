@@ -83,7 +83,7 @@ The archive is written to `build/plugin-sqlite-database-integration.zip`.
 ## Requirements
 
 - **WordPress:** 6.4+
-- **PHP:** 7.2+
+- **PHP:** 7.2+ (64-bit)
 - **PHP extensions:** `pdo`, `pdo_sqlite`
 - **SQLite:** 3.37.0+
 

@@ -26,6 +26,18 @@ concurrency:
 permissions: {}
 
 jobs:
+  test-32-bit-php:
+    name: Reject 32-bit PHP
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          docker run --rm --platform linux/386 -v "$PWD:/repo:ro" -w /repo \
+            php:8.3-cli php packages/mysql-on-sqlite/tests/32-bit-php.php
+
   test:
     name: PHP ${{ matrix.php }} / SQLite ${{ matrix.sqlite }}
     runs-on: ubuntu-latest
