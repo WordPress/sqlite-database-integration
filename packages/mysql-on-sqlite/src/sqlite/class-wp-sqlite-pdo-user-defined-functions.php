@@ -1232,24 +1232,13 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	}
 
 	/**
-	 * Compile a MySQL-style regex into a PCRE pattern string.
+	 * Compile and cache a MySQL regex. WP_ICU_Regex_Translator documents the supported syntax.
 	 *
-	 * Translates MySQL match_type flags (c/i/m/n/u) to PCRE modifiers. The u
-	 * (UTF-8) modifier is applied unless byte-oriented matching is requested.
-	 * Case-insensitive is the default.
+	 * The SQL functions also have these limits:
 	 *
-	 * MySQL uses ICU, which differs from PCRE in some syntax, like ICU-only escapes
-	 * and nested sets. The known failures of the REGEXP test suites list these
-	 * cases. Other known differences:
-	 *
-	 * - Text matching ignores case unless the `c` flag is passed, as the column
-	 *   collation isn't known here.
-	 * - PCRE doesn't match "ß" with "ss" when ignoring case, `$` also matches
-	 *   between CR and LF, and `(?P<name>...)` is valid.
-	 * - `\G` in a lookbehind doesn't always match where it does in ICU.
-	 * - Data that isn't valid UTF-8 is matched byte by byte and case-sensitively,
-	 *   like MySQL binary strings. Other binary values match as text, so case
-	 *   sensitivity, and whether positions count bytes, can differ between rows.
+	 * - Column collations are unavailable here, so text matching ignores case by default.
+	 * - Invalid UTF-8 triggers byte matching, which defaults to case-sensitive. Other
+	 *   binary strings can match as text, so positions may count characters or bytes.
 	 * - SQLite converts numbers to text in its own format, so `20e0` reads "20.0"
 	 *   (MySQL: "20"), and `0.000001` reads "1.0e-06".
 	 * - `pos`, `occurrence`, and `return_option` use PHP's integer conversion, so
@@ -1260,17 +1249,16 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * @param string $pattern     The MySQL regex pattern.
 	 * @param string $match_type  MySQL match_type flag string.
 	 * @param bool   $binary_mode Whether to match bytes instead of UTF-8 characters.
-	 * @param bool   $without_g   Whether "\G" never matches, for a search that doesn't
-	 *                            start where the previous match ended.
+	 * @param bool   $without_g   Disable \G when the search starts past the previous match or at a nonzero initial offset.
 	 *
-	 * @throws Exception If the pattern is empty or invalid.
+	 * @throws WP_ICU_Regex_Exception If the pattern is empty, invalid, unsupported, or exceeds a translation limit.
 	 * @return string PCRE-ready pattern with delimiter and modifiers.
 	 */
 	private function regexp_compile( $pattern, $match_type, $binary_mode = false, $without_g = false ) {
 		$match_type = (string) $match_type;
 		$pattern    = (string) $pattern;
 		if ( '' === $pattern ) {
-			throw new Exception( 'Illegal argument to a regular expression.' );
+			throw new WP_ICU_Regex_Exception( 'Illegal argument to a regular expression.', 3685 );
 		}
 
 		// Without "\G" in the pattern, both versions are the same.
@@ -1280,61 +1268,13 @@ class WP_SQLite_PDO_User_Defined_Functions {
 			return $this->regexp_cache[ $cache_key ];
 		}
 
-		$case_sensitive = false;
-		$multiline      = false;
-		$dotall         = false;
-		$unix_lines     = false;
-		$len            = strlen( $match_type );
-		for ( $i = 0; $i < $len; $i++ ) {
-			$flag = $match_type[ $i ];
-			if ( 'c' === $flag ) {
-				$case_sensitive = true;
-			} elseif ( 'i' === $flag ) {
-				$case_sensitive = false;
-			} elseif ( 'm' === $flag ) {
-				$multiline = true;
-			} elseif ( 'n' === $flag ) {
-				$dotall = true;
-			} elseif ( 'u' === $flag ) {
-				$unix_lines = true;
-			}
-		}
+		// The last "c" or "i" sets case sensitivity. MySQL's "n" and "u" mean ICU's dotall and Unix-lines modes.
+		$flags    = 'c' === substr( rtrim( $match_type, 'mnu' ), -1 ) ? '' : 'i';
+		$flags   .= strtr( str_replace( array( 'c', 'i' ), '', $match_type ), 'nu', 'sd' );
+		$compiled = WP_ICU_Regex_Translator::translate( $pattern, $flags, $without_g, $binary_mode );
 
-		/*
-		 * PHP 7 can read an unknown escape as literal text. For "\y", that matches ICU,
-		 * but "\u0041" matches "u0041", where ICU matches "A". The "X" modifier makes
-		 * all of them errors, like in PHP 8.
-		 */
-		$modifiers = $binary_mode ? 'X' : 'uX';
-		if ( ! $case_sensitive ) {
-			$modifiers .= 'i';
-		}
-		if ( $multiline ) {
-			$modifiers .= 'm';
-		}
-		if ( $dotall ) {
-			$modifiers .= 's';
-		}
-
-		/*
-		 * In binary data, MySQL ends lines at CR, LF, VT and FF. No PCRE setting
-		 * matches that. (*ANY) also ends lines at the byte 0x85, which is a part of
-		 * characters like "ą" (0xC4 0x85). (*ANYCRLF) misses only the rare VT and FF.
-		 */
-		if ( $unix_lines ) {
-			$newline = '(*LF)';
-		} elseif ( $binary_mode ) {
-			$newline = '(*ANYCRLF)';
-		} else {
-			$newline = '(*ANY)';
-		}
-		$compiled = '/' . $newline . $this->regexp_escape_pattern( $pattern, $without_g ) . '/' . $modifiers;
-
-		/*
-		 * Compile the pattern by matching it against an empty string. Only a compile
-		 * error emits a PHP warning, so silence it and report a MySQL error instead.
-		 * A limit error concerns only the empty string, so the pattern is valid.
-		 */
+		// Probe the compiled pattern before caching it. A match limit on the empty subject
+		// can occur even when the pattern compiled successfully.
 		set_error_handler( static function () {} );
 		try {
 			$valid = false !== preg_match( $compiled, '' ) || PREG_INTERNAL_ERROR !== preg_last_error();
@@ -1350,71 +1290,6 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		}
 		$this->regexp_cache[ $cache_key ] = $compiled;
 		return $compiled;
-	}
-
-	/**
-	 * Escape pattern delimiters and NUL bytes that are not already escaped, read
-	 * "\K" as "K", and, if asked, make "\G" never match.
-	 *
-	 * PHP before 8.2 rejects NUL bytes in patterns, so they become "\x00".
-	 *
-	 * @param string $pattern   The regex pattern.
-	 * @param bool   $without_g Optional. Whether "\G" never matches.
-	 *
-	 * @return string Pattern safe to wrap in slash delimiters.
-	 */
-	private function regexp_escape_pattern( $pattern, $without_g = false ) {
-		$special = array(
-			'/'  => '\\/',
-			"\0" => '\\x00',
-		);
-
-		/*
-		 * ICU reads "\K" as "K". In PCRE, "\K" moves the start of the match, even to
-		 * before the place where the search started, like in "(?<=\Ka)".
-		 */
-		$escapes = $special + array( 'K' => 'K' );
-		if ( $without_g ) {
-			// A position can't be both a word boundary and not one, so "\b\B" never
-			// matches. Unlike "(?!)", it has no ")" to end a "(?#...)" comment.
-			$escapes['G'] = '\\b\\B';
-		}
-
-		$escaped = '';
-		$quoted  = false;
-		$length  = strlen( $pattern );
-		for ( $i = 0; $i < $length; ++$i ) {
-			$character = $pattern[ $i ];
-			if ( $quoted ) {
-				if ( '\\' === $character && $i + 1 < $length && 'E' === $pattern[ $i + 1 ] ) {
-					$escaped .= '\\E';
-					$quoted   = false;
-					++$i;
-				} elseif ( isset( $special[ $character ] ) ) {
-					$escaped .= '\\E' . $special[ $character ] . '\\Q';
-				} else {
-					$escaped .= $character;
-				}
-				continue;
-			}
-			if ( '\\' === $character && $i + 1 < $length ) {
-				$next     = $pattern[ $i + 1 ];
-				$escaped .= isset( $escapes[ $next ] ) ? $escapes[ $next ] : $character . $next;
-				$quoted   = 'Q' === $next;
-				++$i;
-			} elseif ( isset( $special[ $character ] ) ) {
-				$escaped .= $special[ $character ];
-			} else {
-				$escaped .= $character;
-			}
-		}
-
-		// Close quoted text that runs to the end, so that a trailing backslash
-		// can't escape the delimiter.
-		if ( $quoted ) {
-			$escaped .= '\\E';
-		}
-		return $escaped;
 	}
 
 	/**
@@ -1436,7 +1311,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * @param bool   $allow_past_end Whether the position may be one past the last character.
 	 * @param bool   $byte_mode      Whether every byte is a character.
 	 *
-	 * @throws Exception If the position is out of range.
+	 * @throws WP_ICU_Regex_Exception If the position is out of range.
 	 * @return int The byte offset.
 	 */
 	private function regexp_char_to_byte_offset( $subject, $position, $allow_past_end, $byte_mode ) {
@@ -1453,7 +1328,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		if ( $allow_past_end && $chars + 1 === $position ) {
 			return $length;
 		}
-		throw new Exception( 'Index out of bounds in regular expression search.' );
+		throw new WP_ICU_Regex_Exception( 'Index out of bounds in regular expression search.', 3686 );
 	}
 
 	/**
@@ -1472,7 +1347,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * @param array  $match_data  The match, with offsets.
 	 * @param array  $group_keys  The pattern's group numbers and names, as array keys.
 	 *
-	 * @throws Exception On an invalid group reference.
+	 * @throws WP_ICU_Regex_Exception On an invalid group reference.
 	 * @return string The expanded replacement.
 	 */
 	private function regexp_expand_replacement( $replacement, $match_data, $group_keys ) {
@@ -1492,7 +1367,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 					return $match_data[ $name ][0] ?? '';
 				}
 				if ( '' === $digits ) {
-					throw new Exception( 'A capture group has an invalid name.' );
+					throw new WP_ICU_Regex_Exception( 'A capture group has an invalid name.', 3887 );
 				}
 				for ( $length = strlen( $digits ); $length > 0; --$length ) {
 					$group = (int) substr( $digits, 0, $length );
@@ -1500,7 +1375,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 						return ( $match_data[ $group ][0] ?? '' ) . substr( $digits, $length );
 					}
 				}
-				throw new Exception( 'Index out of bounds in regular expression search.' );
+				throw new WP_ICU_Regex_Exception( 'Index out of bounds in regular expression search.', 3686 );
 			},
 			$replacement
 		);
@@ -1555,15 +1430,6 @@ class WP_SQLite_PDO_User_Defined_Functions {
 			if ( ! $this->regexp_match( $search, $pattern, $subject, $match, PREG_OFFSET_CAPTURE, $offset ) ) {
 				return;
 			}
-
-			/*
-			 * Only PCRE's "\K" can start a match before the search, and then the next
-			 * search would find the same match forever. The escaper reads "\K" as "K",
-			 * but not after a "\Q" in a comment, which it reads as quoted text.
-			 */
-			if ( $match[0][1] < $offset ) {
-				throw new Exception( 'Invalid regular expression: ' . $pattern . '.' );
-			}
 			yield $match;
 
 			$offset       = $match[0][1] + strlen( $match[0][0] );
@@ -1589,7 +1455,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * @param int    $flags    Optional. The preg_match() flags.
 	 * @param int    $offset   Optional. The byte offset to start at.
 	 *
-	 * @throws Exception On a preg failure.
+	 * @throws WP_ICU_Regex_Exception If PCRE cannot complete the match.
 	 * @return int 1 on match, 0 on no match.
 	 */
 	private function regexp_match( $compiled, $pattern, $subject, &$matches = null, $flags = 0, $offset = 0 ) {
@@ -1610,14 +1476,11 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	}
 
 	/**
-	 * Translate a preg_* failure into a caller-friendly exception message.
-	 *
-	 * Uses preg_last_error() to distinguish invalid patterns from runtime
-	 * limit failures.
+	 * Map a PCRE failure to the corresponding driver error.
 	 *
 	 * @param string $pattern The original MySQL regex pattern.
 	 *
-	 * @throws Exception Always.
+	 * @throws WP_ICU_Regex_Exception Always.
 	 * @return void
 	 */
 	private function regexp_fail( $pattern ) {
@@ -1627,8 +1490,10 @@ class WP_SQLite_PDO_User_Defined_Functions {
 			|| PREG_RECURSION_LIMIT_ERROR === $err
 			|| PREG_JIT_STACKLIMIT_ERROR === $err
 		) {
-			throw new Exception( 'Regular expression evaluation exceeded internal limits.' );
+			// Report backtracking as a MySQL timeout and recursion or JIT stack exhaustion as a stack overflow.
+			$code = PREG_BACKTRACK_LIMIT_ERROR === $err ? 3699 : 3698;
+			throw new WP_ICU_Regex_Exception( 'Regular expression evaluation exceeded internal limits.', $code );
 		}
-		throw new Exception( 'Invalid regular expression: ' . $pattern . '.' );
+		throw new WP_ICU_Regex_Exception( 'Invalid regular expression: ' . $pattern . '.', 3688 );
 	}
 }

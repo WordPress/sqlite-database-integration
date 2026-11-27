@@ -24,6 +24,9 @@ use PHPUnit\Framework\TestCase;
  * any check of the test class fails. A test class lists the cases that are expected to
  * fail in get_known_failures(), with version checks for the cases that fail only with
  * some PHP or PCRE versions.
+ *
+ * For case IDs listed in data/unsupported.json, require error 3690 and the
+ * recorded message in place of the MySQL result.
  */
 abstract class WP_MySQL_On_SQLite_Regexp_Test_Case extends TestCase {
 	const DATA_DIR = __DIR__ . '/data';
@@ -124,29 +127,32 @@ abstract class WP_MySQL_On_SQLite_Regexp_Test_Case extends TestCase {
 	 * @return string[] A description of each failing case, keyed by "<source>:<case id>".
 	 */
 	protected static function run_checks( string $source, array $checks ): array {
-		$driver   = new WP_MySQL_On_SQLite(
+		$driver      = new WP_MySQL_On_SQLite(
 			'mysql-on-sqlite:path=:memory:;dbname=wp',
 			null,
 			null,
 			array( PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION )
 		);
-		$failures = array();
+		$failures    = array();
+		$unsupported = self::read_unsupported_cases( $source );
 		foreach ( self::read_cases( $source ) as $case ) {
 			$differences = array();
 			foreach ( $checks as $check ) {
-				$query  = self::build_query(
+				$query    = self::build_query(
 					$check,
 					$driver->quote( $case['subject'] ),
 					$driver->quote( $case['pattern'] ),
 					$driver->quote( self::get_template( $case['groups'] ) ),
 					$case['match_type']
 				);
-				$actual = self::run_query( $driver, $query );
-				if ( ! self::is_same_result( $case[ $check ], $actual ) ) {
+				$actual   = self::run_query( $driver, $query );
+				$expected = $unsupported[ $case['id'] ] ?? $case[ $check ];
+				$is_same  = isset( $unsupported[ $case['id'] ] ) ? $expected === $actual : self::is_same_result( $expected, $actual );
+				if ( ! $is_same ) {
 					$differences[] = sprintf(
 						'%s, expected %s, got %s',
 						$query,
-						self::format_result( $case[ $check ] ),
+						self::format_result( $expected ),
 						self::format_result( $actual )
 					);
 				}
@@ -187,6 +193,27 @@ abstract class WP_MySQL_On_SQLite_Regexp_Test_Case extends TestCase {
 	}
 
 	/**
+	 * Expand the inclusive case ID ranges from data/unsupported.json.
+	 *
+	 * @return array[] Expected errors keyed by case ID.
+	 */
+	private static function read_unsupported_cases( string $source ): array {
+		$ranges = json_decode( file_get_contents( self::DATA_DIR . '/unsupported.json' ), true );
+		$errors = array();
+		foreach ( $ranges[ $source ] as list( $first, $last, $message ) ) {
+			$errors += array_fill(
+				$first,
+				$last - $first + 1,
+				array(
+					'error'   => 3690,
+					'message' => $message,
+				)
+			);
+		}
+		return $errors;
+	}
+
+	/**
 	 * Run a query and get its single value, its error, or the PHP errors that it caused.
 	 *
 	 * @return mixed The value as a string or null, an array with "error" and "message",
@@ -210,7 +237,7 @@ abstract class WP_MySQL_On_SQLite_Regexp_Test_Case extends TestCase {
 		} catch ( PDOException $e ) {
 			$result = array(
 				'error'   => $e->errorInfo[1] ?? null,
-				'message' => $e->getMessage(),
+				'message' => $e->errorInfo[2] ?? $e->getMessage(),
 			);
 		} catch ( Throwable $e ) {
 			$php_errors[] = get_class( $e ) . ': ' . $e->getMessage();
