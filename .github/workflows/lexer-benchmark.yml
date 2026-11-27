@@ -98,9 +98,14 @@ jobs:
             echo "cd packages/mysql-parser && composer dump-autoload && composer run benchmark -- --lexer-only"
             echo '```'
           } > "$RUNNER_TEMP/comment.md"
+          cat "$RUNNER_TEMP/comment.md" >> "$GITHUB_STEP_SUMMARY"
           echo "COMMENT_FILE=$RUNNER_TEMP/comment.md" >> "$GITHUB_ENV"
 
       - name: Post or update the PR comment
+        # Fork pull requests run with a read-only token and cannot post
+        # comments. For those, the benchmark results are available in the job
+        # summary above, and the step is skipped so that the check succeeds.
+        if: github.event.pull_request.head.repo.fork != true
         uses: actions/github-script@v7
         with:
           script: |
