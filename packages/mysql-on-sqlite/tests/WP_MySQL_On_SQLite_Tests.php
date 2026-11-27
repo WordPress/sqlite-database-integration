@@ -18352,4 +18352,96 @@ END;
 		$result = $this->assertQuery( 'SELECT REVERSE(NULL) AS reversed' );
 		$this->assertNull( $result[0]->reversed );
 	}
+
+	public function testGroupConcatFunction(): void {
+		$this->assertQuery( 'CREATE TABLE t (g INT, x VARCHAR(10), y INT, z VARCHAR(10))' );
+		$this->assertQuery( "INSERT INTO t VALUES (1, 'b', 2, 'p'), (1, 'a', 1, NULL), (2, 'c', 1, 'r'), (2, 'a,b', 2, 's')" );
+
+		$tests = array(
+			// The default separator is ",".
+			'GROUP_CONCAT(x)'                         => array( 'b,a', 'c,a,b' ),
+			"GROUP_CONCAT(x SEPARATOR ',')"           => array( 'b,a', 'c,a,b' ),
+			"GROUP_CONCAT(x SEPARATOR '; ')"          => array( 'b; a', 'c; a,b' ),
+			"GROUP_CONCAT(x SEPARATOR '')"            => array( 'ba', 'ca,b' ),
+			"GROUP_CONCAT(x SEPARATOR 'it''s')"       => array( "bit'sa", "cit'sa,b" ),
+			// Several expressions are concatenated per row.
+			'GROUP_CONCAT(x, y)'                      => array( 'b2,a1', 'c1,a,b2' ),
+			"GROUP_CONCAT(x, '-', y SEPARATOR ' | ')" => array( 'b-2 | a-1', 'c-1 | a,b-2' ),
+			// Each expression keeps its own boundaries ("||" binds more tightly than "+").
+			'GROUP_CONCAT(y + 1, y * 10)'             => array( '320,210', '210,320' ),
+			// Rows with a NULL value are skipped.
+			'GROUP_CONCAT(z)'                         => array( 'p', 'r,s' ),
+			'GROUP_CONCAT(x, z)'                      => array( 'bp', 'cr,a,bs' ),
+			"UPPER(GROUP_CONCAT(x SEPARATOR '/'))"    => array( 'B/A', 'C/A,B' ),
+		);
+		foreach ( $tests as $expression => $expected ) {
+			$result = $this->assertQuery( "SELECT $expression AS result FROM t GROUP BY g ORDER BY g" );
+			$this->assertSame( $expected, array_column( $result, 'result' ), $expression );
+		}
+
+		// No rows.
+		$result = $this->assertQuery( "SELECT GROUP_CONCAT(x SEPARATOR '; ') AS result FROM t WHERE g = 3" );
+		$this->assertNull( $result[0]->result );
+	}
+
+	public function testGroupConcatFunctionWithOrderBy(): void {
+		$this->assertQuery( 'CREATE TABLE t (g INT, x VARCHAR(10), y INT)' );
+		$this->assertQuery( "INSERT INTO t VALUES (1, 'b', 2), (1, 'a', 1), (1, 'b', 3), (2, 'c', 1), (2, 'a,b', 2)" );
+
+		$tests = array(
+			'GROUP_CONCAT(x ORDER BY y DESC)'          => array( 'b,b,a', 'a,b,c' ),
+			"GROUP_CONCAT(x ORDER BY y DESC SEPARATOR '; ')" => array( 'b; b; a', 'a,b; c' ),
+			"GROUP_CONCAT(x ORDER BY x, y DESC SEPARATOR '|')" => array( 'a|b|b', 'a,b|c' ),
+			'GROUP_CONCAT(DISTINCT x ORDER BY x DESC)' => array( 'b,a', 'c,a,b' ),
+			// A number refers to an expression of GROUP_CONCAT(), also in parentheses.
+			'GROUP_CONCAT(x ORDER BY 1)'               => array( 'a,b,b', 'a,b,c' ),
+			'GROUP_CONCAT(x, y ORDER BY 2 DESC)'       => array( 'b3,b2,a1', 'a,b2,c1' ),
+			"GROUP_CONCAT(x ORDER BY (1) DESC SEPARATOR '|')" => array( 'b|b|a', 'c|a,b' ),
+		);
+		foreach ( $tests as $expression => $expected ) {
+			$query = "SELECT $expression AS result FROM t GROUP BY g ORDER BY g";
+
+			// ORDER BY in an aggregate function requires SQLite 3.44.0.
+			if ( version_compare( $this->engine->get_sqlite_version(), '3.44.0', '<' ) ) {
+				$this->assertQueryError(
+					$query,
+					'MySQL query not supported. Cause: GROUP_CONCAT() with ORDER BY requires SQLite 3.44.0 or newer'
+				);
+				continue;
+			}
+
+			$result = $this->assertQuery( $query );
+			$this->assertSame( $expected, array_column( $result, 'result' ), $expression );
+		}
+
+		// A number that is not the position of an expression is an error, as in MySQL.
+		if ( version_compare( $this->engine->get_sqlite_version(), '3.44.0', '>=' ) ) {
+			$this->assertQueryError(
+				'SELECT GROUP_CONCAT(x ORDER BY 2) AS result FROM t',
+				"SQLSTATE[42S22]: Column not found: 1054 Unknown column '2' in 'order clause'"
+			);
+		}
+	}
+
+	public function testGroupConcatFunctionWithDistinctAndSeparator(): void {
+		$this->assertQuery( 'CREATE TABLE t (g INT, x VARCHAR(10))' );
+		$this->assertQuery( "INSERT INTO t VALUES (1, 'b'), (1, 'a'), (1, 'b')" );
+
+		// The default separator works with DISTINCT.
+		$result = $this->assertQuery( "SELECT GROUP_CONCAT(DISTINCT x SEPARATOR ',') AS result FROM t" );
+		$this->assertSame( 'b,a', $result[0]->result );
+
+		// SQLite allows DISTINCT only with a single argument.
+		$this->assertQueryError(
+			"SELECT GROUP_CONCAT(DISTINCT x SEPARATOR '; ') AS result FROM t",
+			'MySQL query not supported. Cause: GROUP_CONCAT() with DISTINCT and a SEPARATOR other than ","'
+		);
+
+		// MySQL compares the values of several expressions separately, not their
+		// concatenation: ('a', 'bc') and ('ab', 'c') are two different values.
+		$this->assertQueryError(
+			'SELECT GROUP_CONCAT(DISTINCT x, x) AS result FROM t',
+			'MySQL query not supported. Cause: GROUP_CONCAT() with DISTINCT and several expressions'
+		);
+	}
 }

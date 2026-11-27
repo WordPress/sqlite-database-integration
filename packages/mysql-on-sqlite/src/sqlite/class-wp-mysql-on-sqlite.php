@@ -4444,6 +4444,11 @@ class WP_MySQL_On_SQLite extends PDO {
 					return $this->translate_like( $node );
 				}
 				return $this->translate_sequence( $node->get_children() );
+			case 'sumExpr':
+				if ( $node->has_child_token( WP_MySQL_Lexer::GROUP_CONCAT_SYMBOL ) ) {
+					return $this->translate_group_concat( $node );
+				}
+				return $this->translate_sequence( $node->get_children() );
 			case 'runtimeFunctionCall':
 				return $this->translate_runtime_function_call( $node );
 			case 'functionCall':
@@ -5408,6 +5413,117 @@ class WP_MySQL_On_SQLite extends PDO {
 			default:
 				return $this->translate_sequence( $node->get_children() );
 		}
+	}
+
+	/**
+	 * Translate MySQL GROUP_CONCAT() to SQLite.
+	 *
+	 *   MySQL:  GROUP_CONCAT([DISTINCT] expr [, expr ...] [ORDER BY ...] [SEPARATOR str])
+	 *   SQLite: GROUP_CONCAT([DISTINCT] expr [, separator] [ORDER BY ...])
+	 *
+	 * In MySQL, several expressions are concatenated per row; in SQLite, the
+	 * second argument is the separator. Each expression is parenthesized, as
+	 * "||" binds more tightly than most operators. As in MySQL, a row in which
+	 * one of the expressions is NULL is skipped, because "||" returns NULL then.
+	 *
+	 * ORDER BY in an aggregate function requires SQLite 3.44.0 or newer. SQLite
+	 * allows DISTINCT only with a single argument, so DISTINCT can't be combined
+	 * with a separator other than the default ",". Nor with several expressions:
+	 * MySQL compares their values separately, not their concatenation.
+	 *
+	 * A number in ORDER BY refers to an expression of GROUP_CONCAT() itself, as
+	 * in MySQL ("ORDER BY 1" sorts by the first one). SQLite would take it as a
+	 * constant, so it is replaced with that expression.
+	 *
+	 * @param  WP_Parser_Node $node The "sumExpr" AST node.
+	 * @return string               The translated value.
+	 * @throws WP_MySQL_On_SQLite_Exception When the translation fails.
+	 */
+	private function translate_group_concat( WP_Parser_Node $node ): string {
+		$expressions = array();
+		foreach ( $node->get_first_child_node( 'exprList' )->get_child_nodes( 'expr' ) as $expr ) {
+			$expressions[] = $this->translate( $expr );
+		}
+
+		$is_distinct = $node->has_child_token( WP_MySQL_Lexer::DISTINCT_SYMBOL );
+		if ( 1 === count( $expressions ) ) {
+			$value = $expressions[0];
+		} elseif ( $is_distinct ) {
+			throw $this->new_not_supported_exception(
+				'GROUP_CONCAT() with DISTINCT and several expressions'
+			);
+		} else {
+			$value = '((' . implode( ') || (', $expressions ) . '))';
+		}
+		$args = $is_distinct ? 'DISTINCT ' . $value : $value;
+
+		$separator = $node->get_first_child_node( 'textString' );
+		if ( null !== $separator ) {
+			$separator_sql = $this->translate( $separator );
+			if ( $this->quote_sqlite_value( ',' ) !== $separator_sql ) {
+				if ( $is_distinct ) {
+					throw $this->new_not_supported_exception(
+						'GROUP_CONCAT() with DISTINCT and a SEPARATOR other than ","'
+					);
+				}
+				$args .= ', ' . $separator_sql;
+			}
+		}
+
+		$order = $node->get_first_child_node( 'orderClause' );
+		if ( null !== $order ) {
+			if ( version_compare( $this->get_sqlite_version(), '3.44.0', '<' ) ) {
+				throw $this->new_not_supported_exception(
+					'GROUP_CONCAT() with ORDER BY requires SQLite 3.44.0 or newer'
+				);
+			}
+			$terms = array();
+			foreach ( $order->get_first_child_node( 'orderList' )->get_child_nodes( 'orderExpression' ) as $term ) {
+				$expr      = $term->get_first_child_node( 'expr' );
+				$direction = $term->get_first_child_node( 'direction' );
+				$position  = $this->get_order_position( $expr );
+				if ( null === $position ) {
+					$sql = $this->translate( $expr );
+				} elseif ( $position >= 1 && $position <= count( $expressions ) ) {
+					$sql = '(' . $expressions[ $position - 1 ] . ')';
+				} else {
+					throw $this->new_driver_exception(
+						sprintf( "SQLSTATE[42S22]: Column not found: 1054 Unknown column '%s' in 'order clause'", $position ),
+						'42S22'
+					);
+				}
+				$terms[] = null === $direction ? $sql : $sql . ' ' . $this->translate( $direction );
+			}
+			$args .= ' ORDER BY ' . implode( ', ', $terms );
+		}
+
+		$sql    = sprintf( 'GROUP_CONCAT(%s)', $args );
+		$window = $node->get_first_child_node( 'windowingClause' );
+		if ( null !== $window ) {
+			$sql .= ' ' . $this->translate( $window );
+		}
+		return $sql;
+	}
+
+	/**
+	 * Get the position an ORDER BY term refers to, if it is one.
+	 *
+	 * In MySQL, an ORDER BY term that is an integer, also in parentheses, is a
+	 * position, not a constant. Other expressions, such as "-1" or "1 + 1", are not.
+	 *
+	 * @param  WP_Parser_Node $expr The "expr" AST node of the ORDER BY term.
+	 * @return int|null             The position, or null when the term is not one.
+	 */
+	private function get_order_position( WP_Parser_Node $expr ): ?int {
+		$number = null;
+		foreach ( $expr->get_descendant_tokens() as $token ) {
+			if ( WP_MySQL_Lexer::INT_NUMBER === $token->id && null === $number ) {
+				$number = $token;
+			} elseif ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $token->id && WP_MySQL_Lexer::CLOSE_PAR_SYMBOL !== $token->id ) {
+				return null;
+			}
+		}
+		return null === $number ? null : (int) $number->get_value();
 	}
 
 	/**
