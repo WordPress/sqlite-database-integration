@@ -501,13 +501,13 @@ class MySQL_Protocol {
 	 *
 	 * @param  int    $sequence_id The sequence ID of the packet.
 	 * @param  array  $columns     The columns.
-	 * @param  object $row         The row.
+	 * @param  array  $row         The row values, indexed by column position.
 	 * @return string              The row packet.
 	 */
-	public static function build_row_packet( int $sequence_id, array $columns, object $row ): string {
+	public static function build_row_packet( int $sequence_id, array $columns, array $row ): string {
 		$payload = '';
-		foreach ( $columns as $column ) {
-			$value = $row->{$column['name']} ?? null;
+		foreach ( $columns as $i => $column ) {
+			$value = $row[ $i ] ?? null;
 			if ( null === $value ) {
 				$payload .= "\xfb"; // NULL value
 			} else {

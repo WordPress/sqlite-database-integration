@@ -160,7 +160,7 @@ class WP_MySQL_Proxy_Limits_Test extends TestCase {
 			'flags'    => 0,
 			'decimals' => 0,
 		);
-		$rows    = array_fill( 0, 128, (object) array( 'v' => str_repeat( 'x', 65536 ) ) );
+		$rows    = array_fill( 0, 128, array( str_repeat( 'x', 65536 ) ) );
 		$adapter = $this->createMock( Adapter::class );
 		$adapter->expects( $this->once() )->method( 'handle_query' )->willReturn( MySQL_Result::from_data( 0, 0, array( $column ), $rows ) );
 		$proxy = $this->proxy( $adapter );
