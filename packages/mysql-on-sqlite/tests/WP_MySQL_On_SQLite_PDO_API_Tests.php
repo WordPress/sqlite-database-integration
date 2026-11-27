@@ -1027,21 +1027,40 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		$this->driver->exec( 'ROLLBACK' );
 		$this->assertFalse( $this->driver->inTransaction() );
 
-		// Statements with empty result sets keep working after the rollback.
+		// A DDL statement implicitly commits the transaction, like in MySQL,
+		// so a following ROLLBACK has nothing left to roll back.
 		$this->driver->exec( 'START TRANSACTION' );
 		$this->driver->exec( 'CREATE TABLE t (id INT)' );
+		$this->assertFalse( $this->driver->inTransaction() );
 		$this->driver->exec( 'ROLLBACK' );
-		$this->assertSame( 0, $this->driver->exec( 'CREATE TABLE t (id INT)' ) );
+
+		// The DDL statement was committed.
+		$this->driver->query( 'SELECT COUNT(*) FROM t' );
+
+		// Statements with empty result sets keep working after the rollback.
+		$this->assertSame( 0, $this->driver->exec( 'CREATE TABLE u (id INT)' ) );
 	}
 
 	public function test_rollback_method_as_first_transaction_on_connection(): void {
 		// Roll back the first transaction on the connection.
 		$this->driver->beginTransaction();
-		$this->driver->exec( 'CREATE TABLE t (id INT)' );
 		$this->assertTrue( $this->driver->rollBack() );
+		$this->assertFalse( $this->driver->inTransaction() );
+
+		// A DDL statement implicitly commits the transaction, like in MySQL,
+		// so there is no active transaction left to roll back.
+		$this->driver->beginTransaction();
+		$this->driver->exec( 'CREATE TABLE t (id INT)' );
+		$this->assertFalse( $this->driver->inTransaction() );
+		try {
+			$this->driver->rollBack();
+			$this->fail( 'The rollback was expected to fail.' );
+		} catch ( WP_MySQL_On_SQLite_Exception $e ) {
+			$this->assertSame( 'There is no active transaction', $e->getMessage() );
+		}
 
 		// Statements with empty result sets keep working after the rollback.
-		$this->assertSame( 0, $this->driver->exec( 'CREATE TABLE t (id INT)' ) );
+		$this->assertSame( 0, $this->driver->exec( 'CREATE TABLE u (id INT)' ) );
 	}
 
 	public function test_failed_query_keeps_transaction_active(): void {

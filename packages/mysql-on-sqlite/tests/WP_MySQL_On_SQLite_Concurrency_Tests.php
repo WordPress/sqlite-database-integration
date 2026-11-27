@@ -69,7 +69,11 @@ class WP_MySQL_On_SQLite_Concurrency_Tests extends TestCase {
 
 		$driver->query( $query );
 
-		$this->assertSame( 'BEGIN IMMEDIATE', $driver->get_last_sqlite_queries()[0]['sql'] );
+		// Statements that recreate a table disable foreign keys before opening
+		// the write transaction.
+		$queries     = array_column( $driver->get_last_sqlite_queries(), 'sql' );
+		$begin_index = 'PRAGMA foreign_keys = OFF' === $queries[0] ? 1 : 0;
+		$this->assertSame( 'BEGIN IMMEDIATE', $queries[ $begin_index ] );
 	}
 
 	public function testWriteQueryAfterSavepointOpensWriteTransaction(): void {
