@@ -98,6 +98,21 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 	}
 
 	/**
+	 * Get the CHECK constraints of table "t" from the information schema.
+	 */
+	private function getCheckConstraints(): array {
+		return $this->assertQuery(
+			"SELECT tc.CONSTRAINT_NAME AS name, tc.ENFORCED AS enforced, cc.CHECK_CLAUSE AS clause
+			FROM information_schema.TABLE_CONSTRAINTS tc
+			JOIN information_schema.CHECK_CONSTRAINTS cc
+				ON cc.CONSTRAINT_SCHEMA = tc.CONSTRAINT_SCHEMA
+				AND cc.CONSTRAINT_NAME = tc.CONSTRAINT_NAME
+			WHERE tc.TABLE_NAME = 't' AND tc.CONSTRAINT_TYPE = 'CHECK'
+			ORDER BY tc.CONSTRAINT_NAME"
+		);
+	}
+
+	/**
 	 * Reconnect as if the database was configured by an older driver version,
 	 * so that the new connection configures the database again.
 	 */
@@ -15808,6 +15823,271 @@ END;
 				)
 			),
 			$result[0]->{'Create Table'}
+		);
+	}
+
+	public function testCreateTableWithNamedInlineCheckConstraint(): void {
+		$this->assertQuery( 'CREATE TABLE t (a INT CONSTRAINT positive CHECK (a > 0))' );
+
+		$this->assertEquals(
+			array(
+				(object) array(
+					'name'     => 'positive',
+					'enforced' => 'YES',
+					'clause'   => 'a > 0',
+				),
+			),
+			$this->getCheckConstraints()
+		);
+
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertEquals(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `t` (',
+					'  `a` int DEFAULT NULL,',
+					'  CONSTRAINT `positive` CHECK (a > 0)',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$result[0]->{'Create Table'}
+		);
+
+		$this->assertQuery( 'INSERT INTO t (a) VALUES (1)' );
+		$this->assertQueryError(
+			'INSERT INTO t (a) VALUES (0)',
+			'SQLSTATE[23000]: Integrity constraint violation: 19 CHECK constraint failed: positive'
+		);
+	}
+
+	public function testCreateTableWithMultipleInlineCheckConstraints(): void {
+		$this->assertQuery(
+			'CREATE TABLE t (
+				id INT,
+				CONSTRAINT c1 CHECK (id > 0),
+				a INT CHECK (a > 0) NOT ENFORCED CHECK (a < 10),
+				b INT CONSTRAINT b_pos CHECK (b > 0)
+			)'
+		);
+
+		// "NOT ENFORCED" applies only to the CHECK constraint right before it.
+		$this->assertEquals(
+			array(
+				(object) array(
+					'name'     => 'b_pos',
+					'enforced' => 'YES',
+					'clause'   => 'b > 0',
+				),
+				(object) array(
+					'name'     => 'c1',
+					'enforced' => 'YES',
+					'clause'   => 'id > 0',
+				),
+				(object) array(
+					'name'     => 't_chk_1',
+					'enforced' => 'NO',
+					'clause'   => 'a > 0',
+				),
+				(object) array(
+					'name'     => 't_chk_2',
+					'enforced' => 'YES',
+					'clause'   => 'a < 10',
+				),
+			),
+			$this->getCheckConstraints()
+		);
+
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertEquals(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `t` (',
+					'  `id` int DEFAULT NULL,',
+					'  `a` int DEFAULT NULL,',
+					'  `b` int DEFAULT NULL,',
+					'  CONSTRAINT `b_pos` CHECK (b > 0),',
+					'  CONSTRAINT `c1` CHECK (id > 0),',
+					'  CONSTRAINT `t_chk_1` CHECK (a > 0) /*!80016 NOT ENFORCED */,',
+					'  CONSTRAINT `t_chk_2` CHECK (a < 10)',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$result[0]->{'Create Table'}
+		);
+
+		$this->assertQuery( 'INSERT INTO t (id, a, b) VALUES (1, 0, 1)' );
+		$this->assertQueryError(
+			'INSERT INTO t (id, a, b) VALUES (1, 10, 1)',
+			'SQLSTATE[23000]: Integrity constraint violation: 19 CHECK constraint failed: t_chk_2'
+		);
+		$this->assertQueryError(
+			'INSERT INTO t (id, a, b) VALUES (1, 1, 0)',
+			'SQLSTATE[23000]: Integrity constraint violation: 19 CHECK constraint failed: b_pos'
+		);
+	}
+
+	public function testCreateTableWithInlineCheckAndUniqueConstraints(): void {
+		$this->assertQuery( 'CREATE TABLE t (a INT UNIQUE CHECK (a > 0))' );
+
+		$this->assertEquals(
+			array(
+				(object) array(
+					'name'     => 't_chk_1',
+					'enforced' => 'YES',
+					'clause'   => 'a > 0',
+				),
+			),
+			$this->getCheckConstraints()
+		);
+
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertEquals(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `t` (',
+					'  `a` int DEFAULT NULL,',
+					'  UNIQUE KEY `a` (`a`),',
+					'  CONSTRAINT `t_chk_1` CHECK (a > 0)',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$result[0]->{'Create Table'}
+		);
+
+		$this->assertQuery( 'INSERT INTO t (a) VALUES (1)' );
+		$this->assertQueryError(
+			'INSERT INTO t (a) VALUES (-1)',
+			'SQLSTATE[23000]: Integrity constraint violation: 19 CHECK constraint failed: t_chk_1'
+		);
+		$this->assertQueryError(
+			'INSERT INTO t (a) VALUES (1)',
+			'SQLSTATE[23000]: Integrity constraint violation: 19 UNIQUE constraint failed: t.a'
+		);
+	}
+
+	public function testAlterTableAddColumnWithInlineCheckConstraint(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT, CHECK (id > 0))' );
+		$this->assertQuery( 'ALTER TABLE t ADD a INT CHECK (a > 0)' );
+
+		$this->assertEquals(
+			array(
+				(object) array(
+					'name'     => 't_chk_1',
+					'enforced' => 'YES',
+					'clause'   => 'id > 0',
+				),
+				(object) array(
+					'name'     => 't_chk_2',
+					'enforced' => 'YES',
+					'clause'   => 'a > 0',
+				),
+			),
+			$this->getCheckConstraints()
+		);
+
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertEquals(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `t` (',
+					'  `id` int DEFAULT NULL,',
+					'  `a` int DEFAULT NULL,',
+					'  CONSTRAINT `t_chk_1` CHECK (id > 0),',
+					'  CONSTRAINT `t_chk_2` CHECK (a > 0)',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$result[0]->{'Create Table'}
+		);
+
+		$this->assertQuery( 'INSERT INTO t (id, a) VALUES (1, 1)' );
+		$this->assertQueryError(
+			'INSERT INTO t (id, a) VALUES (1, 0)',
+			'SQLSTATE[23000]: Integrity constraint violation: 19 CHECK constraint failed: t_chk_2'
+		);
+	}
+
+	public function testAlterTableAddColumnListWithInlineCheckConstraints(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT)' );
+		$this->assertQuery( 'ALTER TABLE t ADD (a INT CHECK (a > 0), b INT CONSTRAINT b_pos CHECK (b > 0))' );
+
+		$this->assertEquals(
+			array(
+				(object) array(
+					'name'     => 'b_pos',
+					'enforced' => 'YES',
+					'clause'   => 'b > 0',
+				),
+				(object) array(
+					'name'     => 't_chk_1',
+					'enforced' => 'YES',
+					'clause'   => 'a > 0',
+				),
+			),
+			$this->getCheckConstraints()
+		);
+
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertEquals(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `t` (',
+					'  `id` int DEFAULT NULL,',
+					'  `a` int DEFAULT NULL,',
+					'  `b` int DEFAULT NULL,',
+					'  CONSTRAINT `b_pos` CHECK (b > 0),',
+					'  CONSTRAINT `t_chk_1` CHECK (a > 0)',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$result[0]->{'Create Table'}
+		);
+
+		$this->assertQuery( 'INSERT INTO t (a, b) VALUES (1, 1)' );
+		$this->assertQueryError(
+			'INSERT INTO t (a, b) VALUES (0, 1)',
+			'SQLSTATE[23000]: Integrity constraint violation: 19 CHECK constraint failed: t_chk_1'
+		);
+		$this->assertQueryError(
+			'INSERT INTO t (a, b) VALUES (1, 0)',
+			'SQLSTATE[23000]: Integrity constraint violation: 19 CHECK constraint failed: b_pos'
+		);
+	}
+
+	public function testAlterTableAddColumnWithViolatedInlineCheckConstraint(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT)' );
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (1)' );
+
+		// The existing row gets the default value, which violates the check.
+		$this->assertQueryError(
+			'ALTER TABLE t ADD a INT DEFAULT 0 CHECK (a > 0)',
+			'SQLSTATE[23000]: Integrity constraint violation: 19 CHECK constraint failed: t_chk_1'
+		);
+
+		// The table and the information schema remain unchanged.
+		$this->assertSame( array(), $this->getCheckConstraints() );
+
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertEquals(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `t` (',
+					'  `id` int DEFAULT NULL',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$result[0]->{'Create Table'}
+		);
+
+		$this->assertEquals(
+			array( (object) array( 'id' => '1' ) ),
+			$this->assertQuery( 'SELECT * FROM t' )
 		);
 	}
 

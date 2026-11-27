@@ -611,10 +611,6 @@ class WP_SQLite_Information_Schema_Builder {
 				$table_name,
 				$index_data['index_name'] ?? null
 			);
-			$check_constraint_data       = $this->extract_check_constraint_data(
-				$column_node,
-				$table_name
-			);
 
 			// Save inline column constraints and indexes.
 			if ( null !== $index_data ) {
@@ -623,7 +619,9 @@ class WP_SQLite_Information_Schema_Builder {
 					$index_data
 				);
 			}
-			if ( null !== $constraint_data ) {
+
+			// Inline CHECK constraints are saved by "record_column_check_constraints()".
+			if ( null !== $constraint_data && 'CHECK' !== $constraint_data['constraint_type'] ) {
 				$this->insert_values(
 					$this->get_table_name( $table_is_temporary, 'table_constraints' ),
 					$constraint_data
@@ -641,12 +639,7 @@ class WP_SQLite_Information_Schema_Builder {
 					$key_column_usage_item
 				);
 			}
-			if ( null !== $check_constraint_data ) {
-				$this->insert_values(
-					$this->get_table_name( $table_is_temporary, 'check_constraints' ),
-					$check_constraint_data
-				);
-			}
+			$this->record_column_check_constraints( $table_is_temporary, $table_name, $column_node );
 
 			$column_position += 1;
 		}
@@ -956,10 +949,60 @@ class WP_SQLite_Information_Schema_Builder {
 			$table_name,
 			$index_data['index_name'] ?? null
 		);
-		if ( null !== $constraint_data ) {
+
+		// Inline CHECK constraints are saved by "record_column_check_constraints()".
+		if ( null !== $constraint_data && 'CHECK' !== $constraint_data['constraint_type'] ) {
 			$this->insert_values(
 				$this->get_table_name( $table_is_temporary, 'table_constraints' ),
 				$constraint_data
+			);
+		}
+
+		$this->record_column_check_constraints( $table_is_temporary, $table_name, $node );
+	}
+
+	/**
+	 * Analyze inline CHECK constraints of a column and record data in the information schema.
+	 *
+	 * A column can define multiple CHECK constraints, each in its own attribute
+	 * with an optional name. A "[NOT] ENFORCED" attribute applies to the CHECK
+	 * constraint right before it, as in MySQL.
+	 *
+	 * @param bool           $table_is_temporary Whether the table is temporary.
+	 * @param string         $table_name         The table name.
+	 * @param WP_Parser_Node $node               The "columnDefinition" or "fieldDefinition" AST node.
+	 */
+	private function record_column_check_constraints(
+		bool $table_is_temporary,
+		string $table_name,
+		WP_Parser_Node $node
+	): void {
+		$attributes = $node->get_descendant_nodes( 'columnAttribute' );
+		foreach ( $attributes as $i => $attribute ) {
+			if ( null === $attribute->get_first_child_node( 'checkConstraint' ) ) {
+				continue;
+			}
+
+			// Extract the data before saving, so that a generated name is the same in both.
+			$constraint_data       = $this->extract_table_constraint_data( $attribute, $table_name );
+			$check_constraint_data = $this->extract_check_constraint_data( $attribute, $table_name );
+
+			// Apply the "[NOT] ENFORCED" attributes that follow the CHECK constraint.
+			for ( $j = $i + 1; isset( $attributes[ $j ] ); $j += 1 ) {
+				$enforcement = $attributes[ $j ]->get_first_child_node( 'constraintEnforcement' );
+				if ( null === $enforcement ) {
+					break;
+				}
+				$constraint_data['enforced'] = $enforcement->has_child_token( WP_MySQL_Lexer::NOT_SYMBOL ) ? 'NO' : 'YES';
+			}
+
+			$this->insert_values(
+				$this->get_table_name( $table_is_temporary, 'table_constraints' ),
+				$constraint_data
+			);
+			$this->insert_values(
+				$this->get_table_name( $table_is_temporary, 'check_constraints' ),
+				$check_constraint_data
 			);
 		}
 	}
